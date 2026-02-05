@@ -77,8 +77,60 @@ param sshPublicKey string
 @description('Use Marketplace images instead of Gallery (set to false once Packer images are built)')
 param useMarketplaceImages bool = true
 
+@description('Recovery Services Vault name for Azure Backup')
+param backupVaultName string = 'rsv-mediasrl-${environment}'
+
 @description('VM configurations')
-param vms array = [  {    name: 'vm-jmp-01'    osType: 'Linux'    size: 'Standard_B2s'    subnet: 'mgmt'    createPublicIp: true    imageDefinition: 'rocky'  }  {    name: 'vm-fs-01'    osType: 'Windows'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'windows'  }  {    name: 'vm-db-01'    osType: 'Windows'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'windows'  }  {    name: 'vm-web-01'    osType: 'Linux'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'rocky'  }  {    name: 'vm-app-01'    osType: 'Linux'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'rocky'  }  {    name: 'vm-cms-01'    osType: 'Linux'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'rocky'  }]
+param vms array = [
+  {
+    name: 'vm-jmp-01'
+    osType: 'Linux'
+    size: 'Standard_B2s'
+    subnet: 'mgmt'
+    createPublicIp: true
+    imageDefinition: 'rocky'
+  }
+  {
+    name: 'vm-fs-01'
+    osType: 'Windows'
+    size: 'Standard_B2s'
+    subnet: 'prod'
+    createPublicIp: false
+    imageDefinition: 'windows'
+  }
+  {
+    name: 'vm-db-01'
+    osType: 'Windows'
+    size: 'Standard_B2s'
+    subnet: 'prod'
+    createPublicIp: false
+    imageDefinition: 'windows'
+  }
+  {
+    name: 'vm-web-01'
+    osType: 'Linux'
+    size: 'Standard_B2s'
+    subnet: 'prod'
+    createPublicIp: false
+    imageDefinition: 'rocky'
+  }
+  {
+    name: 'vm-app-01'
+    osType: 'Linux'
+    size: 'Standard_B2s'
+    subnet: 'prod'
+    createPublicIp: false
+    imageDefinition: 'rocky'
+  }
+  {
+    name: 'vm-cms-01'
+    osType: 'Linux'
+    size: 'Standard_B2s'
+    subnet: 'prod'
+    createPublicIp: false
+    imageDefinition: 'rocky'
+  }
+]
 
 // ----- Variables -----
 
@@ -200,6 +252,24 @@ module monitoring 'modules/monitoring.bicep' = {
   ]
 }
 
+// ----- Module: Azure Backup (Recovery Services Vault) -----
+
+module backup 'modules/backup.bicep' = {
+  name: 'deploy-backup'
+  scope: az.resourceGroup(resourceGroupName)
+  params: {
+    location: location
+    vaultName: backupVaultName
+    backupPolicyName: 'DailyBackupPolicy-1AM-14Days'
+    backupTime: '01:00'
+    retentionDays: 14
+    tags: tags
+  }
+  dependsOn: [
+    resourceGroup
+  ]
+}
+
 // ----- Module: Virtual Machines (Loop) -----
 
 module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
@@ -225,6 +295,23 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     tags: tags
   }
+}]
+
+// ----- Module: VM Backup Protection (Loop) -----
+
+module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
+  name: 'deploy-backup-${vm.name}'
+  scope: az.resourceGroup(resourceGroupName)
+  params: {
+    location: location
+    vaultName: backupVaultName
+    vmName: vm.name
+    vmId: virtualMachines[i].outputs.vmId
+    backupPolicyId: backup.outputs.backupPolicyId
+  }
+  dependsOn: [
+    virtualMachines
+  ]
 }]
 
 // ----- Outputs -----

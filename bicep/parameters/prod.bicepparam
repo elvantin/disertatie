@@ -35,6 +35,10 @@ param rockyImageDefinition = 'imgdef-rockylinux10'
 param windowsImageDefinition = 'imgdef-winserver2022'
 param imageVersion = '1.0.0'
 
+// ----- Azure Backup -----
+
+param backupVaultName = 'rsv-mediasrl-productie'
+
 // ----- VM Authentication -----
 
 param adminUsername = 'azureadmin'
