@@ -293,6 +293,7 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     osDiskSizeGb: 128
     osDiskStorageType: 'StandardSSD_LRS'
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
+    deployMonitoringAgent: false // Disable to avoid package manager lock issues during deployment
     tags: tags
   }
 }]

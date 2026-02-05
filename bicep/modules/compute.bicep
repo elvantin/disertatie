@@ -72,6 +72,9 @@ param osDiskStorageType string = 'StandardSSD_LRS'
 @description('Log Analytics Workspace ID for VM monitoring')
 param logAnalyticsWorkspaceId string = ''
 
+@description('Deploy Log Analytics agent extension (disable to avoid package manager lock issues)')
+param deployMonitoringAgent bool = false
+
 @description('Tags to apply to resources')
 param tags object = {}
 
@@ -199,7 +202,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
 
 // ----- VM Extension: Log Analytics Agent (optional) -----
 
-resource vmExtensionMmaWindows 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = if (osType == 'Windows' && logAnalyticsWorkspaceId != '') {
+resource vmExtensionMmaWindows 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = if (osType == 'Windows' && logAnalyticsWorkspaceId != '' && deployMonitoringAgent) {
   parent: vm
   name: 'MicrosoftMonitoringAgent'
   location: location
@@ -218,7 +221,7 @@ resource vmExtensionMmaWindows 'Microsoft.Compute/virtualMachines/extensions@202
   }
 }
 
-resource vmExtensionOmsLinux 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = if (osType == 'Linux' && logAnalyticsWorkspaceId != '') {
+resource vmExtensionOmsLinux 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = if (osType == 'Linux' && logAnalyticsWorkspaceId != '' && deployMonitoringAgent) {
   parent: vm
   name: 'OmsAgentForLinux'
   location: location
