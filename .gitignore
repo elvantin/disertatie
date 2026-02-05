@@ -1,0 +1,110 @@
+# ============================================================
+# .gitignore — Infrastructure as Code Project
+# Bicep, Packer, Ansible, Azure DevOps
+# ============================================================
+
+# ----- Secrets & Credentials -----
+.env
+.env.*
+*.pem
+*.pfx
+*.key
+*.p12
+*.crt
+*.cer
+*credentials*.json
+*secret*
+!*secret*.bicep
+!*secret*.example
+
+# ----- Azure -----
+.azure/
+azureProfile.json
+serviceprincipal.json
+
+# ----- Bicep -----
+# Compiled ARM templates (regenerated from Bicep)
+*.json
+!bicep/parameters/*.json
+!ansible/inventory/*.json
+!ansible/**/*.json
+!pipelines/**/*.json
+!.vscode/*.json
+!package.json
+!package-lock.json
+
+# ----- Packer -----
+packer_cache/
+*.box
+crash.log
+*.pkrvars.hcl
+!*.pkrvars.hcl.example
+
+# ----- Ansible -----
+ansible/*.retry
+ansible/**/*.retry
+*.retry
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+venv/
+.venv/
+env/
+.env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ----- PowerShell -----
+*.ps1xml
+
+# ----- VS Code -----
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+*.code-workspace
+
+# ----- OS Files -----
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
+
+# ----- IDE / Editor -----
+.idea/
+*.swp
+*.swo
+*.bak
+*.tmp
+*.orig
+
+# ----- Logs -----
+*.log
+logs/
+
+# ----- Terraform (in case of accidental usage) -----
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
