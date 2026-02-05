@@ -315,6 +315,23 @@ module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
   ]
 }]
 
+// ----- Module: Jumphost Bootstrap Script -----
+
+module jumphostBootstrap 'modules/vm-script-extension.bicep' = {
+  name: 'deploy-jumphost-bootstrap'
+  scope: az.resourceGroup(resourceGroupName)
+  params: {
+    location: location
+    vmName: 'vm-jmp-01'
+    extensionName: 'BootstrapJumphost'
+    scriptContent: loadTextContent('../scripts/bootstrap-jumphost.sh')
+    tags: tags
+  }
+  dependsOn: [
+    virtualMachines
+  ]
+}
+
 // ----- Outputs -----
 
 output resourceGroupName string = resourceGroup.outputs.resourceGroupName
