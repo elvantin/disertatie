@@ -38,7 +38,7 @@ param subnetMgmtPrefix string = '10.10.12.0/24'
 @description('Admin IP address for RDP access (CIDR, e.g., "1.2.3.4/32")')
 param adminIpAddress string
 
-@description('Key Vault name (must be globally unique)')
+@description('Key Vault name')
 @minLength(3)
 @maxLength(24)
 param keyVaultName string = 'kv-mediasrl-${environment}'
@@ -166,7 +166,7 @@ module policy 'modules/policy.bicep' = {
 
 module nsg 'modules/nsg.bicep' = {
   name: 'deploy-nsg'
-  scope: resourceGroup(resourceGroupName)
+  scope: az.resourceGroup(resourceGroupName)
   params: {
     location: location
     environment: environment
@@ -182,7 +182,7 @@ module nsg 'modules/nsg.bicep' = {
 
 module networking 'modules/networking.bicep' = {
   name: 'deploy-networking'
-  scope: resourceGroup(resourceGroupName)
+  scope: az.resourceGroup(resourceGroupName)
   params: {
     location: location
     vnetName: vnetName
@@ -207,7 +207,7 @@ module networking 'modules/networking.bicep' = {
 
 module keyVault 'modules/keyvault.bicep' = {
   name: 'deploy-keyvault'
-  scope: resourceGroup(resourceGroupName)
+  scope: az.resourceGroup(resourceGroupName)
   params: {
     location: location
     keyVaultName: keyVaultName
@@ -227,7 +227,7 @@ module keyVault 'modules/keyvault.bicep' = {
 
 module monitoring 'modules/monitoring.bicep' = {
   name: 'deploy-monitoring'
-  scope: resourceGroup(resourceGroupName)
+  scope: az.resourceGroup(resourceGroupName)
   params: {
     location: location
     workspaceName: logAnalyticsWorkspaceName
@@ -245,7 +245,7 @@ module monitoring 'modules/monitoring.bicep' = {
 
 module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
   name: 'deploy-${vm.name}'
-  scope: resourceGroup(resourceGroupName)
+  scope: az.resourceGroup(resourceGroupName)
   params: {
     location: location
     vmName: vm.name
