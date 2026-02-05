@@ -1,0 +1,8 @@
+# ============================================================
+# Ansible Role: mysql - Handlers
+# ============================================================
+
+- name: restart mysql
+  ansible.windows.win_service:
+    name: MySQL80
+    state: restarted

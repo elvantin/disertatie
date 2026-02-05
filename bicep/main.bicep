@@ -74,6 +74,9 @@ param adminPassword string
 @description('SSH public key for Linux VMs')
 param sshPublicKey string
 
+@description('Use Marketplace images instead of Gallery (set to false once Packer images are built)')
+param useMarketplaceImages bool = true
+
 @description('VM configurations')
 param vms array = [
   {
@@ -198,9 +201,6 @@ module networking 'modules/networking.bicep' = {
     nsgMgmtId: nsg.outputs.nsgMgmtId
     tags: tags
   }
-  dependsOn: [
-    nsg
-  ]
 }
 
 // ----- Module: Key Vault -----
@@ -255,17 +255,17 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     adminPasswordOrKey: vm.osType == 'Windows' ? adminPassword : sshPublicKey
     subnetId: vm.subnet == 'prod' ? networking.outputs.subnetProdId : (vm.subnet == 'dev' ? networking.outputs.subnetDevId : networking.outputs.subnetMgmtId)
     createPublicIp: vm.createPublicIp
-    useGalleryImage: true
+    useGalleryImage: !useMarketplaceImages
     galleryImageId: vm.imageDefinition == 'rocky' ? galleryImageIdRocky : galleryImageIdWindows
+    marketplacePublisher: useMarketplaceImages ? (vm.imageDefinition == 'rocky' ? 'resf' : 'MicrosoftWindowsServer') : ''
+    marketplaceOffer: useMarketplaceImages ? (vm.imageDefinition == 'rocky' ? 'rockylinux-x86_64' : 'WindowsServer') : ''
+    marketplaceSku: useMarketplaceImages ? (vm.imageDefinition == 'rocky' ? '9-base' : '2022-datacenter-azure-edition-smalldisk') : ''
+    marketplaceVersion: 'latest'
     osDiskSizeGb: 128
     osDiskStorageType: 'StandardSSD_LRS'
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     tags: tags
   }
-  dependsOn: [
-    networking
-    monitoring
-  ]
 }]
 
 // ----- Outputs -----

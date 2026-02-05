@@ -1,0 +1,75 @@
+# ============================================================
+# Main Ansible Playbook - SC MEDIA SRL Infrastructure
+# Orchestrates complete deployment and configuration
+# ============================================================
+
+---
+- name: Configure all VMs with common baseline
+  hosts: all
+  become: yes
+  roles:
+    - common
+  tags: [common, baseline]
+
+- name: Configure Windows VMs
+  hosts: windows
+  roles:
+    - role: common
+      tags: [common, windows]
+  tags: [windows]
+
+- name: Configure Linux VMs
+  hosts: linux
+  become: yes
+  roles:
+    - role: common
+      tags: [common, linux]
+  tags: [linux]
+
+- name: Configure Database Server (vm-db-01)
+  hosts: database
+  roles:
+    - mysql
+  tags: [database, mysql]
+
+- name: Configure Web Server (vm-web-01)
+  hosts: webserver
+  become: yes
+  roles:
+    - nginx
+  tags: [webserver, nginx]
+
+- name: Configure CMS Server (vm-cms-01)
+  hosts: cms
+  become: yes
+  roles:
+    - wordpress
+    - postfix
+  tags: [cms, wordpress, mail]
+
+- name: Apply security hardening to all VMs
+  hosts: all
+  become: yes
+  roles:
+    - hardening
+  tags: [hardening, security, cis]
+
+- name: Verify deployment
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check if all services are running
+      ansible.builtin.service_facts:
+
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Deployment Summary for {{ inventory_hostname }}
+          ========================================
+          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          IP: {{ ansible_default_ipv4.address | default('N/A') }}
+          Hostname: {{ ansible_hostname }}
+          Environment: {{ environment | default('unknown') }}
+          ========================================
+  tags: [verify, summary]

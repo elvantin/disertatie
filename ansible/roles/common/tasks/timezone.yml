@@ -1,0 +1,15 @@
+# ============================================================
+# Configure timezone for all systems
+# ============================================================
+
+- name: Set timezone to Europe/Bucharest (Linux)
+  community.general.timezone:
+    name: Europe/Bucharest
+  when: ansible_os_family != 'Windows'
+  tags: [timezone, linux]
+
+- name: Set timezone to Europe/Bucharest (Windows)
+  community.windows.win_timezone:
+    timezone: "E. Europe Standard Time"
+  when: ansible_os_family == 'Windows'
+  tags: [timezone, windows]

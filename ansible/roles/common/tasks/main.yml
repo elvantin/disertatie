@@ -1,0 +1,20 @@
+# ============================================================
+# Ansible Role: common
+# Baseline configuration for all VMs (Windows and Linux)
+# ============================================================
+
+- name: Include OS-specific tasks
+  include_tasks: "{{ ansible_os_family | lower }}.yml"
+  tags: [common, baseline]
+
+- name: Set timezone to Europe/Bucharest
+  include_tasks: timezone.yml
+  tags: [common, timezone]
+
+- name: Configure NTP/Time synchronization
+  include_tasks: ntp.yml
+  tags: [common, ntp]
+
+- name: Configure system-wide security settings
+  include_tasks: security.yml
+  tags: [common, security]

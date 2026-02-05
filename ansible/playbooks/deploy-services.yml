@@ -1,0 +1,26 @@
+# ============================================================
+# Service Deployment Playbook
+# Deploys only application services (skip baseline config)
+# ============================================================
+
+---
+- name: Deploy Web Server
+  hosts: webserver
+  become: yes
+  roles:
+    - nginx
+  tags: [webserver]
+
+- name: Deploy Database Server
+  hosts: database
+  roles:
+    - mysql
+  tags: [database]
+
+- name: Deploy CMS and Mail Server
+  hosts: cms
+  become: yes
+  roles:
+    - wordpress
+    - postfix
+  tags: [cms, mail]

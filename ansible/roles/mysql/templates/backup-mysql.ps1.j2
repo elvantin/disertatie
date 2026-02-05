@@ -1,0 +1,58 @@
+# MySQL Backup Script - Managed by Ansible
+# Performs daily backup of all MySQL databases
+
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$backupDir = "C:\MySQL\Backups"
+$mysqldumpPath = "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe"
+$mysqlUser = "root"
+$mysqlPassword = "{{ mysql_root_password }}"
+
+# Retention policy (days)
+$retentionDays = 7
+
+# Log file
+$logFile = "$backupDir\backup_$timestamp.log"
+
+# Start logging
+"[$(Get-Date)] Starting MySQL backup..." | Out-File -FilePath $logFile -Append
+
+try {
+    # Get list of databases
+    $databases = & "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u $mysqlUser -p$mysqlPassword -e "SHOW DATABASES;" | Select-Object -Skip 1
+
+    foreach ($db in $databases) {
+        # Skip system databases
+        if ($db -match "information_schema|performance_schema|mysql|sys") {
+            continue
+        }
+
+        $backupFile = "$backupDir\$db`_$timestamp.sql"
+
+        "[$(Get-Date)] Backing up database: $db" | Out-File -FilePath $logFile -Append
+
+        # Perform backup
+        & $mysqldumpPath -u $mysqlUser -p$mysqlPassword --single-transaction --routines --triggers $db | Out-File -FilePath $backupFile -Encoding UTF8
+
+        if ($LASTEXITCODE -eq 0) {
+            "[$(Get-Date)] Successfully backed up $db" | Out-File -FilePath $logFile -Append
+
+            # Compress backup
+            Compress-Archive -Path $backupFile -DestinationPath "$backupFile.zip" -Force
+            Remove-Item $backupFile
+
+            "[$(Get-Date)] Compressed $db backup" | Out-File -FilePath $logFile -Append
+        } else {
+            "[$(Get-Date)] ERROR: Failed to backup $db" | Out-File -FilePath $logFile -Append
+        }
+    }
+
+    # Cleanup old backups
+    "[$(Get-Date)] Cleaning up backups older than $retentionDays days..." | Out-File -FilePath $logFile -Append
+    Get-ChildItem -Path $backupDir -Filter "*.zip" | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$retentionDays) } | Remove-Item -Force
+
+    "[$(Get-Date)] MySQL backup completed successfully" | Out-File -FilePath $logFile -Append
+}
+catch {
+    "[$(Get-Date)] ERROR: $($_.Exception.Message)" | Out-File -FilePath $logFile -Append
+    exit 1
+}

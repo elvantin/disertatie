@@ -1,0 +1,15 @@
+# ============================================================
+# Disable unnecessary services
+# ============================================================
+
+- name: Disable unnecessary Linux services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: no
+    state: stopped
+  loop:
+    - rpcbind
+    - nfs-server
+  ignore_errors: yes
+  when: ansible_os_family != 'Windows'
+  tags: [hardening, services]

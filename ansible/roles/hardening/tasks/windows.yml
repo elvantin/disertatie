@@ -1,0 +1,71 @@
+# ============================================================
+# CIS Hardening for Windows Server 2022
+# ============================================================
+
+- name: Disable SMBv1 protocol (security vulnerability)
+  ansible.windows.win_optional_feature:
+    name: SMB1Protocol
+    state: absent
+  tags: [hardening, smb]
+
+- name: Configure Windows password policy
+  ansible.windows.win_shell: |
+    net accounts /minpwlen:14
+    net accounts /maxpwage:90
+    net accounts /minpwage:1
+    net accounts /uniquepw:5
+  tags: [hardening, password]
+
+- name: Configure account lockout policy
+  ansible.windows.win_shell: |
+    net accounts /lockoutthreshold:5
+    net accounts /lockoutduration:30
+    net accounts /lockoutwindow:30
+  tags: [hardening, lockout]
+
+- name: Enable Windows Defender real-time protection
+  ansible.windows.win_shell: |
+    Set-MpPreference -DisableRealtimeMonitoring $false
+    Set-MpPreference -DisableBehaviorMonitoring $false
+  tags: [hardening, defender]
+
+- name: Disable unnecessary Windows services
+  ansible.windows.win_service:
+    name: "{{ item }}"
+    start_mode: disabled
+    state: stopped
+  loop:
+    - XblAuthManager
+    - XblGameSave
+    - XboxNetApiSvc
+  ignore_errors: yes
+  tags: [hardening, services]
+
+- name: Configure User Account Control (UAC) to highest level
+  ansible.windows.win_regedit:
+    path: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+    name: ConsentPromptBehaviorAdmin
+    data: 2
+    type: dword
+  tags: [hardening, uac]
+
+- name: Disable Anonymous SID enumeration
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Control\Lsa
+    name: RestrictAnonymousSAM
+    data: 1
+    type: dword
+  tags: [hardening, lsa]
+
+- name: Configure NTLMv2 only authentication
+  ansible.windows.win_regedit:
+    path: HKLM:\SYSTEM\CurrentControlSet\Control\Lsa
+    name: LmCompatibilityLevel
+    data: 5
+    type: dword
+  tags: [hardening, ntlm]
+
+- name: Enable Windows Firewall logging
+  ansible.windows.win_shell: |
+    Set-NetFirewallProfile -Profile Domain,Public,Private -LogBlocked True -LogAllowed True
+  tags: [hardening, firewall]

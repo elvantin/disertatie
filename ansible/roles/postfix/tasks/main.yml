@@ -1,0 +1,64 @@
+# ============================================================
+# Ansible Role: postfix
+# Installs and configures Postfix mail server on vm-cms-01
+# ============================================================
+
+- name: Install Postfix and related packages
+  ansible.builtin.dnf:
+    name:
+      - postfix
+      - mailx
+      - cyrus-sasl
+      - cyrus-sasl-plain
+    state: present
+  tags: [postfix, packages]
+
+- name: Configure Postfix main.cf
+  ansible.builtin.template:
+    src: main.cf.j2
+    dest: /etc/postfix/main.cf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart postfix
+  tags: [postfix, config]
+
+- name: Configure Postfix master.cf
+  ansible.builtin.template:
+    src: master.cf.j2
+    dest: /etc/postfix/master.cf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart postfix
+  tags: [postfix, config]
+
+- name: Create mail aliases
+  ansible.builtin.lineinfile:
+    path: /etc/aliases
+    regexp: '^root:'
+    line: 'root: admin@mediasrl.ro'
+    create: yes
+  notify: newaliases
+  tags: [postfix, aliases]
+
+- name: Configure firewall for SMTP
+  ansible.posix.firewalld:
+    service: smtp
+    permanent: yes
+    state: enabled
+    immediate: yes
+  tags: [postfix, firewall]
+
+- name: Enable and start Postfix service
+  ansible.builtin.systemd:
+    name: postfix
+    enabled: yes
+    state: started
+  tags: [postfix, service]
+
+- name: Verify Postfix is listening on port 25
+  ansible.builtin.wait_for:
+    port: 25
+    timeout: 30
+  tags: [postfix, verify]

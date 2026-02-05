@@ -1,0 +1,70 @@
+# ============================================================
+# Common tasks for RedHat-based systems (Rocky Linux)
+# ============================================================
+
+- name: Update all packages to latest version
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    update_cache: yes
+  tags: [packages, update]
+
+- name: Install common utilities
+  ansible.builtin.dnf:
+    name:
+      - vim
+      - wget
+      - curl
+      - git
+      - htop
+      - net-tools
+      - bind-utils
+      - tcpdump
+      - unzip
+      - tar
+      - rsync
+      - python3
+      - python3-pip
+    state: present
+  tags: [packages, utilities]
+
+- name: Install Azure VM agent (waagent)
+  ansible.builtin.dnf:
+    name: WALinuxAgent
+    state: present
+  tags: [packages, azure]
+
+- name: Enable and start waagent service
+  ansible.builtin.systemd:
+    name: waagent
+    enabled: yes
+    state: started
+  tags: [services, azure]
+
+- name: Set SELinux to enforcing mode
+  ansible.posix.selinux:
+    policy: targeted
+    state: enforcing
+  when: ansible_selinux.status == 'enabled'
+  tags: [security, selinux]
+
+- name: Ensure firewalld is installed and running
+  block:
+    - name: Install firewalld
+      ansible.builtin.dnf:
+        name: firewalld
+        state: present
+
+    - name: Enable and start firewalld
+      ansible.builtin.systemd:
+        name: firewalld
+        enabled: yes
+        state: started
+  tags: [firewall, security]
+
+- name: Configure system logging
+  ansible.builtin.systemd:
+    name: rsyslog
+    enabled: yes
+    state: started
+  tags: [logging]

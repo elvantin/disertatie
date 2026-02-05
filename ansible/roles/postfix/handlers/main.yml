@@ -1,0 +1,12 @@
+# ============================================================
+# Ansible Role: postfix - Handlers
+# ============================================================
+
+- name: restart postfix
+  ansible.builtin.systemd:
+    name: postfix
+    state: restarted
+
+- name: newaliases
+  ansible.builtin.command: newaliases
+  changed_when: false

@@ -1,0 +1,95 @@
+# ============================================================
+# Ansible Role: nginx
+# Installs and configures nginx web server on vm-web-01
+# ============================================================
+
+- name: Install nginx and dependencies
+  ansible.builtin.dnf:
+    name:
+      - nginx
+      - python3-pip
+      - python3-cryptography
+    state: present
+  tags: [nginx, packages]
+
+- name: Create website directory structure
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: nginx
+    group: nginx
+    mode: '0755'
+  loop:
+    - /var/www/mediasrl
+    - /var/www/mediasrl/html
+    - /var/www/mediasrl/logs
+  tags: [nginx, directories]
+
+- name: Copy website files
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: nginx
+    group: nginx
+    mode: '0644'
+  loop:
+    - { src: 'index.html', dest: '/var/www/mediasrl/html/index.html' }
+  tags: [nginx, content]
+
+- name: Configure nginx main configuration
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/nginx.conf
+    owner: root
+    group: root
+    mode: '0644'
+    validate: 'nginx -t -c %s'
+  notify: restart nginx
+  tags: [nginx, config]
+
+- name: Configure nginx virtual host for SC MEDIA SRL
+  ansible.builtin.template:
+    src: mediasrl.conf.j2
+    dest: /etc/nginx/conf.d/mediasrl.conf
+    owner: root
+    group: root
+    mode: '0644'
+    validate: 'nginx -t'
+  notify: restart nginx
+  tags: [nginx, vhost, config]
+
+- name: Configure firewall for HTTP and HTTPS
+  ansible.posix.firewalld:
+    service: "{{ item }}"
+    permanent: yes
+    state: enabled
+    immediate: yes
+  loop:
+    - http
+    - https
+  tags: [nginx, firewall]
+
+- name: Set SELinux boolean for nginx network connections
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect
+    state: yes
+    persistent: yes
+  when: ansible_selinux.status == 'enabled'
+  tags: [nginx, selinux]
+
+- name: Enable and start nginx service
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: yes
+    state: started
+  tags: [nginx, service]
+
+- name: Verify nginx is responding
+  ansible.builtin.uri:
+    url: http://localhost
+    status_code: 200
+  register: nginx_check
+  retries: 3
+  delay: 5
+  until: nginx_check.status == 200
+  tags: [nginx, verify]

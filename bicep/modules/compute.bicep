@@ -138,6 +138,11 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
   name: vmName
   location: location
   tags: tags
+  plan: !useGalleryImage && marketplacePublisher != 'MicrosoftWindowsServer' ? {
+    name: marketplaceSku
+    publisher: marketplacePublisher
+    product: marketplaceOffer
+  } : null
   properties: {
     hardwareProfile: {
       vmSize: vmSize
@@ -198,6 +203,7 @@ resource vmExtensionMmaWindows 'Microsoft.Compute/virtualMachines/extensions@202
   parent: vm
   name: 'MicrosoftMonitoringAgent'
   location: location
+  tags: tags
   properties: {
     publisher: 'Microsoft.EnterpriseCloud.Monitoring'
     type: 'MicrosoftMonitoringAgent'
@@ -216,6 +222,7 @@ resource vmExtensionOmsLinux 'Microsoft.Compute/virtualMachines/extensions@2023-
   parent: vm
   name: 'OmsAgentForLinux'
   location: location
+  tags: tags
   properties: {
     publisher: 'Microsoft.EnterpriseCloud.Monitoring'
     type: 'OmsAgentForLinux'
@@ -236,4 +243,7 @@ output vmId string = vm.id
 output vmName string = vm.name
 output nicId string = nic.id
 output privateIpAddress string = nic.properties.ipConfigurations[0].properties.privateIPAddress
+
+// Conditional output for public IP (avoid BCP318 warning by using resource condition)
+@description('Public IP address (empty if createPublicIp = false)')
 output publicIpAddress string = createPublicIp ? publicIp.properties.ipAddress : ''

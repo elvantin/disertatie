@@ -1,0 +1,76 @@
+# Nginx virtual host configuration for SC MEDIA SRL
+# Managed by Ansible
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name {{ ansible_hostname }} {{ ansible_fqdn | default('_') }};
+
+    root /var/www/mediasrl/html;
+    index index.html index.htm;
+
+    # Access and error logs
+    access_log /var/www/mediasrl/logs/access.log main;
+    error_log /var/www/mediasrl/logs/error.log warn;
+
+    # Security: Deny access to hidden files
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Main location block
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # Proxy to application server (vm-app-01)
+    location /api/ {
+        proxy_pass http://10.10.10.15:8080/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Proxy timeouts
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    # Health check endpoint
+    location /health {
+        access_log off;
+        return 200 "OK\n";
+        add_header Content-Type text/plain;
+    }
+
+    # Error pages
+    error_page 404 /404.html;
+    location = /404.html {
+        internal;
+    }
+
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        internal;
+    }
+}
+
+# HTTPS configuration (uncomment when SSL certificates are available)
+# server {
+#     listen 443 ssl http2;
+#     listen [::]:443 ssl http2;
+#
+#     server_name {{ ansible_hostname }} {{ ansible_fqdn | default('_') }};
+#
+#     ssl_certificate /etc/nginx/ssl/mediasrl.crt;
+#     ssl_certificate_key /etc/nginx/ssl/mediasrl.key;
+#
+#     root /var/www/mediasrl/html;
+#     index index.html index.htm;
+#
+#     # Same location blocks as HTTP
+# }

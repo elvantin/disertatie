@@ -1,0 +1,21 @@
+# ============================================================
+# Ansible Role: mysql - Default Variables
+# IMPORTANT: Override these in group_vars or use Ansible Vault
+# ============================================================
+
+# MySQL root password (MUST be changed and stored in Ansible Vault)
+mysql_root_password: "ChangeMe_R00t_P@ssw0rd!"
+
+# WordPress database credentials
+mysql_wordpress_password: "ChangeMe_WP_P@ssw0rd!"
+
+# Monitoring user password
+mysql_monitoring_password: "ChangeMe_Mon_P@ssw0rd!"
+
+# Database settings
+mysql_port: 3306
+mysql_bind_address: "10.10.10.5"
+mysql_max_connections: 200
+
+# Backup settings
+mysql_backup_retention_days: 7

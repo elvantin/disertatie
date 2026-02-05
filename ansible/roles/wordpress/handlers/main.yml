@@ -1,0 +1,13 @@
+# ============================================================
+# Ansible Role: wordpress - Handlers
+# ============================================================
+
+- name: restart php-fpm
+  ansible.builtin.systemd:
+    name: php-fpm
+    state: restarted
+
+- name: restart nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: restarted

@@ -1,0 +1,20 @@
+# ============================================================
+# Ansible Role: wordpress - Default Variables
+# IMPORTANT: Override sensitive values in Ansible Vault
+# ============================================================
+
+# Database connection
+wordpress_db_name: wordpress_db
+wordpress_db_user: wordpress_user
+wordpress_db_password: "ChangeMe_WP_P@ssw0rd!"
+wordpress_db_host: "10.10.10.5"
+
+# WordPress Authentication Keys (generate from https://api.wordpress.org/secret-key/1.1/salt/)
+wordpress_auth_key: "put your unique phrase here"
+wordpress_secure_auth_key: "put your unique phrase here"
+wordpress_logged_in_key: "put your unique phrase here"
+wordpress_nonce_key: "put your unique phrase here"
+wordpress_auth_salt: "put your unique phrase here"
+wordpress_secure_auth_salt: "put your unique phrase here"
+wordpress_logged_in_salt: "put your unique phrase here"
+wordpress_nonce_salt: "put your unique phrase here"

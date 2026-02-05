@@ -1,0 +1,48 @@
+# ============================================================
+# Common tasks for Windows systems (Windows Server 2022)
+# ============================================================
+
+- name: Install Windows Updates
+  ansible.windows.win_updates:
+    category_names:
+      - SecurityUpdates
+      - CriticalUpdates
+      - UpdateRollups
+    state: installed
+    reboot: no
+  tags: [windows, updates]
+
+- name: Install common Windows features
+  ansible.windows.win_feature:
+    name:
+      - NET-Framework-45-Core
+      - PowerShell-V2
+      - Telnet-Client
+    state: present
+  tags: [windows, features]
+
+- name: Configure Windows Firewall (ensure it's enabled)
+  ansible.windows.win_firewall:
+    state: enabled
+    profiles:
+      - Domain
+      - Private
+      - Public
+  tags: [windows, firewall, security]
+
+- name: Set Windows Defender real-time protection
+  ansible.windows.win_shell: |
+    Set-MpPreference -DisableRealtimeMonitoring $false
+  tags: [windows, security, defender]
+
+- name: Enable Windows Event Log auditing
+  ansible.windows.win_shell: |
+    auditpol /set /category:"Account Logon" /success:enable /failure:enable
+    auditpol /set /category:"Logon/Logoff" /success:enable /failure:enable
+  tags: [windows, security, audit]
+
+- name: Configure Windows Remote Management (WinRM)
+  ansible.windows.win_shell: |
+    winrm quickconfig -quiet
+    Set-Item WSMan:\localhost\MaxEnvelopeSizekb -Value 8192
+  tags: [windows, winrm]

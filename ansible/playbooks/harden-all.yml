@@ -1,0 +1,17 @@
+# ============================================================
+# Security Hardening Playbook
+# Applies CIS Benchmark hardening to all VMs
+# ============================================================
+
+---
+- name: Apply security hardening to all systems
+  hosts: all
+  become: yes
+  roles:
+    - hardening
+  tags: [hardening, security, cis]
+
+  post_tasks:
+    - name: Verify hardening applied successfully
+      ansible.builtin.debug:
+        msg: "Security hardening applied to {{ inventory_hostname }}"

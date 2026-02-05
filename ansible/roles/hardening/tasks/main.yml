@@ -1,0 +1,20 @@
+# ============================================================
+# Ansible Role: hardening
+# CIS Benchmark compliance for all VMs
+# ============================================================
+
+- name: Include OS-specific hardening tasks
+  include_tasks: "{{ ansible_os_family | lower }}.yml"
+  tags: [hardening, cis]
+
+- name: Configure audit logging
+  include_tasks: audit.yml
+  tags: [hardening, audit]
+
+- name: Configure kernel parameters for security
+  include_tasks: kernel.yml
+  tags: [hardening, kernel]
+
+- name: Disable unnecessary services
+  include_tasks: services.yml
+  tags: [hardening, services]

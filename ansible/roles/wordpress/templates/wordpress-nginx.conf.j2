@@ -1,0 +1,64 @@
+# Nginx configuration for WordPress - Managed by Ansible
+
+server {
+    listen 80;
+    server_name {{ ansible_hostname }}.{{ ansible_domain | default('local') }};
+
+    root /var/www/wordpress;
+    index index.php index.html;
+
+    access_log /var/log/nginx/wordpress-access.log;
+    error_log /var/log/nginx/wordpress-error.log;
+
+    client_max_body_size 64M;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    # WordPress specific rules
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    # Deny access to PHP files in uploads directory
+    location ~* /(?:uploads|files)/.*\.php$ {
+        deny all;
+    }
+
+    # Deny access to hidden files
+    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # Deny access to WordPress configuration files
+    location ~ wp-config.php {
+        deny all;
+    }
+
+    # Handle PHP files
+    location ~ \.php$ {
+        try_files $uri =404;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+        fastcgi_pass unix:/run/php-fpm/wordpress.sock;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+
+    # Cache static assets
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Deny access to xmlrpc.php (prevent brute force attacks)
+    location = /xmlrpc.php {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+}

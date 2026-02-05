@@ -1,0 +1,9 @@
+# ============================================================
+# Ansible Role: hardening - Handlers
+# ============================================================
+
+- name: restart auditd
+  ansible.builtin.systemd:
+    name: auditd
+    state: restarted
+  when: ansible_os_family == 'RedHat'

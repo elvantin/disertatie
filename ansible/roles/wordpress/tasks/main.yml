@@ -1,0 +1,125 @@
+# ============================================================
+# Ansible Role: wordpress
+# Installs and configures WordPress on vm-cms-01 (Rocky Linux)
+# ============================================================
+
+- name: Install PHP and required extensions
+  ansible.builtin.dnf:
+    name:
+      - php
+      - php-fpm
+      - php-mysqlnd
+      - php-gd
+      - php-xml
+      - php-mbstring
+      - php-json
+      - php-curl
+      - php-zip
+      - php-intl
+      - php-soap
+    state: present
+  tags: [wordpress, php, packages]
+
+- name: Create WordPress directory
+  ansible.builtin.file:
+    path: /var/www/wordpress
+    state: directory
+    owner: nginx
+    group: nginx
+    mode: '0755'
+  tags: [wordpress, directories]
+
+- name: Download WordPress
+  ansible.builtin.get_url:
+    url: https://wordpress.org/latest.tar.gz
+    dest: /tmp/wordpress.tar.gz
+    mode: '0644'
+  tags: [wordpress, download]
+
+- name: Extract WordPress archive
+  ansible.builtin.unarchive:
+    src: /tmp/wordpress.tar.gz
+    dest: /var/www/
+    remote_src: yes
+    owner: nginx
+    group: nginx
+  tags: [wordpress, extract]
+
+- name: Configure WordPress wp-config.php
+  ansible.builtin.template:
+    src: wp-config.php.j2
+    dest: /var/www/wordpress/wp-config.php
+    owner: nginx
+    group: nginx
+    mode: '0640'
+  tags: [wordpress, config]
+
+- name: Set correct permissions on WordPress files
+  ansible.builtin.file:
+    path: /var/www/wordpress
+    state: directory
+    owner: nginx
+    group: nginx
+    recurse: yes
+  tags: [wordpress, permissions]
+
+- name: Configure PHP-FPM for WordPress
+  ansible.builtin.template:
+    src: wordpress-pool.conf.j2
+    dest: /etc/php-fpm.d/wordpress.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart php-fpm
+  tags: [wordpress, php-fpm, config]
+
+- name: Configure nginx virtual host for WordPress
+  ansible.builtin.template:
+    src: wordpress-nginx.conf.j2
+    dest: /etc/nginx/conf.d/wordpress.conf
+    owner: root
+    group: root
+    mode: '0644'
+    validate: 'nginx -t'
+  notify: restart nginx
+  tags: [wordpress, nginx, config]
+
+- name: Enable and start PHP-FPM service
+  ansible.builtin.systemd:
+    name: php-fpm
+    enabled: yes
+    state: started
+  tags: [wordpress, php-fpm, service]
+
+- name: Configure firewall for HTTP/HTTPS
+  ansible.posix.firewalld:
+    service: "{{ item }}"
+    permanent: yes
+    state: enabled
+    immediate: yes
+  loop:
+    - http
+    - https
+  tags: [wordpress, firewall]
+
+- name: Set SELinux context for WordPress directory
+  community.general.sefcontext:
+    target: '/var/www/wordpress(/.*)?'
+    setype: httpd_sys_rw_content_t
+    state: present
+  when: ansible_selinux.status == 'enabled'
+  tags: [wordpress, selinux]
+
+- name: Apply SELinux context
+  ansible.builtin.command: restorecon -R /var/www/wordpress
+  when: ansible_selinux.status == 'enabled'
+  changed_when: false
+  tags: [wordpress, selinux]
+
+- name: Create WordPress cron job for scheduled tasks
+  ansible.builtin.cron:
+    name: "WordPress Cron"
+    minute: "*/15"
+    job: "cd /var/www/wordpress && /usr/bin/php wp-cron.php > /dev/null 2>&1"
+    user: nginx
+  tags: [wordpress, cron]

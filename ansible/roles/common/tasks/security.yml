@@ -1,0 +1,70 @@
+# ============================================================
+# System-wide security configuration
+# ============================================================
+
+# ----- Linux Security -----
+
+- name: Disable root login via SSH (Linux)
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^PermitRootLogin'
+    line: 'PermitRootLogin no'
+    state: present
+  when: ansible_os_family != 'Windows'
+  notify: restart sshd
+  tags: [security, ssh, linux]
+
+- name: Disable password authentication for SSH (Linux)
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^PasswordAuthentication'
+    line: 'PasswordAuthentication no'
+    state: present
+  when: ansible_os_family != 'Windows'
+  notify: restart sshd
+  tags: [security, ssh, linux]
+
+- name: Configure SSH to use strong ciphers only (Linux)
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config
+    block: |
+      # Strong cryptographic algorithms
+      Ciphers aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
+      MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
+      KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
+    marker: "# {mark} ANSIBLE MANAGED - SSH CIPHERS"
+  when: ansible_os_family != 'Windows'
+  notify: restart sshd
+  tags: [security, ssh, linux, hardening]
+
+- name: Set correct permissions on sensitive files (Linux)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    mode: '0600'
+    owner: root
+    group: root
+  loop:
+    - /etc/ssh/sshd_config
+    - /etc/shadow
+    - /etc/gshadow
+  when: ansible_os_family != 'Windows'
+  tags: [security, permissions, linux]
+
+# ----- Windows Security -----
+
+- name: Configure Windows password policy
+  ansible.windows.win_shell: |
+    net accounts /minpwlen:14
+    net accounts /maxpwage:90
+    net accounts /minpwage:1
+    net accounts /uniquepw:5
+  when: ansible_os_family == 'Windows'
+  tags: [security, windows, password]
+
+- name: Configure Windows account lockout policy
+  ansible.windows.win_shell: |
+    net accounts /lockoutthreshold:5
+    net accounts /lockoutduration:30
+    net accounts /lockoutwindow:30
+  when: ansible_os_family == 'Windows'
+  tags: [security, windows, lockout]

@@ -1,0 +1,73 @@
+# MySQL Server configuration file - Managed by Ansible
+# Optimized for production use with security and performance tuning
+
+[mysqld]
+# Basic settings
+port = 3306
+datadir = C:/MySQL/Data
+basedir = C:/Program Files/MySQL/MySQL Server 8.0
+socket = /tmp/mysql.sock
+
+# Server identification
+server_id = 1
+
+# Character set and collation
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+
+# Binary logging (for point-in-time recovery)
+log_bin = C:/MySQL/Data/mysql-bin.log
+binlog_format = ROW
+expire_logs_days = 7
+max_binlog_size = 100M
+
+# Error logging
+log_error = C:/MySQL/Data/error.log
+
+# Slow query log
+slow_query_log = 1
+slow_query_log_file = C:/MySQL/Data/slow-query.log
+long_query_time = 2
+
+# General log (disable in production for performance)
+general_log = 0
+general_log_file = C:/MySQL/Data/general.log
+
+# Performance tuning
+max_connections = 200
+max_allowed_packet = 64M
+thread_cache_size = 8
+table_open_cache = 400
+
+# InnoDB settings
+innodb_buffer_pool_size = 1G
+innodb_log_file_size = 256M
+innodb_log_buffer_size = 8M
+innodb_flush_log_at_trx_commit = 1
+innodb_lock_wait_timeout = 50
+innodb_file_per_table = 1
+
+# Query cache (deprecated in MySQL 8.0)
+# query_cache_size = 0
+# query_cache_type = 0
+
+# Security settings
+# Only allow connections from production subnet
+bind-address = 10.10.10.5
+skip-name-resolve
+
+# SSL/TLS (configure certificates separately)
+# require_secure_transport = ON
+# ssl-ca = C:/MySQL/certs/ca.pem
+# ssl-cert = C:/MySQL/certs/server-cert.pem
+# ssl-key = C:/MySQL/certs/server-key.pem
+
+# Replication settings (if needed)
+# read_only = OFF
+
+[mysql]
+default-character-set = utf8mb4
+
+[client]
+port = 3306
+default-character-set = utf8mb4

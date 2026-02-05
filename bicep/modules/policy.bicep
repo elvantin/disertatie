@@ -105,6 +105,11 @@ resource policyAllowedVmSkus 'Microsoft.Authorization/policyAssignments@2023-04-
           'Standard_B2s'
           'Standard_B2ms'
           'Standard_B4ms'
+          'Standard_B2s_v2'
+          'Standard_B2as_v2'
+          'Standard_B2als_v2'
+          'Standard_B4s_v2'
+          'Standard_B4as_v2'
           'Standard_D2s_v3'
           'Standard_D4s_v3'
         ]
