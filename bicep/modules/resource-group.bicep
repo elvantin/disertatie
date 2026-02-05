@@ -13,15 +13,15 @@ param resourceGroupName string
 @description('Azure region for the Resource Group')
 param location string
 
-@description('Environment (prod/dev)')
+@description('Environment (productie/dezvoltare)')
 @allowed([
-  'prod'
-  'dev'
+  'productie'
+  'dezvoltare'
 ])
 param environment string
 
 @description('Project name')
-param project string = 'media'
+param project string = 'mediasrl'
 
 @description('Owner')
 param owner string = 'IT Security SRL'

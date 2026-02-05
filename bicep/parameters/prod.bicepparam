@@ -6,8 +6,8 @@ using '../main.bicep'
 
 // ----- Environment Configuration -----
 
-param location = 'westeurope'
-param environment = 'prod'
+param location = 'swedencentral'
+param environment = 'productie'
 
 // ----- Networking -----
 
@@ -27,7 +27,7 @@ param adminObjectId = '00000000-0000-0000-0000-000000000000' // TODO: az ad sign
 
 // ----- Compute Gallery -----
 
-param computeGalleryName = 'gal_media'
+param computeGalleryName = 'gal_mediasrl'
 param rockyImageDefinition = 'imgdef-rockylinux10'
 param windowsImageDefinition = 'imgdef-winserver2022'
 param imageVersion = '1.0.0'

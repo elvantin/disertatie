@@ -8,20 +8,20 @@ targetScope = 'subscription'
 // ----- Parameters -----
 
 @description('Azure region for all resources')
-param location string = 'westeurope'
+param location string = 'swedencentral'
 
-@description('Environment (prod/dev)')
+@description('Environment (productie/dezvoltare)')
 @allowed([
-  'prod'
-  'dev'
+  'productie'
+  'dezvoltare'
 ])
-param environment string = 'prod'
+param environment string = 'productie'
 
 @description('Resource Group name')
-param resourceGroupName string = 'rg-media-${environment}-${location}'
+param resourceGroupName string = 'rg-mediasrl-${environment}-${location}'
 
 @description('VNet name')
-param vnetName string = 'vnet-media-${environment}'
+param vnetName string = 'vnet-mediasrl-${environment}'
 
 @description('VNet address space')
 param vnetAddressSpace string = '10.10.0.0/20'
@@ -41,10 +41,10 @@ param adminIpAddress string
 @description('Key Vault name (must be globally unique)')
 @minLength(3)
 @maxLength(24)
-param keyVaultName string = 'kv-media-${environment}'
+param keyVaultName string = 'kv-mediasrl-${environment}'
 
 @description('Log Analytics Workspace name')
-param logAnalyticsWorkspaceName string = 'log-media-${environment}'
+param logAnalyticsWorkspaceName string = 'log-mediasrl-${environment}'
 
 @description('Azure AD Tenant ID')
 param tenantId string
@@ -53,7 +53,7 @@ param tenantId string
 param adminObjectId string
 
 @description('Azure Compute Gallery name')
-param computeGalleryName string = 'gal_media'
+param computeGalleryName string = 'gal_mediasrl'
 
 @description('Rocky Linux 10 image definition name in gallery')
 param rockyImageDefinition string = 'imgdef-rockylinux10'
@@ -122,7 +122,7 @@ param vms array = [
 
 var tags = {
   environment: environment
-  project: 'media'
+  project: 'mediasrl'
   owner: 'IT Security SRL'
   'managed-by': 'bicep'
 }
@@ -139,7 +139,7 @@ module resourceGroup 'modules/resource-group.bicep' = {
     resourceGroupName: resourceGroupName
     location: location
     environment: environment
-    project: 'media'
+    project: 'mediasrl'
     owner: 'IT Security SRL'
   }
 }
@@ -150,6 +150,7 @@ module policy 'modules/policy.bicep' = {
   name: 'deploy-policy'
   params: {
     allowedLocations: [
+      'swedencentral'
       'westeurope'
       'northeurope'
     ]
