@@ -1,14 +1,14 @@
 # ============================================================
 # Ansible Role: wordpress
 # Installs and configures WordPress on vm-cms-01 (Rocky Linux)
+# Connects to remote MS SQL Server on vm-db-01
 # ============================================================
 
-- name: Install PHP and required extensions
+- name: Install PHP and required extensions for SQL Server
   ansible.builtin.dnf:
     name:
       - php
       - php-fpm
-      - php-mysqlnd
       - php-gd
       - php-xml
       - php-mbstring
@@ -17,8 +17,60 @@
       - php-zip
       - php-intl
       - php-soap
+      - php-odbc
+      - unixODBC
     state: present
   tags: [wordpress, php, packages]
+
+- name: Install Microsoft ODBC Driver for SQL Server repository
+  ansible.builtin.yum_repository:
+    name: mssql-release
+    description: Microsoft SQL Server ODBC Driver Repository
+    baseurl: https://packages.microsoft.com/rhel/9/prod/
+    gpgcheck: yes
+    gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+    enabled: yes
+  tags: [wordpress, mssql, repository]
+
+- name: Install Microsoft ODBC Driver 18 for SQL Server
+  ansible.builtin.dnf:
+    name:
+      - msodbcsql18
+    state: present
+    disable_gpg_check: yes
+  environment:
+    ACCEPT_EULA: Y
+  tags: [wordpress, mssql, odbc]
+
+- name: Install SQL Server command-line tools
+  ansible.builtin.dnf:
+    name:
+      - mssql-tools18
+    state: present
+    disable_gpg_check: yes
+  environment:
+    ACCEPT_EULA: Y
+  tags: [wordpress, mssql, tools]
+
+- name: Install PHP SQL Server drivers (sqlsrv and pdo_sqlsrv)
+  ansible.builtin.shell: |
+    pecl install sqlsrv
+    pecl install pdo_sqlsrv
+  args:
+    creates: /usr/lib64/php/modules/sqlsrv.so
+  tags: [wordpress, php, sqlsrv]
+
+- name: Enable PHP SQL Server extensions
+  ansible.builtin.copy:
+    dest: "/etc/php.d/{{ item }}.ini"
+    content: |
+      extension={{ item }}.so
+    mode: '0644'
+  loop:
+    - sqlsrv
+    - pdo_sqlsrv
+  notify: restart php-fpm
+  tags: [wordpress, php, config]
 
 - name: Create WordPress directory
   ansible.builtin.file:
@@ -45,7 +97,7 @@
     group: nginx
   tags: [wordpress, extract]
 
-- name: Configure WordPress wp-config.php
+- name: Configure WordPress wp-config.php for SQL Server
   ansible.builtin.template:
     src: wp-config.php.j2
     dest: /var/www/wordpress/wp-config.php
@@ -114,6 +166,14 @@
   ansible.builtin.command: restorecon -R /var/www/wordpress
   when: ansible_selinux.status == 'enabled'
   changed_when: false
+  tags: [wordpress, selinux]
+
+- name: Allow httpd to make network connections (for SQL Server)
+  ansible.posix.seboolean:
+    name: httpd_can_network_connect_db
+    state: yes
+    persistent: yes
+  when: ansible_selinux.status == 'enabled'
   tags: [wordpress, selinux]
 
 - name: Create WordPress cron job for scheduled tasks

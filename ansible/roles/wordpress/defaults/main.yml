@@ -3,11 +3,12 @@
 # IMPORTANT: Override sensitive values in Ansible Vault
 # ============================================================
 
-# Database connection
+# Database connection (remote MS SQL Server on vm-db-01)
 wordpress_db_name: wordpress_db
 wordpress_db_user: wordpress_user
-wordpress_db_password: "ChangeMe_WP_P@ssw0rd!"
-wordpress_db_host: "10.10.10.5"
+wordpress_db_password: "ChangeMe_WP_DB_P@ssw0rd!"
+wordpress_db_host: "vm-db-01"
+wordpress_db_type: "sqlsrv" # Using SQL Server instead of MySQL
 
 # WordPress Authentication Keys (generate from https://api.wordpress.org/secret-key/1.1/salt/)
 wordpress_auth_key: "put your unique phrase here"

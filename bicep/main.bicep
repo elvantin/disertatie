@@ -78,48 +78,7 @@ param sshPublicKey string
 param useMarketplaceImages bool = true
 
 @description('VM configurations')
-param vms array = [
-  {
-    name: 'vm-jmp-01'
-    osType: 'Windows'
-    size: 'Standard_B2s'
-    subnet: 'mgmt'
-    createPublicIp: true
-    imageDefinition: 'windows'
-  }
-  {
-    name: 'vm-db-01'
-    osType: 'Windows'
-    size: 'Standard_B2s'
-    subnet: 'prod'
-    createPublicIp: false
-    imageDefinition: 'windows'
-  }
-  {
-    name: 'vm-web-01'
-    osType: 'Linux'
-    size: 'Standard_B2s'
-    subnet: 'prod'
-    createPublicIp: false
-    imageDefinition: 'rocky'
-  }
-  {
-    name: 'vm-app-01'
-    osType: 'Linux'
-    size: 'Standard_B2s'
-    subnet: 'prod'
-    createPublicIp: false
-    imageDefinition: 'rocky'
-  }
-  {
-    name: 'vm-cms-01'
-    osType: 'Linux'
-    size: 'Standard_B2s'
-    subnet: 'prod'
-    createPublicIp: false
-    imageDefinition: 'rocky'
-  }
-]
+param vms array = [  {    name: 'vm-jmp-01'    osType: 'Linux'    size: 'Standard_B2s'    subnet: 'mgmt'    createPublicIp: true    imageDefinition: 'rocky'  }  {    name: 'vm-fs-01'    osType: 'Windows'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'windows'  }  {    name: 'vm-db-01'    osType: 'Windows'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'windows'  }  {    name: 'vm-web-01'    osType: 'Linux'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'rocky'  }  {    name: 'vm-app-01'    osType: 'Linux'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'rocky'  }  {    name: 'vm-cms-01'    osType: 'Linux'    size: 'Standard_B2s'    subnet: 'prod'    createPublicIp: false    imageDefinition: 'rocky'  }]
 
 // ----- Variables -----
 

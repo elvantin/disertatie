@@ -1,0 +1,122 @@
+# ============================================================
+# Ansible Role: fileserver
+# Configures Windows Server as File Server with SMB shares
+# ============================================================
+
+- name: Install File Server role
+  ansible.windows.win_feature:
+    name: FS-FileServer
+    state: present
+    include_management_tools: yes
+  tags: [fileserver, role]
+
+- name: Create shared folders directory structure
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - C:\Shares
+    - C:\Shares\Public
+    - C:\Shares\Marketing
+    - C:\Shares\IT
+    - C:\Shares\Backups
+  tags: [fileserver, directories]
+
+- name: Create SMB share - Public
+  ansible.windows.win_share:
+    name: Public
+    path: C:\Shares\Public
+    description: "Public shared folder"
+    full: "Everyone"
+    state: present
+  tags: [fileserver, shares]
+
+- name: Create SMB share - Marketing
+  ansible.windows.win_share:
+    name: Marketing
+    path: C:\Shares\Marketing
+    description: "Marketing department files"
+    full: "Administrators"
+    change: "Users"
+    state: present
+  tags: [fileserver, shares]
+
+- name: Create SMB share - IT
+  ansible.windows.win_share:
+    name: IT
+    path: C:\Shares\IT
+    description: "IT department files"
+    full: "Administrators"
+    state: present
+  tags: [fileserver, shares]
+
+- name: Create SMB share - Backups
+  ansible.windows.win_share:
+    name: Backups
+    path: C:\Shares\Backups
+    description: "Centralized backup storage"
+    full: "Administrators"
+    state: present
+  tags: [fileserver, shares]
+
+- name: Configure Windows Firewall for SMB
+  community.windows.win_firewall_rule:
+    name: "{{ item.name }}"
+    localport: "{{ item.port }}"
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: yes
+  loop:
+    - { name: 'SMB over TCP', port: '445' }
+    - { name: 'NetBIOS Session Service', port: '139' }
+  tags: [fileserver, firewall]
+
+- name: Enable SMBv2 and SMBv3 (disable SMBv1)
+  ansible.windows.win_shell: |
+    Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force
+    Set-SmbServerConfiguration -EnableSMB2Protocol $true -Force
+  tags: [fileserver, smb, security]
+
+- name: Configure SMB signing (security)
+  ansible.windows.win_shell: |
+    Set-SmbServerConfiguration -RequireSecuritySignature $true -Force
+  tags: [fileserver, smb, security]
+
+- name: Create readme file in Public share
+  ansible.windows.win_copy:
+    content: |
+      ==========================================
+      SC MEDIA SRL - File Server
+      ==========================================
+
+      Available Shares:
+
+      \\vm-fs-01\Public     - Public shared folder
+      \\vm-fs-01\Marketing  - Marketing department
+      \\vm-fs-01\IT         - IT department
+      \\vm-fs-01\Backups    - Backup storage
+
+      Access from Linux:
+      sudo mount -t cifs //vm-fs-01/Public /mnt/public -o username=azureadmin,password=***
+
+      Access from Windows:
+      net use Z: \\vm-fs-01\Public
+
+      ==========================================
+    dest: C:\Shares\Public\README.txt
+  tags: [fileserver, documentation]
+
+- name: Display file server information
+  ansible.builtin.debug:
+    msg: |
+      File Server configured successfully!
+      Access shares: \\{{ ansible_hostname }}\ShareName
+
+      Available shares:
+      - \\{{ ansible_hostname }}\Public
+      - \\{{ ansible_hostname }}\Marketing
+      - \\{{ ansible_hostname }}\IT
+      - \\{{ ansible_hostname }}\Backups
+  tags: [fileserver, info]

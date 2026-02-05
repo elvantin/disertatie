@@ -1,0 +1,54 @@
+# ============================================================
+# SSH Key Distribution Playbook
+# Distributes jumphost SSH public key to all Linux VMs
+# ============================================================
+
+---
+- name: Generate SSH key on jumphost
+  hosts: jumphost
+  become: yes
+  tasks:
+    - name: Ensure SSH key exists
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        generate_ssh_key: yes
+        ssh_key_bits: 4096
+        ssh_key_file: .ssh/id_rsa
+
+    - name: Read SSH public key
+      ansible.builtin.slurp:
+        src: "/home/{{ ansible_user }}/.ssh/id_rsa.pub"
+      register: jumphost_pubkey
+
+    - name: Set SSH public key as fact
+      ansible.builtin.set_fact:
+        ssh_public_key: "{{ jumphost_pubkey.content | b64decode | trim }}"
+
+    - name: Display SSH public key
+      ansible.builtin.debug:
+        msg: "Jumphost SSH public key: {{ ssh_public_key }}"
+
+- name: Distribute SSH key to Linux VMs
+  hosts: linux
+  become: yes
+  vars:
+    ssh_public_key: "{{ hostvars['vm-jmp-01']['ssh_public_key'] }}"
+  tasks:
+    - name: Ensure .ssh directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.ssh"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+
+    - name: Add jumphost public key to authorized_keys
+      ansible.builtin.authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ ssh_public_key }}"
+        comment: "ansible@vm-jmp-01"
+
+    - name: Verify SSH key distribution
+      ansible.builtin.debug:
+        msg: "SSH key from vm-jmp-01 added to {{ inventory_hostname }}"

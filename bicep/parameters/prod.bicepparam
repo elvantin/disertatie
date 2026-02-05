@@ -48,10 +48,18 @@ param sshPublicKey = 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDKT342/08MOWn46brpiW
 param vms = [
   {
     name: 'vm-jmp-01'
-    osType: 'Windows'
+    osType: 'Linux'
     size: 'Standard_B2s'
     subnet: 'mgmt'
     createPublicIp: true
+    imageDefinition: 'rocky'
+  }
+  {
+    name: 'vm-fs-01'
+    osType: 'Windows'
+    size: 'Standard_B2s'
+    subnet: 'prod'
+    createPublicIp: false
     imageDefinition: 'windows'
   }
   {

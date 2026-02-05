@@ -1,0 +1,165 @@
+# ============================================================
+# Ansible Role: mssql
+# Installs and configures Microsoft SQL Server 2022 on Windows
+# ============================================================
+
+- name: Check if SQL Server is already installed
+  ansible.windows.win_service:
+    name: MSSQLSERVER
+  register: mssql_service
+  ignore_errors: yes
+  tags: [mssql, check]
+
+- name: Download SQL Server 2022 installation media
+  ansible.windows.win_get_url:
+    url: "https://go.microsoft.com/fwlink/p/?linkid=2215158"
+    dest: "C:\Temp\SQLServer2022-x64-ENU.exe"
+  when: mssql_service is failed or mssql_service.exists == false
+  tags: [mssql, download]
+
+- name: Create SQL Server installation directory
+  ansible.windows.win_file:
+    path: "C:\Temp\SQLServer2022"
+    state: directory
+  when: mssql_service is failed or mssql_service.exists == false
+  tags: [mssql, install]
+
+- name: Extract SQL Server installation files
+  ansible.windows.win_command: "C:\Temp\SQLServer2022-x64-ENU.exe /Q /x:C:\Temp\SQLServer2022"
+  when: mssql_service is failed or mssql_service.exists == false
+  tags: [mssql, install]
+
+- name: Wait for extraction to complete
+  ansible.windows.win_wait_for:
+    path: "C:\Temp\SQLServer2022\setup.exe"
+    state: present
+    timeout: 300
+  when: mssql_service is failed or mssql_service.exists == false
+  tags: [mssql, install]
+
+- name: Install SQL Server 2022
+  ansible.windows.win_command: >
+    C:\Temp\SQLServer2022\setup.exe /Q /ACTION=Install
+    /FEATURES=SQLENGINE
+    /INSTANCENAME=MSSQLSERVER
+    /SECURITYMODE=SQL
+    /SAPWD="{{ mssql_sa_password }}"
+    /SQLSVCACCOUNT="NT AUTHORITY\SYSTEM"
+    /SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
+    /AGTSVCACCOUNT="NT AUTHORITY\SYSTEM"
+    /IACCEPTSQLSERVERLICENSETERMS
+    /TCPENABLED=1
+    /UPDATEENABLED=False
+  when: mssql_service is failed or mssql_service.exists == false
+  register: mssql_install
+  tags: [mssql, install]
+
+- name: Wait for SQL Server installation to complete
+  ansible.windows.win_wait_for:
+    timeout: 600
+  when: mssql_install.changed
+  tags: [mssql, install]
+
+- name: Ensure SQL Server service is running
+  ansible.windows.win_service:
+    name: MSSQLSERVER
+    state: started
+    start_mode: auto
+  tags: [mssql, service]
+
+- name: Ensure SQL Server Agent service is running
+  ansible.windows.win_service:
+    name: SQLSERVERAGENT
+    state: started
+    start_mode: auto
+  when: mssql_agent_enabled
+  tags: [mssql, service]
+
+- name: Configure Windows Firewall for SQL Server
+  community.windows.win_firewall_rule:
+    name: "SQL Server (TCP 1433)"
+    localport: "{{ mssql_tcp_port }}"
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: yes
+  when: mssql_firewall_enabled
+  tags: [mssql, firewall]
+
+- name: Create backup directory
+  ansible.windows.win_file:
+    path: "{{ mssql_backup_dir }}"
+    state: directory
+  tags: [mssql, backup]
+
+- name: Create WordPress database
+  community.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = "Stop"
+      $sqlQuery = @"
+      IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = '{{ wordpress_db_name }}')
+      BEGIN
+          CREATE DATABASE [{{ wordpress_db_name }}];
+          PRINT 'Database created successfully';
+      END
+      ELSE
+      BEGIN
+          PRINT 'Database already exists';
+      END
+      "@
+      Invoke-Sqlcmd -ServerInstance "localhost" -Username "sa" -Password "{{ mssql_sa_password }}" -Query $sqlQuery
+  tags: [mssql, database]
+
+- name: Create WordPress database user
+  community.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = "Stop"
+      $sqlQuery = @"
+      USE [{{ wordpress_db_name }}];
+      IF NOT EXISTS (SELECT name FROM sys.server_principals WHERE name = '{{ wordpress_db_user }}')
+      BEGIN
+          CREATE LOGIN [{{ wordpress_db_user }}] WITH PASSWORD = '{{ wordpress_db_password }}';
+          CREATE USER [{{ wordpress_db_user }}] FOR LOGIN [{{ wordpress_db_user }}];
+          ALTER ROLE db_owner ADD MEMBER [{{ wordpress_db_user }}];
+          PRINT 'User created and granted permissions';
+      END
+      ELSE
+      BEGIN
+          PRINT 'User already exists';
+      END
+      "@
+      Invoke-Sqlcmd -ServerInstance "localhost" -Username "sa" -Password "{{ mssql_sa_password }}" -Query $sqlQuery
+  tags: [mssql, database, user]
+
+- name: Deploy SQL Server backup script
+  ansible.windows.win_template:
+    src: backup-mssql.ps1.j2
+    dest: "C:\Scripts\backup-mssql.ps1"
+  when: mssql_backup_enabled
+  tags: [mssql, backup]
+
+- name: Create scheduled task for SQL Server backups
+  community.windows.win_scheduled_task:
+    name: "SQL Server Backup"
+    description: "Daily backup of SQL Server databases"
+    actions:
+      - path: "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        arguments: "-ExecutionPolicy Bypass -File C:\Scripts\backup-mssql.ps1"
+    triggers:
+      - type: daily
+        start_boundary: "2026-01-01T02:00:00"
+    username: SYSTEM
+    state: present
+    enabled: yes
+  when: mssql_backup_enabled
+  tags: [mssql, backup, scheduled-task]
+
+- name: Clean up installation files
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "C:\Temp\SQLServer2022-x64-ENU.exe"
+    - "C:\Temp\SQLServer2022"
+  tags: [mssql, cleanup]

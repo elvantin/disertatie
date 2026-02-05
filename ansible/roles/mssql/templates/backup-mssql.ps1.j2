@@ -1,0 +1,84 @@
+# ============================================================
+# SQL Server Backup Script
+# Performs full backup of all user databases
+# ============================================================
+
+$ErrorActionPreference = "Stop"
+
+# Configuration
+$backupDir = "{{ mssql_backup_dir }}"
+$retentionDays = {{ mssql_backup_retention_days }}
+$saPassword = "{{ mssql_sa_password }}"
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$logFile = "$backupDir\backup_log_$timestamp.txt"
+
+# Start logging
+Start-Transcript -Path $logFile
+
+try {
+    Write-Host "Starting SQL Server backup at $(Get-Date)"
+    
+    # Ensure backup directory exists
+    if (-not (Test-Path $backupDir)) {
+        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+        Write-Host "Created backup directory: $backupDir"
+    }
+
+    # Get list of user databases (exclude system databases)
+    $sqlQuery = @"
+    SELECT name FROM sys.databases 
+    WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')
+    AND state_desc = 'ONLINE'
+"@
+    
+    $databases = Invoke-Sqlcmd -ServerInstance "localhost" -Username "sa" -Password $saPassword -Query $sqlQuery
+    
+    # Backup each database
+    foreach ($db in $databases) {
+        $dbName = $db.name
+        $backupFile = "$backupDir\${dbName}_$timestamp.bak"
+        
+        Write-Host "Backing up database: $dbName"
+        
+        $backupQuery = @"
+        BACKUP DATABASE [$dbName] 
+        TO DISK = N'$backupFile'
+        WITH INIT, COMPRESSION, CHECKSUM, STATS = 10;
+"@
+        
+        Invoke-Sqlcmd -ServerInstance "localhost" -Username "sa" -Password $saPassword -Query $backupQuery -QueryTimeout 3600
+        
+        if (Test-Path $backupFile) {
+            $fileSize = (Get-Item $backupFile).Length / 1MB
+            Write-Host "Backup completed: $backupFile (${fileSize:N2} MB)"
+        } else {
+            Write-Error "Backup file not found: $backupFile"
+        }
+    }
+    
+    # Clean up old backups
+    Write-Host "Cleaning up backups older than $retentionDays days"
+    $cutoffDate = (Get-Date).AddDays(-$retentionDays)
+    Get-ChildItem -Path $backupDir -Filter "*.bak" | 
+        Where-Object { $_.LastWriteTime -lt $cutoffDate } | 
+        ForEach-Object {
+            Write-Host "Deleting old backup: $($_.Name)"
+            Remove-Item $_.FullName -Force
+        }
+    
+    # Clean up old log files
+    Get-ChildItem -Path $backupDir -Filter "backup_log_*.txt" | 
+        Where-Object { $_.LastWriteTime -lt $cutoffDate } | 
+        ForEach-Object {
+            Write-Host "Deleting old log: $($_.Name)"
+            Remove-Item $_.FullName -Force
+        }
+    
+    Write-Host "SQL Server backup completed successfully at $(Get-Date)"
+    
+} catch {
+    Write-Error "Backup failed: $_"
+    exit 1
+} finally {
+    Stop-Transcript
+}

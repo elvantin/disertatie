@@ -1,0 +1,8 @@
+# ============================================================
+# Ansible Role: fileserver - Handlers
+# ============================================================
+
+- name: restart smb
+  ansible.windows.win_service:
+    name: LanmanServer
+    state: restarted

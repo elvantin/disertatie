@@ -1,89 +1,203 @@
-# Proiectarea, implementarea si securizarea unei infrastructuri cloud automatizate in Microsoft Azure utilizand Bicep, Packer si Ansible
+# Infrastructure Cloud Automatizată - SC MEDIA SRL
 
-**Studiu de caz privind adoptarea Infrastructure as Code si DevOps intr-un mediu enterprise**
-
-Lucrare de disertatie — Master, 2026
+**Proiect disertație Master**: Proiectarea, implementarea și securizarea unei infrastructuri cloud automatizate în Microsoft Azure utilizând Bicep, Packer și Ansible
 
 ---
 
-## Descriere
+## 📋 Arhitectură
 
-Acest repository contine codul sursa si documentatia aferenta proiectului de disertatie. Proiectul implementeaza o infrastructura cloud completa in Microsoft Azure pentru **SC MEDIA SRL**, o companie de PR si Marketing, utilizand principiile Infrastructure as Code (IaC) si DevOps.
+### **Infrastructură Finală (5 VMs):**
 
-Infrastructura include 5 masini virtuale (2x Windows Server 2022, 3x Rocky Linux 10), configurate automat prin pipeline-uri CI/CD.
+| VM | OS | Rol | Subnet | IP Public |
+|----|----|----|--------|-----------|
+| **vm-jmp-01** | Rocky Linux 9 + GNOME + xRDP | Jumphost / Ansible Control Node | mgmt | ✅ |
+| **vm-fs-01** | Windows Server 2022 | File Server (SMB shares) | prod | ❌ |
+| **vm-web-01** | Rocky Linux 9 | Web Server (nginx) | prod | ❌ |
+| **vm-app-01** | Rocky Linux 9 | Application Server | prod | ❌ |
+| **vm-cms-01** | Rocky Linux 9 | CMS (WordPress + MySQL + Postfix) | prod | ❌ |
 
-## Tehnologii utilizate
+### **Networking:**
+- **VNet:** 10.10.0.0/20
+- **Subnets:**
+  - Management: 10.10.12.0/24
+  - Production: 10.10.10.0/24
+  - Development: 10.10.11.0/24
+- **NSGs:** 3 Network Security Groups (mgmt, prod, dev)
+- **Access:** RDP către jumphost (port 3389), SSH între VMs
 
-| Tehnologie | Rol |
-|-----------|-----|
-| **Bicep** | Definirea declarativa a infrastructurii Azure (IaC) |
-| **Packer** | Construirea imaginilor golden (Rocky Linux 10, Windows Server 2022) |
-| **Ansible** | Automatizarea configurarii post-provisioning |
-| **Azure DevOps** | Versionare cod (Git) si pipeline-uri CI/CD |
-| **Azure Monitor** | Monitorizare si loguri centralizate |
-| **Azure Key Vault** | Gestionarea secretelor si certificatelor |
-| **Azure Policy** | Guvernanta si conformitate |
+---
 
-## Structura repository-ului
+## 🛠️ Tehnologii Utilizate
+
+| Component | Tehnologie | Scop |
+|-----------|------------|------|
+| **IaC** | Azure Bicep | Definirea și deployment infrastructure |
+| **Golden Images** | HashiCorp Packer | Template-uri hardened pentru Rocky Linux & Windows |
+| **Config Management** | Ansible | Configurare post-deployment și orchestrare |
+| **CI/CD** | Azure DevOps | Automation pipelines |
+| **Monitoring** | Azure Monitor + Log Analytics | Observability (free tier) |
+| **Security** | Azure Policy + CIS Benchmarks | Governance și hardening |
+
+---
+
+## 📂 Structura Proiectului
 
 ```
-IT/
-├── packer/                     # Template-uri Packer (golden images)
-│   ├── rocky-linux/            #   Rocky Linux 10
-│   └── windows-server/         #   Windows Server 2022
-│
-├── bicep/                      # Module Bicep (Infrastructure as Code)
-│   ├── main.bicep              #   Orchestrator principal
-│   ├── modules/                #   Module individuale (networking, compute, etc.)
-│   └── parameters/             #   Fisiere parametri per mediu (prod/dev)
-│
-├── ansible/                    # Configurare automata Ansible
-│   ├── inventory/              #   Inventare (productie, dezvoltare)
-│   ├── playbooks/              #   Playbook-uri per rol
-│   ├── roles/                  #   Roluri Ansible (common, nginx, mysql, etc.)
-│   └── files/                  #   Fisiere statice (website)
-│
-├── pipelines/                  # Pipeline-uri Azure DevOps (YAML)
-│   └── templates/              #   Pasi comuni reutilizabili
-│
-├── docs/                       # Documentatie
-│   ├── PLAN_PROIECT.md         #   Planul complet al proiectului
-│   └── disertatie/             #   Capitole si figuri disertatie
-│
-├── .gitignore
-└── README.md
+F:\My documents\Master\DISERTATIE\Project\IT\
+├── bicep/
+│   ├── main.bicep                      # Orchestrator principal
+│   ├── parameters/
+│   │   ├── prod.bicepparam             # Parametri producție
+│   │   └── dev.bicepparam              # Parametri dezvoltare
+│   └── modules/
+│       ├── resource-group.bicep
+│       ├── networking.bicep
+│       ├── nsg.bicep
+│       ├── compute.bicep
+│       ├── keyvault.bicep
+│       ├── monitoring.bicep
+│       └── policy.bicep
+├── packer/
+│   ├── rocky-linux/                    # Rocky Linux 10 template
+│   └── windows-server/                 # Windows Server 2022 template
+├── ansible/
+│   ├── ansible.cfg
+│   ├── inventory/
+│   │   ├── hosts.ini                   # Static inventory
+│   │   └── azure_rm.yml                # Dynamic Azure inventory
+│   ├── playbooks/
+│   │   ├── site.yml                    # Orchestrare completă
+│   │   ├── setup-ssh-keys.yml          # Distribuire SSH keys
+│   │   ├── deploy-services.yml
+│   │   └── harden-all.yml
+│   └── roles/
+│       ├── jumphost/                   # Rocky Linux GUI + xRDP + Ansible
+│       ├── fileserver/                 # Windows File Server
+│       ├── common/                     # Baseline config
+│       ├── nginx/                      # Web server
+│       ├── wordpress/                  # CMS + MySQL local
+│       ├── postfix/                    # Mail server
+│       └── hardening/                  # CIS Benchmarks
+├── pipelines/                          # Azure DevOps YAML
+└── docs/                               # Documentație disertație
 ```
 
-## Arhitectura mediului
+---
 
-- **VNet:** `vnet-media-prod` (10.10.0.0/20)
-- **Subnet Production:** `snet-prod` (10.10.10.0/24) — vm-web-01, vm-app-01, vm-cms-01, vm-db-01
-- **Subnet Management:** `snet-mgmt` (10.10.12.0/24) — vm-jmp-01 (Jumphost)
-- **Subnet Dev:** `snet-dev` (10.10.11.0/24) — mediu de dezvoltare/testare
+## 🚀 Quick Start
 
-## Quick Start
+### **1. Prerequisites**
 
-### Cerinte preliminare
+```powershell
+# Azure CLI
+winget install Microsoft.AzureCLI
 
-- Azure CLI (`az --version`)
-- Bicep CLI (`az bicep version`)
-- Packer (`packer --version`)
-- Ansible (`ansible --version`) — necesita Linux (WSL2 sau VM)
-- Visual Studio Code + extensii (Bicep, Ansible, Azure)
+# Bicep CLI
+az bicep install
 
-### Autentificare Azure
+# Packer
+winget install HashiCorp.Packer
+```
+
+### **2. Login to Azure**
+
+```powershell
+az login
+az account set --subscription "YOUR_SUBSCRIPTION_ID"
+```
+
+### **3. Deploy Infrastructure (Bicep)**
+
+```powershell
+cd bicep
+
+# Validare
+az deployment sub validate `
+  --location swedencentral `
+  --template-file main.bicep `
+  --parameters parameters/prod.bicepparam
+
+# Deployment
+az deployment sub create `
+  --location swedencentral `
+  --template-file main.bicep `
+  --parameters parameters/prod.bicepparam `
+  --name deploy-mediasrl-productie
+```
+
+### **4. Configure VMs (Ansible)**
 
 ```bash
-az login
-az account set --subscription "<SUBSCRIPTION_ID>"
+# Din jumphost (vm-jmp-01) după conectare via RDP
+cd ~/ansible-workspace
+
+# Test connectivity
+ansible all -m ping
+
+# Run complete deployment
+ansible-playbook playbooks/site.yml
 ```
-
-### Flux de lucru
-
-1. **Packer** — Construieste imaginile golden si le publica in Azure Compute Gallery
-2. **Bicep** — Deploys infrastructura Azure (VNet, VM-uri, NSG, Key Vault, Monitor)
-3. **Ansible** — Configureaza VM-urile (nginx, MySQL, WordPress, Postfix, hardening)
 
 ---
 
-*Proiect realizat de SC IT SECURITY SRL pentru SC MEDIA SRL*
+## 🔐 Securitate
+
+### **Măsuri Implementate:**
+
+✅ **Azure Policy** - Restricții region, VM SKUs, tag requirements
+✅ **NSG Rules** - Segmentare rețea, deny-all implicit
+✅ **CIS Benchmarks** - Hardening Linux & Windows
+✅ **SSH Key-based Auth** - Fără password pentru Linux
+✅ **Key Vault** - Stocare securizată secrets
+✅ **Audit Logging** - auditd (Linux) + Event Log (Windows)
+✅ **Disable SMBv1** - File server security
+✅ **TLS 1.2+** - Toate comunicațiile criptate
+
+---
+
+## 📊 Monitorizare
+
+- **Azure Monitor** - Free tier (5 GB/month)
+- **Log Analytics Workspace** - Centralizare logs
+- **VM Extensions** - MMA (Windows) + OMS Agent (Linux)
+- **Metrics** - CPU, memory, disk, network
+
+---
+
+## 🎯 Use Case: SC MEDIA SRL
+
+**Context:** SC MEDIA SRL (companie PR & Marketing) contractează SC IT SECURITY SRL pentru migrarea infrastructure în cloud Azure.
+
+**Cerințe:**
+- Infrastructure as Code (reproductibilitate)
+- Golden images hardened (security)
+- Configuration management (Ansible)
+- File server (shared folders pentru echipă)
+- Web platform (WordPress pentru portfolio)
+- Mail server (comunicare internă)
+- Jumphost Linux cu GUI pentru DevOps engineers
+
+**Rezultat:** Infrastructură fully automated, secure, monitorizată, cost-effective.
+
+---
+
+## 📚 Documentație Detaliată
+
+- [Bicep Deployment Guide](bicep/README.md)
+- [Packer Templates](packer/README.md)
+- [Ansible Roles](ansible/README.md)
+- [Azure DevOps Pipelines](pipelines/README.md)
+
+---
+
+## 👤 Autor
+
+**SC IT SECURITY SRL** - Proiect disertație Master
+**Anul:** 2026
+**Universitate:** [Numele universității]
+
+---
+
+## 📝 Licență
+
+Acest proiect este destinat exclusiv pentru scopuri academice (disertație master).

@@ -1,36 +1,44 @@
 # ============================================================
 # Main Ansible Playbook - SC MEDIA SRL Infrastructure
-# Orchestrates complete deployment and configuration
+# Updated for 6 VMs: Linux Jumphost + 2 Windows + 3 Linux
 # ============================================================
 
 ---
-- name: Configure all VMs with common baseline
-  hosts: all
+- name: Setup SSH keys from jumphost to Linux VMs
+  import_playbook: setup-ssh-keys.yml
+  tags: [ssh-keys, setup]
+
+- name: Configure Jumphost (Linux with GUI + xRDP + Ansible)
+  hosts: jumphost
   become: yes
   roles:
-    - common
-  tags: [common, baseline]
+    - jumphost
+  tags: [jumphost, management]
 
-- name: Configure Windows VMs
-  hosts: windows
+- name: Configure File Server (Windows)
+  hosts: fileserver
   roles:
-    - role: common
-      tags: [common, windows]
-  tags: [windows]
+    - fileserver
+  tags: [fileserver, windows]
 
-- name: Configure Linux VMs
+- name: Configure Database Server (Windows with MS SQL Server 2022)
+  hosts: database
+  roles:
+    - mssql
+  tags: [database, mssql, windows]
+
+- name: Configure all Linux VMs with common baseline
   hosts: linux
   become: yes
   roles:
-    - role: common
-      tags: [common, linux]
-  tags: [linux]
+    - common
+  tags: [common, baseline, linux]
 
-- name: Configure Database Server (vm-db-01)
-  hosts: database
+- name: Configure Windows VMs with common baseline
+  hosts: windows
   roles:
-    - mysql
-  tags: [database, mysql]
+    - common
+  tags: [common, baseline, windows]
 
 - name: Configure Web Server (vm-web-01)
   hosts: webserver
@@ -39,7 +47,7 @@
     - nginx
   tags: [webserver, nginx]
 
-- name: Configure CMS Server (vm-cms-01)
+- name: Configure CMS Server with WordPress + Postfix (vm-cms-01)
   hosts: cms
   become: yes
   roles:
@@ -71,5 +79,6 @@
           IP: {{ ansible_default_ipv4.address | default('N/A') }}
           Hostname: {{ ansible_hostname }}
           Environment: {{ environment | default('unknown') }}
+          Role: {{ group_names | join(', ') }}
           ========================================
   tags: [verify, summary]
