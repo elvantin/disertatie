@@ -111,33 +111,33 @@ param vms array = [
     osDiskSizeGb: 128
   }
   // === DISABLED VMs (uncomment when ready for full deployment) ===
-  // {
-  //   name: 'vm-fs-01'
-  //   osType: 'Windows'
-  //   size: 'Standard_B2s'
-  //   subnet: 'prod'
-  //   createPublicIp: false
-  //   imageDefinition: 'windows'
-  //   osDiskSizeGb: 128
-  // }
-  // {
-  //   name: 'vm-app-01'
-  //   osType: 'Linux'
-  //   size: 'Standard_B2s'
-  //   subnet: 'prod'
-  //   createPublicIp: false
-  //   imageDefinition: 'ubuntu'
-  //   osDiskSizeGb: 32
-  // }
-  // {
-  //   name: 'vm-cms-01'
-  //   osType: 'Linux'
-  //   size: 'Standard_B2s'
-  //   subnet: 'prod'
-  //   createPublicIp: false
-  //   imageDefinition: 'ubuntu'
-  //   osDiskSizeGb: 32
-  // }
+  {
+    name: 'vm-fs-01'
+    osType: 'Windows'
+    size: 'Standard_B2s'
+    subnet: 'prod'
+    createPublicIp: false
+    imageDefinition: 'windows'
+    osDiskSizeGb: 128
+  }
+  {
+    name: 'vm-app-01'
+    osType: 'Linux'
+    size: 'Standard_B2s'
+    subnet: 'prod'
+    createPublicIp: false
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 32
+  }
+  {
+    name: 'vm-cms-01'
+    osType: 'Linux'
+    size: 'Standard_B2s'
+    subnet: 'prod'
+    createPublicIp: false
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 32
+  }
 ]
 
 // ----- Variables -----
