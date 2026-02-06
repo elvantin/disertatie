@@ -50,6 +50,7 @@ param sshPublicKey = 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDKT342/08MOWn46brpiW
 // ----- VM Configurations -----
 
 param vms = [
+  // === ACTIVE VMs for Testing ===
   {
     name: 'vm-jmp-01'
     osType: 'Linux'
@@ -58,24 +59,6 @@ param vms = [
     createPublicIp: true
     imageDefinition: 'ubuntu'
     osDiskSizeGb: 64
-  }
-  {
-    name: 'vm-fs-01'
-    osType: 'Windows'
-    size: 'Standard_B2s'
-    subnet: 'prod'
-    createPublicIp: false
-    imageDefinition: 'windows'
-    osDiskSizeGb: 128
-  }
-  {
-    name: 'vm-db-01'
-    osType: 'Windows'
-    size: 'Standard_B2s'
-    subnet: 'prod'
-    createPublicIp: false
-    imageDefinition: 'windows'
-    osDiskSizeGb: 128
   }
   {
     name: 'vm-web-01'
@@ -87,21 +70,40 @@ param vms = [
     osDiskSizeGb: 32
   }
   {
-    name: 'vm-app-01'
-    osType: 'Linux'
+    name: 'vm-db-01'
+    osType: 'Windows'
     size: 'Standard_B2s'
     subnet: 'prod'
     createPublicIp: false
-    imageDefinition: 'ubuntu'
-    osDiskSizeGb: 32
+    imageDefinition: 'windows'
+    osDiskSizeGb: 128
   }
-  {
-    name: 'vm-cms-01'
-    osType: 'Linux'
-    size: 'Standard_B2s'
-    subnet: 'prod'
-    createPublicIp: false
-    imageDefinition: 'ubuntu'
-    osDiskSizeGb: 32
-  }
+  // === DISABLED VMs (uncomment when ready for full deployment) ===
+  // {
+  //   name: 'vm-fs-01'
+  //   osType: 'Windows'
+  //   size: 'Standard_B2s'
+  //   subnet: 'prod'
+  //   createPublicIp: false
+  //   imageDefinition: 'windows'
+  //   osDiskSizeGb: 128
+  // }
+  // {
+  //   name: 'vm-app-01'
+  //   osType: 'Linux'
+  //   size: 'Standard_B2s'
+  //   subnet: 'prod'
+  //   createPublicIp: false
+  //   imageDefinition: 'ubuntu'
+  //   osDiskSizeGb: 32
+  // }
+  // {
+  //   name: 'vm-cms-01'
+  //   osType: 'Linux'
+  //   size: 'Standard_B2s'
+  //   subnet: 'prod'
+  //   createPublicIp: false
+  //   imageDefinition: 'ubuntu'
+  //   osDiskSizeGb: 32
+  // }
 ]

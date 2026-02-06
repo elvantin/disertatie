@@ -167,7 +167,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
     osProfile: {
       computerName: vmName
       adminUsername: adminUsername
-      adminPassword: osType == 'Windows' ? adminPasswordOrKey : null
+      adminPassword: adminPasswordOrKey
       linuxConfiguration: osType == 'Linux' ? linuxConfiguration : null
       windowsConfiguration: osType == 'Windows' ? {
         enableAutomaticUpdates: true

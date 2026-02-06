@@ -40,6 +40,20 @@ resource nsgMgmt 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
         }
       }
       {
+        name: 'Allow-SSH-From-Admin'
+        properties: {
+          description: 'Allow SSH to jumphost from admin IP only'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '22'
+          sourceAddressPrefix: adminIpAddress
+          destinationAddressPrefix: '*'
+          access: 'Allow'
+          priority: 110
+          direction: 'Inbound'
+        }
+      }
+      {
         name: 'Deny-All-Inbound'
         properties: {
           description: 'Deny all other inbound traffic'
