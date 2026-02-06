@@ -141,7 +141,8 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
   name: vmName
   location: location
   tags: tags
-  plan: !useGalleryImage && marketplacePublisher != 'MicrosoftWindowsServer' ? {
+  // Plan information is only needed for specific marketplace images (not Windows Server or Ubuntu/Canonical)
+  plan: !useGalleryImage && marketplacePublisher != 'MicrosoftWindowsServer' && marketplacePublisher != 'canonical' ? {
     name: marketplaceSku
     publisher: marketplacePublisher
     product: marketplaceOffer
