@@ -291,7 +291,7 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     vmSize: vm.size
     osType: vm.osType
     adminUsername: adminUsername
-    adminPasswordOrKey: vm.osType == 'Windows' ? adminPassword : sshPublicKey
+    adminPasswordOrKey: adminPassword
     subnetId: vm.subnet == 'prod' ? networking.outputs.subnetProdId : (vm.subnet == 'dev' ? networking.outputs.subnetDevId : networking.outputs.subnetMgmtId)
     createPublicIp: vm.createPublicIp
     useGalleryImage: !useMarketplaceImages

@@ -6,9 +6,14 @@
 
 set -e
 
+# Setup logging - save all output to /tmp
+LOGFILE="/tmp/jumphost-bootstrap-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$LOGFILE") 2>&1
+
 echo "========================================="
 echo "SC MEDIA SRL - Jumphost Bootstrap"
 echo "Ubuntu 22.04 LTS Configuration"
+echo "Logging to: $LOGFILE"
 echo "========================================="
 
 # Admin user configuration
@@ -57,7 +62,6 @@ sleep 2
 echo "[6/22] Opening firewall ports (SSH 22 + RDP 3389)..."
 firewall-cmd --permanent --add-service=ssh
 firewall-cmd --permanent --add-port=3389/tcp
-firewall-cmd --permanent --add-service=RDP
 firewall-cmd --reload
 
 # =============================================================================
@@ -275,6 +279,9 @@ echo "RDP Connection Details:"
 echo "  Address: <jumphost-public-ip>:3389"
 echo "  Username: ${ADMIN_USER}"
 echo "  Password: ${ADMIN_PASSWORD}"
+echo ""
+echo "Bootstrap Log File: ${LOGFILE}"
+echo "  (saved for troubleshooting and verification)"
 echo ""
 echo "IMPORTANT: Change the default password after first login!"
 echo ""

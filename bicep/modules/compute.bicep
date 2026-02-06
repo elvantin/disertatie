@@ -84,15 +84,9 @@ var nicName = 'nic-${vmName}'
 var pipName = 'pip-${vmName}'
 var osDiskName = 'osdisk-${vmName}'
 var linuxConfiguration = {
-  disablePasswordAuthentication: true
-  ssh: {
-    publicKeys: [
-      {
-        path: '/home/${adminUsername}/.ssh/authorized_keys'
-        keyData: adminPasswordOrKey
-      }
-    ]
-  }
+  disablePasswordAuthentication: false
+  // SSH keys will be configured via Ansible after deployment
+  // (jumphost generates keys and distributes to other Linux VMs)
 }
 
 // ----- Public IP (conditional) -----
