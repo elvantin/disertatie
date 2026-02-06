@@ -1,0 +1,10 @@
+# /etc/systemd/timesyncd.conf
+# Managed by Ansible - SC MEDIA SRL
+# Time synchronization configuration for Ubuntu 22.04
+
+[Time]
+NTP={{ ntp_servers | join(' ') }}
+FallbackNTP=0.ubuntu.pool.ntp.org 1.ubuntu.pool.ntp.org 2.ubuntu.pool.ntp.org 3.ubuntu.pool.ntp.org
+RootDistanceMaxSec=5
+PollIntervalMinSec=32
+PollIntervalMaxSec=2048

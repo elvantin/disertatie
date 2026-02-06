@@ -1,0 +1,80 @@
+---
+# ============================================================
+# Ansible Role: common - Default Variables
+# Baseline configuration for Ubuntu 22.04 LTS
+# ============================================================
+
+# Timezone configuration
+timezone: "Europe/Bucharest"
+
+# NTP servers (Romania)
+ntp_servers:
+  - "0.ro.pool.ntp.org"
+  - "1.ro.pool.ntp.org"
+  - "2.ro.pool.ntp.org"
+  - "3.ro.pool.ntp.org"
+
+# Common packages to install on all Ubuntu VMs
+common_packages:
+  - vim
+  - nano
+  - htop
+  - curl
+  - wget
+  - git
+  - unzip
+  - zip
+  - tar
+  - net-tools
+  - dnsutils
+  - tcpdump
+  - telnet
+  - rsync
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - apt-transport-https
+  - python3
+  - python3-pip
+  - build-essential
+
+# Security packages
+security_packages:
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+  - update-notifier-common
+
+# Firewall configuration (UFW)
+firewall_enabled: true
+firewall_default_policy: "deny"
+firewall_allowed_ports:
+  - "22/tcp"  # SSH
+
+# SSH hardening settings
+ssh_hardening_enabled: true
+ssh_port: 22
+ssh_permit_root_login: "no"
+ssh_password_authentication: "yes"  # Will be disabled after SSH keys are deployed
+ssh_permit_empty_passwords: "no"
+ssh_max_auth_tries: 3
+ssh_max_sessions: 10
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 2
+
+# Automatic updates configuration
+auto_updates_enabled: true
+auto_updates_install_security: true
+auto_updates_automatic_reboot: false
+auto_updates_automatic_reboot_time: "02:00"
+
+# Kernel hardening (sysctl)
+kernel_hardening_enabled: true
+
+# Company information
+company_name: "SC MEDIA SRL"
+company_domain: "media-srl.ro"
+
+# Environment
+environment: "productie"

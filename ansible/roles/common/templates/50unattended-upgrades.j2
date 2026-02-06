@@ -1,0 +1,93 @@
+// /etc/apt/apt.conf.d/50unattended-upgrades
+// Managed by Ansible - SC MEDIA SRL
+// Automatic security updates configuration for Ubuntu 22.04
+
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}";
+    "${distro_id}:${distro_codename}-security";
+    // Extended Security Maintenance; doesn't necessarily exist for
+    // every release and this system may not have it installed, but if
+    // available, the policy for updates is such that unattended-upgrades
+    // should also install from here by default.
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+    {% if auto_updates_install_security %}
+    "${distro_id}:${distro_codename}-updates";
+    {% endif %}
+};
+
+// Python regular expressions, matching packages to exclude from upgrading
+Unattended-Upgrade::Package-Blacklist {
+    // The following matches all packages starting with linux-
+//  "linux-";
+
+    // Use $ to explicitely define the end of a package name. Without
+    // the $, "libc6" would match all of them.
+//  "libc6$";
+//  "libc6-dev$";
+//  "libc6-i686$";
+
+    // Special characters need escaping
+//  "libstdc\+\+6$";
+
+    // The following matches packages like xen-system-amd64, xen-utils-4.1,
+    // xenstore-utils and libxenstore3.0
+//  "(lib)?xen(store)?";
+
+    // For more information about Python regular expressions, see
+    // https://docs.python.org/3/howto/regex.html
+};
+
+// This option controls whether the development release of Ubuntu will be
+// upgraded automatically. Valid values are "true", "false", and "auto".
+Unattended-Upgrade::DevRelease "false";
+
+// Do automatic removal of new unused dependencies after the upgrade
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+// Automatically reboot *WITHOUT CONFIRMATION* if
+//  the file /var/run/reboot-required is found after the upgrade
+Unattended-Upgrade::Automatic-Reboot "{{ auto_updates_automatic_reboot | bool | lower }}";
+
+// Automatically reboot even if there are users currently logged in
+// when Unattended-Upgrade::Automatic-Reboot is set to true
+Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+
+// If automatic reboot is enabled and needed, reboot at the specific
+// time instead of immediately
+//  Default: "now"
+Unattended-Upgrade::Automatic-Reboot-Time "{{ auto_updates_automatic_reboot_time }}";
+
+// Send email to this address for problems or packages upgrades
+// If empty or unset then no email is sent, make sure that you
+// have a working mail setup on your system. A package that provides
+// 'mailx' must be installed. E.g. "user@example.com"
+//Unattended-Upgrade::Mail "";
+
+// Set this value to one of:
+//    "always", "only-on-error" or "on-change"
+// If this is not set, then any legacy MailOnlyOnError (boolean) value
+// is used to chose between "only-on-error" and "on-change"
+//Unattended-Upgrade::MailReport "on-change";
+
+// Remove unused automatically installed kernel-related packages
+// (kernel images, kernel headers and kernel version locked tools).
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+
+// Do upgrade application even if it requires restart of services
+Unattended-Upgrade::InstallOnShutdown "false";
+
+// Download and install upgrades only on AC power
+// (i.e. skip or gracefully stop updates on battery)
+Unattended-Upgrade::OnlyOnACPower "false";
+
+// Download and install upgrades only on non-metered connection
+// (i.e. skip or gracefully stop updates on a metered connection)
+Unattended-Upgrade::Skip-Updates-On-Metered-Connections "false";
+
+// Verbose logging
+// Unattended-Upgrade::Verbose "false";
+
+// Print debugging information both in unattended-upgrades and
+// in unattended-upgrade-shutdown
+// Unattended-Upgrade::Debug "false";

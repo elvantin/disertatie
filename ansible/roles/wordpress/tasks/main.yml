@@ -1,185 +1,280 @@
+---
 # ============================================================
 # Ansible Role: wordpress
-# Installs and configures WordPress on vm-cms-01 (Rocky Linux)
-# Connects to remote MS SQL Server on vm-db-01
+# Installs and configures WordPress CMS on Ubuntu 22.04
+# Target: vm-cms-01
+# Database: MySQL/MariaDB (local) or SQL Server (remote vm-db-01)
 # ============================================================
 
-- name: Install PHP and required extensions for SQL Server
-  ansible.builtin.dnf:
-    name:
-      - php
-      - php-fpm
-      - php-gd
-      - php-xml
-      - php-mbstring
-      - php-json
-      - php-curl
-      - php-zip
-      - php-intl
-      - php-soap
-      - php-odbc
-      - unixODBC
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  register: apt_update
+  retries: 3
+  delay: 10
+  until: apt_update is succeeded
+  tags: [wordpress, packages]
+
+- name: Install Nginx
+  apt:
+    name: nginx
     state: present
+  tags: [wordpress, nginx, packages]
+
+- name: Install PHP and required extensions
+  apt:
+    name:
+      - "php{{ php_version }}"
+      - "php{{ php_version }}-fpm"
+      - "php{{ php_version }}-mysql"
+      - "php{{ php_version }}-gd"
+      - "php{{ php_version }}-xml"
+      - "php{{ php_version }}-mbstring"
+      - "php{{ php_version }}-curl"
+      - "php{{ php_version }}-zip"
+      - "php{{ php_version }}-intl"
+      - "php{{ php_version }}-soap"
+      - "php{{ php_version }}-bcmath"
+      - "php{{ php_version }}-imagick"
+      - php-cli
+      - php-common
+    state: present
+  register: php_install
+  retries: 3
+  delay: 10
+  until: php_install is succeeded
   tags: [wordpress, php, packages]
 
-- name: Install Microsoft ODBC Driver for SQL Server repository
-  ansible.builtin.yum_repository:
-    name: mssql-release
-    description: Microsoft SQL Server ODBC Driver Repository
-    baseurl: https://packages.microsoft.com/rhel/9/prod/
-    gpgcheck: yes
-    gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+- name: Install MySQL/MariaDB server
+  apt:
+    name:
+      - mariadb-server
+      - mariadb-client
+      - python3-pymysql
+    state: present
+  when: mysql_install_local
+  register: mysql_install
+  retries: 3
+  delay: 10
+  until: mysql_install is succeeded
+  tags: [wordpress, mysql, packages]
+
+- name: Start and enable MySQL service
+  systemd:
+    name: mariadb
+    state: started
     enabled: yes
-  tags: [wordpress, mssql, repository]
+  when: mysql_install_local
+  tags: [wordpress, mysql, service]
 
-- name: Install Microsoft ODBC Driver 18 for SQL Server
-  ansible.builtin.dnf:
-    name:
-      - msodbcsql18
+- name: Set MySQL root password
+  mysql_user:
+    name: root
+    password: "{{ mysql_root_password }}"
+    login_unix_socket: /var/run/mysqld/mysqld.sock
     state: present
-    disable_gpg_check: yes
-  environment:
-    ACCEPT_EULA: Y
-  tags: [wordpress, mssql, odbc]
+  when: mysql_install_local
+  no_log: true
+  tags: [wordpress, mysql, config]
 
-- name: Install SQL Server command-line tools
-  ansible.builtin.dnf:
-    name:
-      - mssql-tools18
+- name: Create WordPress MySQL database
+  mysql_db:
+    name: "{{ wordpress_db_name }}"
     state: present
-    disable_gpg_check: yes
-  environment:
-    ACCEPT_EULA: Y
-  tags: [wordpress, mssql, tools]
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+  when: mysql_install_local
+  tags: [wordpress, mysql, database]
 
-- name: Install PHP SQL Server drivers (sqlsrv and pdo_sqlsrv)
-  ansible.builtin.shell: |
-    pecl install sqlsrv
-    pecl install pdo_sqlsrv
-  args:
-    creates: /usr/lib64/php/modules/sqlsrv.so
-  tags: [wordpress, php, sqlsrv]
+- name: Create WordPress MySQL user
+  mysql_user:
+    name: "{{ wordpress_db_user }}"
+    password: "{{ wordpress_db_password }}"
+    priv: "{{ wordpress_db_name }}.*:ALL"
+    host: "localhost"
+    state: present
+    login_user: root
+    login_password: "{{ mysql_root_password }}"
+  when: mysql_install_local
+  no_log: true
+  tags: [wordpress, mysql, user]
 
-- name: Enable PHP SQL Server extensions
-  ansible.builtin.copy:
-    dest: "/etc/php.d/{{ item }}.ini"
-    content: |
-      extension={{ item }}.so
-    mode: '0644'
-  loop:
-    - sqlsrv
-    - pdo_sqlsrv
-  notify: restart php-fpm
-  tags: [wordpress, php, config]
-
-- name: Create WordPress directory
-  ansible.builtin.file:
-    path: /var/www/wordpress
+- name: Create WordPress directory structure
+  file:
+    path: "{{ item }}"
     state: directory
-    owner: nginx
-    group: nginx
+    owner: "{{ wordpress_user }}"
+    group: "{{ wordpress_group }}"
     mode: '0755'
+  loop:
+    - "{{ wordpress_install_dir }}"
+    - "{{ wordpress_document_root }}"
   tags: [wordpress, directories]
 
 - name: Download WordPress
-  ansible.builtin.get_url:
-    url: https://wordpress.org/latest.tar.gz
+  get_url:
+    url: "{{ wordpress_download_url }}"
     dest: /tmp/wordpress.tar.gz
     mode: '0644'
+    timeout: 300
+  register: wordpress_download
   tags: [wordpress, download]
 
 - name: Extract WordPress archive
-  ansible.builtin.unarchive:
+  unarchive:
     src: /tmp/wordpress.tar.gz
-    dest: /var/www/
+    dest: "{{ wordpress_install_dir }}"
     remote_src: yes
-    owner: nginx
-    group: nginx
+    owner: "{{ wordpress_user }}"
+    group: "{{ wordpress_group }}"
+    extra_opts: [--strip-components=1]
+    creates: "{{ wordpress_install_dir }}/wp-config-sample.php"
+  when: wordpress_download.changed
   tags: [wordpress, extract]
 
-- name: Configure WordPress wp-config.php for SQL Server
-  ansible.builtin.template:
+- name: Configure WordPress wp-config.php
+  template:
     src: wp-config.php.j2
-    dest: /var/www/wordpress/wp-config.php
-    owner: nginx
-    group: nginx
+    dest: "{{ wordpress_install_dir }}/wp-config.php"
+    owner: "{{ wordpress_user }}"
+    group: "{{ wordpress_group }}"
     mode: '0640'
   tags: [wordpress, config]
 
 - name: Set correct permissions on WordPress files
-  ansible.builtin.file:
-    path: /var/www/wordpress
+  file:
+    path: "{{ wordpress_install_dir }}"
     state: directory
-    owner: nginx
-    group: nginx
+    owner: "{{ wordpress_user }}"
+    group: "{{ wordpress_group }}"
     recurse: yes
   tags: [wordpress, permissions]
 
-- name: Configure PHP-FPM for WordPress
-  ansible.builtin.template:
+- name: Configure PHP-FPM pool for WordPress
+  template:
     src: wordpress-pool.conf.j2
-    dest: /etc/php-fpm.d/wordpress.conf
+    dest: "/etc/php/{{ php_version }}/fpm/pool.d/wordpress.conf"
     owner: root
     group: root
     mode: '0644'
   notify: restart php-fpm
   tags: [wordpress, php-fpm, config]
 
-- name: Configure nginx virtual host for WordPress
-  ansible.builtin.template:
+- name: Configure Nginx virtual host for WordPress
+  template:
     src: wordpress-nginx.conf.j2
-    dest: /etc/nginx/conf.d/wordpress.conf
+    dest: /etc/nginx/sites-available/wordpress.conf
     owner: root
     group: root
     mode: '0644'
-    validate: 'nginx -t'
-  notify: restart nginx
+    backup: yes
+  notify: reload nginx
   tags: [wordpress, nginx, config]
 
+- name: Enable WordPress Nginx site
+  file:
+    src: /etc/nginx/sites-available/wordpress.conf
+    dest: /etc/nginx/sites-enabled/wordpress.conf
+    state: link
+  notify: reload nginx
+  tags: [wordpress, nginx]
+
+- name: Remove default Nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+  tags: [wordpress, nginx]
+
+- name: Validate Nginx configuration
+  command: nginx -t
+  register: nginx_validate
+  changed_when: false
+  failed_when: nginx_validate.rc != 0
+  tags: [wordpress, nginx, validate]
+
+- name: Configure UFW firewall for HTTP and HTTPS
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "{{ wordpress_nginx_port }}"
+    - "443"
+  tags: [wordpress, firewall]
+
 - name: Enable and start PHP-FPM service
-  ansible.builtin.systemd:
-    name: php-fpm
+  systemd:
+    name: "php{{ php_version }}-fpm"
     enabled: yes
     state: started
   tags: [wordpress, php-fpm, service]
 
-- name: Configure firewall for HTTP/HTTPS
-  ansible.posix.firewalld:
-    service: "{{ item }}"
-    permanent: yes
-    state: enabled
-    immediate: yes
-  loop:
-    - http
-    - https
-  tags: [wordpress, firewall]
+- name: Enable and start Nginx service
+  systemd:
+    name: nginx
+    enabled: yes
+    state: started
+  tags: [wordpress, nginx, service]
 
-- name: Set SELinux context for WordPress directory
-  community.general.sefcontext:
-    target: '/var/www/wordpress(/.*)?'
-    setype: httpd_sys_rw_content_t
-    state: present
-  when: ansible_selinux.status == 'enabled'
-  tags: [wordpress, selinux]
-
-- name: Apply SELinux context
-  ansible.builtin.command: restorecon -R /var/www/wordpress
-  when: ansible_selinux.status == 'enabled'
-  changed_when: false
-  tags: [wordpress, selinux]
-
-- name: Allow httpd to make network connections (for SQL Server)
-  ansible.posix.seboolean:
-    name: httpd_can_network_connect_db
-    state: yes
-    persistent: yes
-  when: ansible_selinux.status == 'enabled'
-  tags: [wordpress, selinux]
+- name: Install WP-CLI
+  get_url:
+    url: https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+    dest: /usr/local/bin/wp
+    mode: '0755'
+  tags: [wordpress, wp-cli]
 
 - name: Create WordPress cron job for scheduled tasks
-  ansible.builtin.cron:
+  cron:
     name: "WordPress Cron"
     minute: "*/15"
-    job: "cd /var/www/wordpress && /usr/bin/php wp-cron.php > /dev/null 2>&1"
-    user: nginx
+    job: "cd {{ wordpress_install_dir }} && /usr/bin/php wp-cron.php > /dev/null 2>&1"
+    user: "{{ wordpress_user }}"
   tags: [wordpress, cron]
+
+- name: Wait for WordPress to be accessible
+  uri:
+    url: "http://localhost:{{ wordpress_nginx_port }}"
+    status_code: [200, 301, 302]
+    timeout: 30
+  register: wordpress_check
+  retries: 3
+  delay: 5
+  until: wordpress_check.status in [200, 301, 302]
+  tags: [wordpress, verify]
+
+- name: Display WordPress configuration status
+  debug:
+    msg: |
+      ============================================================
+      WordPress CMS Configuration Completed
+      ============================================================
+      Server: {{ inventory_hostname }}
+      Installation Path: {{ wordpress_install_dir }}
+      Site URL: {{ wordpress_site_url }}
+      Database: {{ wordpress_db_name }} on {{ wordpress_db_host }}
+      PHP Version: {{ php_version }}
+      Nginx Port: {{ wordpress_nginx_port }}
+
+      Next Steps:
+        1. Access WordPress: http://{{ ansible_host }}
+        2. Complete WordPress installation wizard
+        3. Login with admin credentials
+        4. Install themes and plugins
+        5. Configure permalink structure
+
+      WP-CLI Commands:
+        wp core install --url="{{ wordpress_site_url }}" --title="{{ wordpress_site_title }}" --admin_user="{{ wordpress_admin_user }}" --admin_password="{{ wordpress_admin_password }}" --admin_email="{{ wordpress_admin_email }}"
+        wp theme list
+        wp plugin list
+
+      ============================================================
+  tags: [wordpress, verify]
+
+- name: Cleanup installation files
+  file:
+    path: /tmp/wordpress.tar.gz
+    state: absent
+  when: wordpress_download.changed
+  tags: [wordpress, cleanup]

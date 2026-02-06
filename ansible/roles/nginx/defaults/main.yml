@@ -1,0 +1,52 @@
+---
+# ============================================================
+# Ansible Role: nginx - Default Variables
+# Web server configuration for SC MEDIA SRL
+# ============================================================
+
+# Nginx user (Ubuntu uses www-data, RedHat uses nginx)
+nginx_user: "{{ 'www-data' if ansible_os_family == 'Debian' else 'nginx' }}"
+nginx_group: "{{ 'www-data' if ansible_os_family == 'Debian' else 'nginx' }}"
+
+# Website configuration
+website_name: "mediasrl"
+website_domain: "media-srl.ro"
+website_root: "/var/www/{{ website_name }}"
+website_document_root: "{{ website_root }}/html"
+website_logs_dir: "{{ website_root }}/logs"
+
+# Nginx ports
+nginx_http_port: 80
+nginx_https_port: 443
+
+# Nginx worker processes (auto = number of CPU cores)
+nginx_worker_processes: "auto"
+nginx_worker_connections: 1024
+
+# Nginx performance settings
+nginx_keepalive_timeout: 65
+nginx_client_max_body_size: "64m"
+nginx_server_tokens: "off"
+
+# Enable/disable features
+nginx_enable_gzip: true
+nginx_enable_ssl: false  # Set to true when SSL certificates are available
+nginx_enable_http2: false
+
+# SSL/TLS configuration (when enabled)
+nginx_ssl_certificate: "/etc/nginx/ssl/{{ website_domain }}.crt"
+nginx_ssl_certificate_key: "/etc/nginx/ssl/{{ website_domain }}.key"
+nginx_ssl_protocols: "TLSv1.2 TLSv1.3"
+nginx_ssl_ciphers: "ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
+
+# Security headers
+nginx_security_headers:
+  - "X-Frame-Options \"SAMEORIGIN\" always"
+  - "X-Content-Type-Options \"nosniff\" always"
+  - "X-XSS-Protection \"1; mode=block\" always"
+  - "Referrer-Policy \"no-referrer-when-downgrade\" always"
+
+# Company information
+company_name: "SC MEDIA SRL"
+company_description: "Marketing & PR Agency"
+company_admin_email: "admin@{{ website_domain }}"

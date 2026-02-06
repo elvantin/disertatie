@@ -1,95 +1,150 @@
+---
 # ============================================================
 # Ansible Role: nginx
-# Installs and configures nginx web server on vm-web-01
+# Installs and configures nginx web server on Ubuntu 22.04
+# Target: vm-web-01
 # ============================================================
 
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  register: apt_update
+  retries: 3
+  delay: 10
+  until: apt_update is succeeded
+  tags: [nginx, packages]
+
 - name: Install nginx and dependencies
-  ansible.builtin.dnf:
+  apt:
     name:
       - nginx
       - python3-pip
       - python3-cryptography
+      - ssl-cert
     state: present
+  register: nginx_install
+  retries: 3
+  delay: 10
+  until: nginx_install is succeeded
   tags: [nginx, packages]
 
 - name: Create website directory structure
-  ansible.builtin.file:
+  file:
     path: "{{ item }}"
     state: directory
-    owner: nginx
-    group: nginx
+    owner: "{{ nginx_user }}"
+    group: "{{ nginx_group }}"
     mode: '0755'
   loop:
-    - /var/www/mediasrl
-    - /var/www/mediasrl/html
-    - /var/www/mediasrl/logs
+    - "{{ website_root }}"
+    - "{{ website_document_root }}"
+    - "{{ website_logs_dir }}"
+    - "/etc/nginx/sites-available"
+    - "/etc/nginx/sites-enabled"
   tags: [nginx, directories]
 
-- name: Copy website files
-  ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    owner: nginx
-    group: nginx
+- name: Copy website index.html
+  copy:
+    src: index.html
+    dest: "{{ website_document_root }}/index.html"
+    owner: "{{ nginx_user }}"
+    group: "{{ nginx_group }}"
     mode: '0644'
-  loop:
-    - { src: 'index.html', dest: '/var/www/mediasrl/html/index.html' }
   tags: [nginx, content]
 
 - name: Configure nginx main configuration
-  ansible.builtin.template:
+  template:
     src: nginx.conf.j2
     dest: /etc/nginx/nginx.conf
     owner: root
     group: root
     mode: '0644'
     validate: 'nginx -t -c %s'
+    backup: yes
   notify: restart nginx
   tags: [nginx, config]
 
 - name: Configure nginx virtual host for SC MEDIA SRL
-  ansible.builtin.template:
+  template:
     src: mediasrl.conf.j2
-    dest: /etc/nginx/conf.d/mediasrl.conf
+    dest: /etc/nginx/sites-available/mediasrl.conf
     owner: root
     group: root
     mode: '0644'
-    validate: 'nginx -t'
-  notify: restart nginx
+    backup: yes
+  notify: reload nginx
   tags: [nginx, vhost, config]
 
-- name: Configure firewall for HTTP and HTTPS
-  ansible.posix.firewalld:
-    service: "{{ item }}"
-    permanent: yes
-    state: enabled
-    immediate: yes
+- name: Remove default nginx site
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+  tags: [nginx, vhost]
+
+- name: Enable SC MEDIA SRL site
+  file:
+    src: /etc/nginx/sites-available/mediasrl.conf
+    dest: /etc/nginx/sites-enabled/mediasrl.conf
+    state: link
+  notify: reload nginx
+  tags: [nginx, vhost]
+
+- name: Validate nginx configuration
+  command: nginx -t
+  register: nginx_validate
+  changed_when: false
+  failed_when: nginx_validate.rc != 0
+  tags: [nginx, config, validate]
+
+- name: Configure UFW firewall for HTTP and HTTPS
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
   loop:
-    - http
-    - https
+    - "{{ nginx_http_port }}"
+    - "{{ nginx_https_port }}"
   tags: [nginx, firewall]
 
-- name: Set SELinux boolean for nginx network connections
-  ansible.posix.seboolean:
-    name: httpd_can_network_connect
-    state: yes
-    persistent: yes
-  when: ansible_selinux.status == 'enabled'
-  tags: [nginx, selinux]
-
 - name: Enable and start nginx service
-  ansible.builtin.systemd:
+  systemd:
     name: nginx
     enabled: yes
     state: started
   tags: [nginx, service]
 
+- name: Wait for nginx to be ready
+  wait_for:
+    port: "{{ nginx_http_port }}"
+    host: localhost
+    timeout: 30
+  tags: [nginx, verify]
+
 - name: Verify nginx is responding
-  ansible.builtin.uri:
-    url: http://localhost
+  uri:
+    url: "http://localhost:{{ nginx_http_port }}"
     status_code: 200
+    return_content: yes
   register: nginx_check
   retries: 3
   delay: 5
   until: nginx_check.status == 200
+  tags: [nginx, verify]
+
+- name: Display nginx configuration status
+  debug:
+    msg: |
+      ============================================================
+      Nginx Web Server Configuration Completed
+      ============================================================
+      Server: {{ inventory_hostname }}
+      Website: {{ website_name }}
+      Domain: {{ website_domain }}
+      Document Root: {{ website_document_root }}
+      HTTP Port: {{ nginx_http_port }}
+      HTTPS Port: {{ nginx_https_port }} ({{ 'Enabled' if nginx_enable_ssl else 'Disabled' }})
+      Service Status: {{ nginx_check.status }}
+      ============================================================
   tags: [nginx, verify]

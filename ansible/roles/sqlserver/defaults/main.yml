@@ -1,0 +1,64 @@
+---
+# ============================================================
+# Ansible Role: sqlserver - Default Variables
+# SQL Server Express 2022 installation on Windows Server 2022
+# ============================================================
+
+# SQL Server Edition
+sqlserver_edition: "Express"
+sqlserver_version: "2022"
+sqlserver_instance_name: "SQLEXPRESS"
+
+# SQL Server installation path
+sqlserver_install_path: "C:\\Program Files\\Microsoft SQL Server"
+sqlserver_data_path: "C:\\SQLData"
+sqlserver_log_path: "C:\\SQLLogs"
+sqlserver_backup_path: "C:\\SQLBackups"
+sqlserver_tempdb_path: "C:\\SQLTemp"
+
+# SQL Server service accounts (using LocalSystem for Express)
+sqlserver_service_account: "NT AUTHORITY\\SYSTEM"
+sqlserver_agent_account: "NT AUTHORITY\\SYSTEM"
+
+# SQL Server authentication mode
+# Mixed = SQL Authentication + Windows Authentication
+# Windows = Windows Authentication only
+sqlserver_auth_mode: "Mixed"
+
+# SQL Server SA password (only used if Mixed mode)
+# PRODUCTION: Store in Ansible Vault!
+sqlserver_sa_password: "Str0ng_SQL_P@ssw0rd_2026!"
+
+# SQL Server TCP/IP configuration
+sqlserver_tcp_enabled: true
+sqlserver_tcp_port: 1433
+
+# SQL Server features to install
+sqlserver_features:
+  - "SQLENGINE"       # Database Engine
+  - "REPLICATION"     # SQL Server Replication
+  - "FULLTEXT"        # Full-Text Search
+  - "CONN"            # Client Tools Connectivity
+
+# SQL Server collation
+sqlserver_collation: "SQL_Latin1_General_CP1_CI_AS"
+
+# Firewall configuration
+sqlserver_firewall_enabled: true
+
+# Database configuration for WordPress
+wordpress_database_name: "wordpress_db"
+wordpress_database_user: "wp_user"
+wordpress_database_password: "Wp_P@ssw0rd_2026!"
+
+# SQL Server Management Studio (SSMS)
+sqlserver_install_ssms: true
+sqlserver_ssms_download_url: "https://aka.ms/ssmsfullsetup"
+
+# SQL Server download URLs (Express 2022)
+sqlserver_download_url: "https://go.microsoft.com/fwlink/p/?linkid=2216019"
+sqlserver_installer_path: "C:\\Temp\\SQLEXPR_x64_ENU.exe"
+sqlserver_extracted_path: "C:\\Temp\\SQLServer2022"
+
+# Temporary directory for downloads
+temp_directory: "C:\\Temp"

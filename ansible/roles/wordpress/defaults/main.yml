@@ -1,16 +1,44 @@
+---
 # ============================================================
 # Ansible Role: wordpress - Default Variables
-# IMPORTANT: Override sensitive values in Ansible Vault
+# WordPress CMS with PHP-FPM on Ubuntu 22.04
+# Database: SQL Server Express on vm-db-01
 # ============================================================
 
-# Database connection (remote MS SQL Server on vm-db-01)
-wordpress_db_name: wordpress_db
-wordpress_db_user: wordpress_user
-wordpress_db_password: "ChangeMe_WP_DB_P@ssw0rd!"
-wordpress_db_host: "vm-db-01"
-wordpress_db_type: "sqlsrv" # Using SQL Server instead of MySQL
+# WordPress version
+wordpress_version: "latest"
+wordpress_download_url: "https://wordpress.org/latest.tar.gz"
 
-# WordPress Authentication Keys (generate from https://api.wordpress.org/secret-key/1.1/salt/)
+# WordPress installation paths
+wordpress_install_dir: "/var/www/wordpress"
+wordpress_document_root: "{{ wordpress_install_dir }}/public_html"
+
+# Web server user/group
+wordpress_user: "www-data"
+wordpress_group: "www-data"
+
+# Database connection (SQL Server on vm-db-01)
+wordpress_db_type: "mysql"  # WordPress uses MySQL/MariaDB by default
+wordpress_db_name: "wordpress_db"
+wordpress_db_user: "wp_user"
+wordpress_db_password: "Wp_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
+wordpress_db_host: "10.10.10.7"  # vm-db-01 SQL Server (uses MySQL protocol bridge if needed)
+wordpress_db_port: 3306  # MySQL port (1433 for SQL Server direct connection)
+wordpress_db_charset: "utf8mb4"
+wordpress_db_collate: "utf8mb4_unicode_ci"
+
+# WordPress table prefix
+wordpress_table_prefix: "wp_"
+
+# WordPress site configuration
+wordpress_site_title: "SC MEDIA SRL"
+wordpress_site_url: "http://{{ ansible_host }}"
+wordpress_admin_user: "admin"
+wordpress_admin_password: "Admin_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
+wordpress_admin_email: "admin@media-srl.ro"
+
+# WordPress Authentication Keys
+# PRODUCTION: Generate unique keys from https://api.wordpress.org/secret-key/1.1/salt/
 wordpress_auth_key: "put your unique phrase here"
 wordpress_secure_auth_key: "put your unique phrase here"
 wordpress_logged_in_key: "put your unique phrase here"
@@ -19,3 +47,38 @@ wordpress_auth_salt: "put your unique phrase here"
 wordpress_secure_auth_salt: "put your unique phrase here"
 wordpress_logged_in_salt: "put your unique phrase here"
 wordpress_nonce_salt: "put your unique phrase here"
+
+# PHP configuration
+php_version: "8.1"
+php_memory_limit: "256M"
+php_upload_max_filesize: "64M"
+php_post_max_size: "64M"
+php_max_execution_time: "300"
+php_max_input_time: "300"
+
+# PHP-FPM configuration
+php_fpm_listen: "/run/php/php{{ php_version }}-fpm.sock"
+php_fpm_pm: "dynamic"
+php_fpm_pm_max_children: 50
+php_fpm_pm_start_servers: 5
+php_fpm_pm_min_spare_servers: 5
+php_fpm_pm_max_spare_servers: 35
+
+# MySQL/MariaDB (local) configuration
+mysql_install_local: true
+mysql_root_password: "MySQL_Root_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
+mysql_bind_address: "127.0.0.1"
+
+# Nginx configuration for WordPress
+wordpress_nginx_port: 80
+wordpress_nginx_server_name: "{{ ansible_host }} media-srl.ro www.media-srl.ro"
+
+# WordPress plugins to install
+wordpress_plugins: []
+# Example:
+#  - "akismet"
+#  - "jetpack"
+#  - "wordfence"
+
+# WordPress themes
+wordpress_default_theme: "twentytwentythree"

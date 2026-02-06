@@ -1,0 +1,213 @@
+---
+# ============================================================
+# Debian/Ubuntu-specific tasks
+# Baseline configuration for Ubuntu 22.04 LTS
+# ============================================================
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  register: apt_update
+  retries: 3
+  delay: 10
+  until: apt_update is succeeded
+
+- name: Upgrade all packages to the latest version
+  apt:
+    upgrade: dist
+    autoremove: yes
+    autoclean: yes
+  register: apt_upgrade
+  retries: 3
+  delay: 10
+  until: apt_upgrade is succeeded
+
+- name: Install common packages
+  apt:
+    name: "{{ common_packages }}"
+    state: present
+  register: apt_install_common
+  retries: 3
+  delay: 10
+  until: apt_install_common is succeeded
+
+- name: Install security packages
+  apt:
+    name: "{{ security_packages }}"
+    state: present
+  register: apt_install_security
+  retries: 3
+  delay: 10
+  until: apt_install_security is succeeded
+
+- name: Ensure python3-apt is installed (required for Ansible apt module)
+  apt:
+    name: python3-apt
+    state: present
+
+- name: Configure unattended-upgrades for automatic security updates
+  block:
+    - name: Enable automatic updates
+      copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+          APT::Periodic::Unattended-Upgrade "{{ '1' if auto_updates_enabled else '0' }}";
+        mode: '0644'
+      when: auto_updates_enabled
+
+    - name: Configure unattended-upgrades settings
+      template:
+        src: 50unattended-upgrades.j2
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        mode: '0644'
+      when: auto_updates_enabled
+      notify: restart unattended-upgrades
+  when: auto_updates_enabled
+
+- name: Configure UFW firewall
+  block:
+    - name: Reset UFW to default
+      ufw:
+        state: reset
+      when: firewall_enabled
+
+    - name: Set UFW default policy
+      ufw:
+        direction: incoming
+        policy: "{{ firewall_default_policy }}"
+      when: firewall_enabled
+
+    - name: Allow firewall ports
+      ufw:
+        rule: allow
+        port: "{{ item.split('/')[0] }}"
+        proto: "{{ item.split('/')[1] }}"
+      loop: "{{ firewall_allowed_ports }}"
+      when: firewall_enabled
+
+    - name: Enable UFW firewall
+      ufw:
+        state: enabled
+      when: firewall_enabled
+  when: firewall_enabled
+
+- name: Configure SSH hardening
+  block:
+    - name: Backup original sshd_config
+      copy:
+        src: /etc/ssh/sshd_config
+        dest: /etc/ssh/sshd_config.backup
+        remote_src: yes
+        force: no
+
+    - name: Configure SSH daemon settings
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        state: present
+        validate: '/usr/sbin/sshd -t -f %s'
+      loop:
+        - { regexp: '^#?Port', line: 'Port {{ ssh_port }}' }
+        - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin {{ ssh_permit_root_login }}' }
+        - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication {{ ssh_password_authentication }}' }
+        - { regexp: '^#?PermitEmptyPasswords', line: 'PermitEmptyPasswords {{ ssh_permit_empty_passwords }}' }
+        - { regexp: '^#?MaxAuthTries', line: 'MaxAuthTries {{ ssh_max_auth_tries }}' }
+        - { regexp: '^#?MaxSessions', line: 'MaxSessions {{ ssh_max_sessions }}' }
+        - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval {{ ssh_client_alive_interval }}' }
+        - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax {{ ssh_client_alive_count_max }}' }
+      notify: restart sshd
+  when: ssh_hardening_enabled
+
+- name: Configure kernel parameters for security (sysctl)
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+    sysctl_file: /etc/sysctl.d/99-security-hardening.conf
+  loop:
+    # IP forwarding (disable unless needed for routing)
+    - { name: 'net.ipv4.ip_forward', value: '0' }
+    - { name: 'net.ipv6.conf.all.forwarding', value: '0' }
+
+    # ICMP redirects (disable)
+    - { name: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+    - { name: 'net.ipv4.conf.default.accept_redirects', value: '0' }
+    - { name: 'net.ipv6.conf.all.accept_redirects', value: '0' }
+    - { name: 'net.ipv6.conf.default.accept_redirects', value: '0' }
+
+    # Secure redirects
+    - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
+    - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
+
+    # Send ICMP redirects (disable)
+    - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
+    - { name: 'net.ipv4.conf.default.send_redirects', value: '0' }
+
+    # Source packet routing (disable)
+    - { name: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+    - { name: 'net.ipv4.conf.default.accept_source_route', value: '0' }
+    - { name: 'net.ipv6.conf.all.accept_source_route', value: '0' }
+    - { name: 'net.ipv6.conf.default.accept_source_route', value: '0' }
+
+    # Log martians (spoofed packets)
+    - { name: 'net.ipv4.conf.all.log_martians', value: '1' }
+    - { name: 'net.ipv4.conf.default.log_martians', value: '1' }
+
+    # Ignore ICMP ping requests (optional - disabled for monitoring)
+    - { name: 'net.ipv4.icmp_echo_ignore_all', value: '0' }
+
+    # Ignore broadcast ICMP requests
+    - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
+
+    # Ignore bogus ICMP error responses
+    - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
+
+    # Enable TCP SYN cookies (DDoS protection)
+    - { name: 'net.ipv4.tcp_syncookies', value: '1' }
+
+    # Reverse path filtering (anti-spoofing)
+    - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
+    - { name: 'net.ipv4.conf.default.rp_filter', value: '1' }
+
+    # Increase system file descriptor limit
+    - { name: 'fs.file-max', value: '65536' }
+
+    # Kernel pointer protection
+    - { name: 'kernel.kptr_restrict', value: '2' }
+
+    # Restrict kernel logs to root only
+    - { name: 'kernel.dmesg_restrict', value: '1' }
+  when: kernel_hardening_enabled
+
+- name: Set hostname
+  hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Update /etc/hosts file
+  lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1'
+    line: "127.0.1.1 {{ inventory_hostname }}"
+    state: present
+
+- name: Display baseline configuration status
+  debug:
+    msg: |
+      ============================================================
+      Ubuntu Baseline Configuration Completed
+      ============================================================
+      Hostname: {{ inventory_hostname }}
+      OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+      Kernel: {{ ansible_kernel }}
+      Packages updated: {{ apt_upgrade.changed }}
+      Firewall enabled: {{ firewall_enabled }}
+      SSH hardening: {{ ssh_hardening_enabled }}
+      Kernel hardening: {{ kernel_hardening_enabled }}
+      Automatic updates: {{ auto_updates_enabled }}
+      ============================================================

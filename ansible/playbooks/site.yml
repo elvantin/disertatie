@@ -1,84 +1,280 @@
-# ============================================================
-# Main Ansible Playbook - SC MEDIA SRL Infrastructure
-# Updated for 6 VMs: Linux Jumphost + 2 Windows + 3 Linux
-# ============================================================
-
 ---
-- name: Setup SSH keys from jumphost to Linux VMs
-  import_playbook: setup-ssh-keys.yml
-  tags: [ssh-keys, setup]
+# ============================================================
+# Site Playbook - SC MEDIA SRL Infrastructure
+# Complete orchestration for 6 VMs: 1 Jumphost + 2 Windows + 3 Ubuntu
+# ============================================================
+#
+# Purpose:
+#   Main orchestration playbook that configures all infrastructure VMs
+#   in the correct order to avoid dependency failures
+#
+# Prerequisites:
+#   - Infrastructure deployed via Bicep
+#   - Jumphost bootstrapped with Ansible + xRDP
+#   - WinRM configured on Windows VMs (scripts/bootstrap-windows-winrm.ps1)
+#   - SSH keys distributed to Linux VMs (playbooks/setup-ssh-keys.yml)
+#
+# Usage:
+#   # Complete deployment
+#   ansible-playbook playbooks/site.yml
+#
+#   # Deploy specific roles
+#   ansible-playbook playbooks/site.yml --tags common
+#   ansible-playbook playbooks/site.yml --tags sqlserver
+#   ansible-playbook playbooks/site.yml --tags nginx,wordpress
+#
+#   # Deploy to specific hosts
+#   ansible-playbook playbooks/site.yml --limit webserver
+#   ansible-playbook playbooks/site.yml --limit linux
+#   ansible-playbook playbooks/site.yml --limit windows
+#
+#   # Dry run (check mode)
+#   ansible-playbook playbooks/site.yml --check
+#
+# ============================================================
 
-- name: Configure Jumphost (Linux with GUI + xRDP + Ansible)
-  hosts: jumphost
-  become: yes
-  roles:
-    - jumphost
-  tags: [jumphost, management]
+# =============================================================================
+# Phase 1: Baseline Configuration (Common)
+# =============================================================================
 
-- name: Configure File Server (Windows)
-  hosts: fileserver
-  roles:
-    - fileserver
-  tags: [fileserver, windows]
-
-- name: Configure Database Server (Windows with MS SQL Server 2022)
-  hosts: database
-  roles:
-    - mssql
-  tags: [database, mssql, windows]
-
-- name: Configure all Linux VMs with common baseline
+- name: Configure Linux VMs - Common Baseline (Ubuntu 22.04)
   hosts: linux
   become: yes
-  roles:
-    - common
-  tags: [common, baseline, linux]
+  gather_facts: yes
 
-- name: Configure Windows VMs with common baseline
+  roles:
+    - role: common
+      tags: [common, baseline, linux]
+
+  tasks:
+    - name: Display Linux baseline configuration status
+      debug:
+        msg: "Baseline configuration completed for {{ inventory_hostname }}"
+      tags: [common]
+
+- name: Configure Windows VMs - Common Baseline (Windows Server 2022)
   hosts: windows
-  roles:
-    - common
-  tags: [common, baseline, windows]
+  gather_facts: yes
 
-- name: Configure Web Server (vm-web-01)
+  roles:
+    - role: common
+      when: false  # Windows common role not yet implemented
+      tags: [common, baseline, windows]
+
+  tasks:
+    - name: Display Windows baseline status
+      debug:
+        msg: "Windows baseline configuration skipped - role not implemented"
+      tags: [common]
+
+# =============================================================================
+# Phase 2: Database Services (Must run before application servers)
+# =============================================================================
+
+- name: Configure Database Server - SQL Server Express (vm-db-01)
+  hosts: database
+  gather_facts: yes
+
+  roles:
+    - role: sqlserver
+      tags: [database, sqlserver, windows]
+
+  tasks:
+    - name: Display database server status
+      debug:
+        msg: "SQL Server Express configuration completed on {{ inventory_hostname }}"
+      tags: [database, sqlserver]
+
+# =============================================================================
+# Phase 3: Application Services
+# =============================================================================
+
+- name: Configure Web Server - Nginx (vm-web-01)
   hosts: webserver
   become: yes
-  roles:
-    - nginx
-  tags: [webserver, nginx]
+  gather_facts: yes
 
-- name: Configure CMS Server with WordPress + Postfix (vm-cms-01)
-  hosts: cms
-  become: yes
   roles:
-    - wordpress
-    - postfix
-  tags: [cms, wordpress, mail]
+    - role: nginx
+      tags: [webserver, nginx]
 
-- name: Apply security hardening to all VMs
-  hosts: all
-  become: yes
-  roles:
-    - hardening
-  tags: [hardening, security, cis]
-
-- name: Verify deployment
-  hosts: all
-  become: yes
   tasks:
-    - name: Check if all services are running
-      ansible.builtin.service_facts:
+    - name: Display web server status
+      debug:
+        msg: "Nginx web server configuration completed on {{ inventory_hostname }}"
+      tags: [webserver, nginx]
 
-    - name: Display deployment summary
-      ansible.builtin.debug:
+- name: Configure CMS Server - WordPress + MySQL + Postfix (vm-cms-01)
+  hosts: cmsserver
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - role: wordpress
+      tags: [cms, wordpress]
+
+    - role: postfix
+      tags: [mail, postfix]
+
+  tasks:
+    - name: Display CMS server status
+      debug:
+        msg: "WordPress CMS and Postfix mail server configuration completed on {{ inventory_hostname }}"
+      tags: [cms, wordpress, mail]
+
+# =============================================================================
+# Phase 4: File Services
+# =============================================================================
+
+- name: Configure File Server - SMB Shares (vm-fs-01)
+  hosts: fileserver
+  gather_facts: yes
+
+  roles:
+    - role: fileserver
+      when: false  # File server role not yet implemented
+      tags: [fileserver, windows]
+
+  tasks:
+    - name: Display file server status
+      debug:
+        msg: "File server configuration skipped - role not implemented"
+      tags: [fileserver]
+
+# =============================================================================
+# Phase 5: Security Hardening (CIS Benchmarks)
+# =============================================================================
+
+- name: Apply Security Hardening to All VMs
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - role: hardening
+      when: false  # Hardening role not yet implemented
+      tags: [hardening, security, cis]
+
+  tasks:
+    - name: Display hardening status
+      debug:
+        msg: "Security hardening skipped - role not implemented"
+      tags: [hardening]
+
+# =============================================================================
+# Phase 6: Verification and Summary
+# =============================================================================
+
+- name: Verify Deployment and Generate Summary
+  hosts: all
+  gather_facts: yes
+
+  tasks:
+    - name: Gather service facts
+      service_facts:
+      when: ansible_os_family != "Windows"
+      tags: [verify, summary]
+
+    - name: Gather Windows service facts
+      win_service_info:
+      when: ansible_os_family == "Windows"
+      tags: [verify, summary]
+
+    - name: Display deployment summary for Linux VMs
+      debug:
         msg: |
-          ========================================
-          Deployment Summary for {{ inventory_hostname }}
-          ========================================
+          ============================================================
+          DEPLOYMENT SUMMARY - {{ inventory_hostname }}
+          ============================================================
           OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
-          IP: {{ ansible_default_ipv4.address | default('N/A') }}
+          Kernel: {{ ansible_kernel }}
+          Architecture: {{ ansible_architecture }}
+          IP Address: {{ ansible_default_ipv4.address | default('N/A') }}
           Hostname: {{ ansible_hostname }}
+          FQDN: {{ ansible_fqdn }}
           Environment: {{ environment | default('unknown') }}
-          Role: {{ group_names | join(', ') }}
-          ========================================
-  tags: [verify, summary]
+          Roles: {{ group_names | join(', ') }}
+          Uptime: {{ ansible_uptime_seconds | default(0) // 3600 }} hours
+          ============================================================
+      when: ansible_os_family != "Windows"
+      tags: [verify, summary]
+
+    - name: Display deployment summary for Windows VMs
+      debug:
+        msg: |
+          ============================================================
+          DEPLOYMENT SUMMARY - {{ inventory_hostname }}
+          ============================================================
+          OS: {{ ansible_os_family }} {{ ansible_distribution_version }}
+          Architecture: {{ ansible_architecture }}
+          IP Address: {{ ansible_ip_addresses[0] | default('N/A') }}
+          Hostname: {{ ansible_hostname }}
+          FQDN: {{ ansible_fqdn }}
+          Environment: {{ environment | default('unknown') }}
+          Roles: {{ group_names | join(', ') }}
+          ============================================================
+      when: ansible_os_family == "Windows"
+      tags: [verify, summary]
+
+# =============================================================================
+# Final Status Report
+# =============================================================================
+
+- name: Generate Final Status Report
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: Display final status
+      debug:
+        msg: |
+          ============================================================
+          ANSIBLE DEPLOYMENT COMPLETED!
+          ============================================================
+
+          Infrastructure: SC MEDIA SRL
+          Environment: {{ environment | default('production') }}
+          Date: {{ ansible_date_time.date | default('N/A') }}
+          Time: {{ ansible_date_time.time | default('N/A') }}
+
+          VMs Configured:
+          {% for host in groups['all'] %}
+            - {{ host }} ({{ hostvars[host]['ansible_host'] | default('N/A') }})
+          {% endfor %}
+
+          Next Steps:
+            1. Test services:
+               - Web: http://{{ hostvars['vm-web-01']['ansible_host'] | default('vm-web-01') }}
+               - WordPress: http://{{ hostvars['vm-cms-01']['ansible_host'] | default('vm-cms-01') }}
+
+            2. Verify database connectivity:
+               ansible database -m win_shell -a "sqlcmd -S localhost -Q 'SELECT @@VERSION'"
+
+            3. Test email:
+               ansible cmsserver -m shell -a "echo 'Test' | mail -s 'Test' admin@media-srl.ro"
+
+          Log File: ./ansible.log
+
+          ============================================================
+      tags: [always]
+
+# ============================================================
+# Notes:
+# ============================================================
+# - Roles are applied in dependency order to avoid failures
+# - Some roles are marked as "when: false" until implemented
+# - Use tags to run specific phases: --tags common,nginx
+# - Use --limit to target specific hosts: --limit webserver
+# - All tasks respect become/privilege escalation settings
+# ============================================================
+
+# ============================================================
+# Troubleshooting:
+# ============================================================
+# - Verbose output: ansible-playbook site.yml -vvv
+# - Check syntax: ansible-playbook site.yml --syntax-check
+# - List hosts: ansible-playbook site.yml --list-hosts
+# - List tasks: ansible-playbook site.yml --list-tasks
+# - Dry run: ansible-playbook site.yml --check
+# ============================================================
