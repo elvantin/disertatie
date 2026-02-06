@@ -55,8 +55,8 @@ param adminObjectId string
 @description('Azure Compute Gallery name')
 param computeGalleryName string = 'gal_mediasrl'
 
-@description('Rocky Linux 10 image definition name in gallery')
-param rockyImageDefinition string = 'imgdef-rockylinux10'
+@description('Ubuntu 22.04 LTS image definition name in gallery')
+param ubuntuImageDefinition string = 'imgdef-ubuntu2204'
 
 @description('Windows Server 2022 image definition name in gallery')
 param windowsImageDefinition string = 'imgdef-winserver2022'
@@ -85,10 +85,11 @@ param vms array = [
   {
     name: 'vm-jmp-01'
     osType: 'Linux'
-    size: 'Standard_B2s'
+    size: 'Standard_D2s_v3'
     subnet: 'mgmt'
     createPublicIp: true
-    imageDefinition: 'rocky'
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 64
   }
   {
     name: 'vm-fs-01'
@@ -97,6 +98,7 @@ param vms array = [
     subnet: 'prod'
     createPublicIp: false
     imageDefinition: 'windows'
+    osDiskSizeGb: 128
   }
   {
     name: 'vm-db-01'
@@ -105,6 +107,7 @@ param vms array = [
     subnet: 'prod'
     createPublicIp: false
     imageDefinition: 'windows'
+    osDiskSizeGb: 128
   }
   {
     name: 'vm-web-01'
@@ -112,7 +115,8 @@ param vms array = [
     size: 'Standard_B2s'
     subnet: 'prod'
     createPublicIp: false
-    imageDefinition: 'rocky'
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 32
   }
   {
     name: 'vm-app-01'
@@ -120,7 +124,8 @@ param vms array = [
     size: 'Standard_B2s'
     subnet: 'prod'
     createPublicIp: false
-    imageDefinition: 'rocky'
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 32
   }
   {
     name: 'vm-cms-01'
@@ -128,7 +133,8 @@ param vms array = [
     size: 'Standard_B2s'
     subnet: 'prod'
     createPublicIp: false
-    imageDefinition: 'rocky'
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 32
   }
 ]
 
@@ -142,7 +148,7 @@ var tags = {
 }
 
 var galleryResourceGroupName = resourceGroupName
-var galleryImageIdRocky = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${rockyImageDefinition}/versions/${imageVersion}'
+var galleryImageIdUbuntu = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${ubuntuImageDefinition}/versions/${imageVersion}'
 var galleryImageIdWindows = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${windowsImageDefinition}/versions/${imageVersion}'
 
 // ----- Module: Resource Group -----
@@ -253,7 +259,10 @@ module monitoring 'modules/monitoring.bicep' = {
 }
 
 // ----- Module: Azure Backup (Recovery Services Vault) -----
+// DISABLED: Uncomment when ready to enable backup
+// Recovery Services Vault is time-consuming to delete, so disabled for development
 
+/*
 module backup 'modules/backup.bicep' = {
   name: 'deploy-backup'
   scope: az.resourceGroup(resourceGroupName)
@@ -269,6 +278,7 @@ module backup 'modules/backup.bicep' = {
     resourceGroup
   ]
 }
+*/
 
 // ----- Module: Virtual Machines (Loop) -----
 
@@ -285,12 +295,12 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     subnetId: vm.subnet == 'prod' ? networking.outputs.subnetProdId : (vm.subnet == 'dev' ? networking.outputs.subnetDevId : networking.outputs.subnetMgmtId)
     createPublicIp: vm.createPublicIp
     useGalleryImage: !useMarketplaceImages
-    galleryImageId: vm.imageDefinition == 'rocky' ? galleryImageIdRocky : galleryImageIdWindows
-    marketplacePublisher: useMarketplaceImages ? (vm.imageDefinition == 'rocky' ? 'resf' : 'MicrosoftWindowsServer') : ''
-    marketplaceOffer: useMarketplaceImages ? (vm.imageDefinition == 'rocky' ? 'rockylinux-x86_64' : 'WindowsServer') : ''
-    marketplaceSku: useMarketplaceImages ? (vm.imageDefinition == 'rocky' ? '9-base' : '2022-datacenter-azure-edition-smalldisk') : ''
+    galleryImageId: vm.imageDefinition == 'ubuntu' ? galleryImageIdUbuntu : galleryImageIdWindows
+    marketplacePublisher: useMarketplaceImages ? (vm.imageDefinition == 'ubuntu' ? 'canonical' : 'MicrosoftWindowsServer') : ''
+    marketplaceOffer: useMarketplaceImages ? (vm.imageDefinition == 'ubuntu' ? 'ubuntu-22_04-lts' : 'WindowsServer') : ''
+    marketplaceSku: useMarketplaceImages ? (vm.imageDefinition == 'ubuntu' ? 'server' : '2022-datacenter-azure-edition-smalldisk') : ''
     marketplaceVersion: 'latest'
-    osDiskSizeGb: 128
+    osDiskSizeGb: vm.osDiskSizeGb
     osDiskStorageType: 'StandardSSD_LRS'
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     deployMonitoringAgent: false // Disable to avoid package manager lock issues during deployment
@@ -299,7 +309,9 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
 }]
 
 // ----- Module: VM Backup Protection (Loop) -----
+// DISABLED: Uncomment when ready to enable backup
 
+/*
 module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
   name: 'deploy-backup-${vm.name}'
   scope: az.resourceGroup(resourceGroupName)
@@ -314,23 +326,11 @@ module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
     virtualMachines
   ]
 }]
+*/
 
-// ----- Module: Jumphost Bootstrap Script -----
-
-module jumphostBootstrap 'modules/vm-script-extension.bicep' = {
-  name: 'deploy-jumphost-bootstrap'
-  scope: az.resourceGroup(resourceGroupName)
-  params: {
-    location: location
-    vmName: 'vm-jmp-01'
-    extensionName: 'BootstrapJumphost'
-    scriptContent: loadTextContent('../scripts/bootstrap-jumphost.sh')
-    tags: tags
-  }
-  dependsOn: [
-    virtualMachines
-  ]
-}
+// NOTE: Jumphost bootstrap is done via az vm run-command after deployment
+// to avoid Azure Policy tag requirements on VM extensions
+// Run: az vm run-command invoke --scripts @scripts/bootstrap-jumphost.sh
 
 // ----- Outputs -----
 

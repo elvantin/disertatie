@@ -31,7 +31,7 @@ param adminObjectId = '9f286d78-d412-436b-9f1d-cdd24b456a0c' // TODO: az ad sign
 param useMarketplaceImages = true
 
 param computeGalleryName = 'gal_mediasrl'
-param rockyImageDefinition = 'imgdef-rockylinux10'
+param ubuntuImageDefinition = 'imgdef-ubuntu2204'
 param windowsImageDefinition = 'imgdef-winserver2022'
 param imageVersion = '1.0.0'
 
@@ -53,10 +53,11 @@ param vms = [
   {
     name: 'vm-jmp-01'
     osType: 'Linux'
-    size: 'Standard_B2s'
+    size: 'Standard_D2s_v3'
     subnet: 'mgmt'
     createPublicIp: true
-    imageDefinition: 'rocky'
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 64
   }
   {
     name: 'vm-fs-01'
@@ -65,6 +66,7 @@ param vms = [
     subnet: 'prod'
     createPublicIp: false
     imageDefinition: 'windows'
+    osDiskSizeGb: 128
   }
   {
     name: 'vm-db-01'
@@ -73,6 +75,7 @@ param vms = [
     subnet: 'prod'
     createPublicIp: false
     imageDefinition: 'windows'
+    osDiskSizeGb: 128
   }
   {
     name: 'vm-web-01'
@@ -80,7 +83,8 @@ param vms = [
     size: 'Standard_B2s'
     subnet: 'prod'
     createPublicIp: false
-    imageDefinition: 'rocky'
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 32
   }
   {
     name: 'vm-app-01'
@@ -88,7 +92,8 @@ param vms = [
     size: 'Standard_B2s'
     subnet: 'prod'
     createPublicIp: false
-    imageDefinition: 'rocky'
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 32
   }
   {
     name: 'vm-cms-01'
@@ -96,6 +101,7 @@ param vms = [
     size: 'Standard_B2s'
     subnet: 'prod'
     createPublicIp: false
-    imageDefinition: 'rocky'
+    imageDefinition: 'ubuntu'
+    osDiskSizeGb: 32
   }
 ]
