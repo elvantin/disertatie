@@ -43,10 +43,27 @@
   register: sqlserver_download
   tags: [sqlserver, download]
 
+- name: Check if SQL Server installer is already extracted
+  win_stat:
+    path: "{{ sqlserver_extracted_path }}\\setup.exe"
+  register: sqlserver_setup_check
+  when: not sqlserver_service_check.exists
+  tags: [sqlserver, extract]
+
 - name: Extract SQL Server installer
   win_shell: |
-    Start-Process -FilePath "{{ sqlserver_installer_path }}" -ArgumentList "/Q", "/X:{{ sqlserver_extracted_path }}" -Wait
-  when: not sqlserver_service_check.exists and sqlserver_download.changed
+    Start-Process -FilePath "{{ sqlserver_installer_path }}" -ArgumentList "/Q", "/X:{{ sqlserver_extracted_path }}" -Wait -PassThru
+  when: not sqlserver_service_check.exists and not (sqlserver_setup_check.stat.exists | default(false))
+  tags: [sqlserver, extract]
+
+- name: Wait for extraction to complete
+  win_stat:
+    path: "{{ sqlserver_extracted_path }}\\setup.exe"
+  register: sqlserver_setup_verify
+  retries: 12
+  delay: 10
+  until: sqlserver_setup_verify.stat.exists
+  when: not sqlserver_service_check.exists
   tags: [sqlserver, extract]
 
 - name: Install SQL Server Express 2022
@@ -244,7 +261,7 @@
 - name: Install SQL Server Management Studio (SSMS)
   win_shell: |
     Start-Process -FilePath "{{ temp_directory }}\SSMS-Setup-ENU.exe" -ArgumentList "/install", "/quiet", "/norestart" -Wait
-  when: sqlserver_install_ssms and ssms_download.changed
+  when: sqlserver_install_ssms and (ssms_download.changed | default(false))
   tags: [sqlserver, ssms, install]
 
 - name: Verify SQL Server installation
@@ -285,5 +302,5 @@
     - "{{ sqlserver_installer_path }}"
     - "{{ sqlserver_extracted_path }}"
     - "{{ temp_directory }}\\ConfigurationFile.ini"
-  when: sqlserver_install.changed
+  when: sqlserver_install.changed | default(false)
   tags: [sqlserver, cleanup]
