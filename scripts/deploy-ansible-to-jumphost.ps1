@@ -1,6 +1,7 @@
 # ============================================================
 # Deploy Ansible Configuration to Jumphost
 # Copies ansible/ directory to jumphost via SCP
+# Uses only 2 SSH connections (SCP + SSH) to minimize password prompts
 # ============================================================
 
 param(
@@ -17,11 +18,14 @@ param(
     [string]$LocalPath = "ansible"
 )
 
+$SSHTarget = "${User}@${JumphostIP}"
+$SSHOpts = "-o", "StrictHostKeyChecking=no"
+
 Write-Host "========================================="
 Write-Host "SC MEDIA SRL - Deploy Ansible to Jumphost"
 Write-Host "========================================="
 Write-Host ""
-Write-Host "Jumphost: ${User}@${JumphostIP}"
+Write-Host "Jumphost: $SSHTarget"
 Write-Host "Local Path: $LocalPath"
 Write-Host "Remote Path: $RemotePath"
 Write-Host ""
@@ -33,34 +37,24 @@ if (-not (Test-Path $LocalPath)) {
     exit 1
 }
 
-# Step 1: Create remote directory
-Write-Host "[1/4] Creating remote directory..."
-ssh -o StrictHostKeyChecking=no "${User}@${JumphostIP}" "mkdir -p ${RemotePath}"
-
-# Step 2: Copy ansible files via SCP
-Write-Host "[2/4] Copying ansible files to jumphost..."
-scp -o StrictHostKeyChecking=no -r "${LocalPath}\*" "${User}@${JumphostIP}:${RemotePath}/"
+# Step 1: Copy ansible files via SCP (password prompt 1/2)
+Write-Host "[1/2] Copying ansible files to jumphost..."
+scp @SSHOpts -r "${LocalPath}\*" "${SSHTarget}:${RemotePath}/"
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: SCP failed! Trying rsync alternative..." -ForegroundColor Yellow
-    # Alternative: use tar + ssh
-    Write-Host "Using tar + ssh method..."
-    tar -cf - -C $LocalPath . | ssh -o StrictHostKeyChecking=no "${User}@${JumphostIP}" "mkdir -p ${RemotePath} && tar -xf - -C ${RemotePath}"
+    Write-Host "SCP failed, trying tar+ssh method..." -ForegroundColor Yellow
+    tar -cf - -C $LocalPath . | ssh @SSHOpts $SSHTarget "mkdir -p ${RemotePath} && tar -xf - -C ${RemotePath}"
 }
 
-# Step 3: Set correct permissions
-Write-Host "[3/4] Setting permissions..."
-ssh -o StrictHostKeyChecking=no "${User}@${JumphostIP}" @"
+# Step 2: Set permissions + verify (password prompt 2/2)
+Write-Host "[2/2] Setting permissions and verifying deployment..."
+ssh @SSHOpts $SSHTarget @"
 chmod 644 ${RemotePath}/ansible.cfg
-chmod 644 ${RemotePath}/inventory/hosts.ini
+chmod 644 ${RemotePath}/inventory/hosts.ini 2>/dev/null
 chmod 755 ${RemotePath}/playbooks
 chmod 755 ${RemotePath}/roles
 find ${RemotePath} -name '*.yml' -exec chmod 644 {} \;
-"@
 
-# Step 4: Verify deployment
-Write-Host "[4/4] Verifying deployment..."
-ssh -o StrictHostKeyChecking=no "${User}@${JumphostIP}" @"
 echo ''
 echo '========================================='
 echo 'Ansible files deployed successfully!'
@@ -70,17 +64,16 @@ echo 'Directory structure:'
 find ${RemotePath} -maxdepth 3 -type f | head -30
 echo ''
 echo 'Testing ansible...'
-cd ${RemotePath} && ansible --version
+cd ${RemotePath} && ansible --version 2>&1 | head -3
 echo ''
 echo 'Listing inventory hosts...'
-cd ${RemotePath} && ansible all --list-hosts 2>/dev/null || echo 'Inventory listing requires ansible.cfg in current directory'
+cd ${RemotePath} && ansible all --list-hosts 2>/dev/null || echo 'Inventory listing requires azure_rm plugin'
 echo ''
 echo '========================================='
 echo 'Next steps (run on jumphost):'
 echo '  cd ${RemotePath}'
-echo '  ansible all --list-hosts'
 echo '  ansible windows -m win_ping'
-echo '  ansible linux -m ping --ask-pass'
+echo '  ansible linux -m ping'
 echo '========================================='
 "@
 
@@ -95,5 +88,5 @@ Write-Host ""
 Write-Host "Then test Ansible:"
 Write-Host "  cd ${RemotePath}"
 Write-Host "  ansible windows -m win_ping"
-Write-Host "  ansible linux -m ping --ask-pass"
+Write-Host "  ansible linux -m ping"
 Write-Host "========================================="

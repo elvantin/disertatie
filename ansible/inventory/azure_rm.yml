@@ -3,7 +3,7 @@
 # Automatically discovers VMs from Azure subscription
 # ============================================================
 
-plugin: azure.azcollection.azure_rm
+plugin: azure_rm
 
 # Azure authentication (uses az login credentials)
 auth_source: cli
@@ -19,10 +19,11 @@ exclude_host_filters:
 # Use VM name as hostname (not FQDN)
 plain_host_names: true
 
-# Conditional groups based on OS type
+# Conditional groups based on VM name patterns
+# Connection settings are in group_vars/windows.yml and group_vars/linux.yml
 conditional_groups:
-  windows: "'WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)"
-  linux: "'ubuntu' in (image_offer | default('') | lower) or 'linux' in (os_profile.system | default('') | lower)"
+  windows: "'db' in name or 'fs' in name"
+  linux: "'jmp' in name or 'web' in name or 'app' in name or 'cms' in name"
   jumphost: "'jmp' in name"
   database: "'db' in name"
   fileserver: "'fs' in name"
@@ -36,16 +37,8 @@ keyed_groups:
     key: tags
     separator: "_"
 
-# Compose variables - set ansible_host and connection type per VM
+# Compose variables - only guaranteed variables
+# OS-specific connection settings are in group_vars/
 compose:
   ansible_host: private_ipv4_addresses[0] | default(public_ipv4_addresses[0] | default(''))
-  ansible_connection: "'local' if 'jmp' in name else ('winrm' if ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else 'ssh')"
   ansible_user: "'azureadmin'"
-  ansible_winrm_transport: "'ntlm' if ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else omit"
-  ansible_winrm_server_cert_validation: "'ignore' if ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else omit"
-  ansible_port: "5985 if ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else 22"
-  ansible_python_interpreter: "'/usr/bin/python3' if not ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else omit"
-  ansible_ssh_common_args: "'-o StrictHostKeyChecking=no' if not ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else omit"
-  vm_size: hardware_profile.vm_size
-  vm_location: location
-  vm_os_type: os_profile.system | default('unknown')

@@ -4,6 +4,15 @@
 # Applied to all hosts in the 'windows' group
 # ============================================================
 
+# WinRM Connection Settings
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5985
+
+# Disable sudo become for Windows (incompatible with PowerShell)
+ansible_become: no
+
 # WinRM Authentication
 # PRODUCTION: Move to Ansible Vault!
 ansible_password: "Str0ng_P@ssw0rd_2026!"

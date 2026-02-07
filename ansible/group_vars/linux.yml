@@ -4,9 +4,16 @@
 # Applied to all hosts in the 'linux' group
 # ============================================================
 
+# SSH Connection Settings
+ansible_connection: ssh
+ansible_port: 22
+ansible_python_interpreter: /usr/bin/python3
+ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+
 # SSH Authentication (before SSH keys are deployed)
-# Use --ask-pass or set ansible_password here temporarily
-# ansible_password: "Str0ng_P@ssw0rd_2026!"
+# Use --ask-pass or uncomment below temporarily
+# PRODUCTION: Remove password, use SSH keys only!
+ansible_password: "Str0ng_P@ssw0rd_2026!"
 
 # Privilege escalation
 ansible_become: yes

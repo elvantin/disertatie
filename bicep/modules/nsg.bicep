@@ -108,6 +108,20 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
         }
       }
       {
+        name: 'Allow-WinRM-From-Jumphost'
+        properties: {
+          description: 'Allow WinRM HTTP from jumphost to Windows VMs (Ansible)'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '5985'
+          sourceAddressPrefix: '10.10.12.0/24'
+          destinationAddressPrefix: '*'
+          access: 'Allow'
+          priority: 115
+          direction: 'Inbound'
+        }
+      }
+      {
         name: 'Allow-HTTP-HTTPS-To-Web'
         properties: {
           description: 'Allow HTTP/HTTPS from Internet to web server'

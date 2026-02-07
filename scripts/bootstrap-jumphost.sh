@@ -126,8 +126,10 @@ systemctl restart xrdp
 # STEP 6: Install Remote Desktop Clients (Remmina)
 # =============================================================================
 
-echo "[14/23] Installing Remmina (RDP/VNC client)..."
-apt-get install -y remmina remmina-plugin-vnc remmina-plugin-rdp
+echo "[14/23] Installing Remmina (RDP/VNC client) from PPA..."
+apt-add-repository -y ppa:remmina-ppa-team/remmina-next
+apt-get update
+apt-get install -y remmina remmina-plugin-rdp remmina-plugin-secret
 
 # =============================================================================
 # STEP 7: Install Ansible and Configuration Management Tools
