@@ -4,19 +4,12 @@
 # Distributes SSH public key from jumphost to all Linux VMs
 # ============================================================
 #
-# Purpose:
-#   - Generate SSH key pair on jumphost (if not exists)
-#   - Deploy public key to all Linux VMs
-#   - Enable password-less SSH authentication
-#   - Test SSH connectivity after deployment
+# Usage:
+#   ansible-playbook playbooks/setup-ssh-keys.yml
 #
 # Prerequisites:
-#   - All Linux VMs deployed and accessible via password auth
-#   - ansible_password defined in inventory or passed via --extra-vars
-#
-# Usage:
-#   ansible-playbook playbooks/setup-ssh-keys.yml --ask-pass
-#   ansible-playbook playbooks/setup-ssh-keys.yml -e "ansible_password=YOUR_PASSWORD"
+#   - ansible_password defined in group_vars/linux.yml
+#   - sshpass installed on jumphost: sudo apt install -y sshpass
 #
 # ============================================================
 
@@ -59,14 +52,12 @@
         path: "{{ ssh_key_path }}"
         mode: '0600'
         owner: "{{ ansible_env.USER }}"
-      when: ssh_key_check.stat.exists or ssh_key_generated.changed
 
     - name: Set correct permissions on SSH public key
       file:
         path: "{{ ssh_key_path }}.pub"
         mode: '0644'
         owner: "{{ ansible_env.USER }}"
-      when: ssh_key_check.stat.exists or ssh_key_generated.changed
 
     - name: Read SSH public key
       slurp:
@@ -77,22 +68,26 @@
       debug:
         msg: "{{ ssh_public_key_content['content'] | b64decode | trim }}"
 
+    - name: Deploy SSH key to jumphost locally
+      authorized_key:
+        user: "{{ ansible_env.USER }}"
+        state: present
+        key: "{{ ssh_public_key_content['content'] | b64decode | trim }}"
+        comment: "jumphost-ansible-automation"
+
     - name: Set SSH public key fact for next play
       set_fact:
         jumphost_ssh_public_key: "{{ ssh_public_key_content['content'] | b64decode | trim }}"
         cacheable: yes
 
 # ============================================================
-# Deploy SSH Public Key to Linux VMs
+# Deploy SSH Public Key to Linux VMs (excluding jumphost)
 # ============================================================
 
 - name: Deploy SSH Public Key to Linux VMs
-  hosts: linux
+  hosts: linux:!jumphost
   gather_facts: no
   become: no
-
-  vars:
-    ansible_ssh_pass: "{{ ansible_password | default(omit) }}"
 
   tasks:
     - name: Wait for SSH port to be available
@@ -102,27 +97,6 @@
         timeout: 60
       delegate_to: localhost
       connection: local
-
-    - name: Test SSH connectivity with password
-      ping:
-      register: ping_result
-      ignore_errors: yes
-
-    - name: Display connectivity status
-      debug:
-        msg: "SSH connectivity to {{ inventory_hostname }} ({{ ansible_host }}): {{ 'SUCCESS' if ping_result is succeeded else 'FAILED' }}"
-
-    - name: Fail if SSH connectivity test failed
-      fail:
-        msg: "Cannot connect to {{ inventory_hostname }} via SSH with password authentication"
-      when: ping_result is failed
-
-    - name: Ensure .ssh directory exists
-      file:
-        path: "~/.ssh"
-        state: directory
-        mode: '0700'
-        owner: "{{ ansible_user }}"
 
     - name: Deploy SSH public key to authorized_keys
       authorized_key:
@@ -135,47 +109,31 @@
 
     - name: Display key deployment status
       debug:
-        msg: "SSH key deployment to {{ inventory_hostname }}: {{ 'SUCCESS' if key_deployment is succeeded else 'FAILED' }}"
+        msg: "SSH key deployed to {{ inventory_hostname }} ({{ ansible_host }}): {{ 'SUCCESS' if key_deployment is succeeded else 'FAILED' }}"
 
 # ============================================================
 # Verify SSH Key-Based Authentication
 # ============================================================
 
 - name: Verify SSH Key-Based Authentication
-  hosts: linux
-  gather_facts: no
+  hosts: linux:!jumphost
+  gather_facts: yes
   become: no
 
   vars:
-    ansible_ssh_private_key_file: "{{ ansible_env.HOME }}/.ssh/id_rsa"
-    ansible_ssh_pass: null
+    ansible_ssh_private_key_file: "~/.ssh/id_rsa"
 
   tasks:
     - name: Test SSH connectivity with key-based auth
       ping:
       register: key_auth_test
 
-    - name: Display key-based auth test result
-      debug:
-        msg: "SSH key-based authentication to {{ inventory_hostname }}: {{ 'SUCCESS' if key_auth_test is succeeded else 'FAILED' }}"
-
-    - name: Gather basic facts to verify connectivity
-      setup:
-        gather_subset:
-          - '!all'
-          - '!min'
-          - network
-      register: facts_gathered
-
     - name: Display host information
       debug:
         msg: |
-          Host: {{ inventory_hostname }}
-          IP Address: {{ ansible_host }}
+          Host: {{ inventory_hostname }} ({{ ansible_host }})
           OS: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
-          Kernel: {{ ansible_facts['kernel'] }}
-          Architecture: {{ ansible_facts['architecture'] }}
-      when: facts_gathered is succeeded
+          SSH Key Auth: SUCCESS
 
 # ============================================================
 # Summary Report
@@ -191,11 +149,11 @@
       debug:
         msg: |
           ============================================================
-          SSH KEY SETUP COMPLETED SUCCESSFULLY!
+          SSH KEY SETUP COMPLETED
           ============================================================
 
-          SSH Key Location: {{ ansible_env.HOME }}/.ssh/id_rsa
-          Public Key: {{ ansible_env.HOME }}/.ssh/id_rsa.pub
+          SSH Key: ~/.ssh/id_rsa
+          Public Key: ~/.ssh/id_rsa.pub
 
           Linux VMs Configured:
           {% for host in groups['linux'] %}
@@ -203,42 +161,8 @@
           {% endfor %}
 
           Next Steps:
-            1. Test connectivity: ansible linux -m ping
-            2. Run baseline configuration: ansible-playbook playbooks/site.yml --tags common
-            3. Deploy services: ansible-playbook playbooks/site.yml
-
-          Security Notes:
-            - Password authentication is still enabled on Linux VMs
-            - To disable password auth, set PasswordAuthentication no in /etc/ssh/sshd_config
-            - Run hardening playbook: ansible-playbook playbooks/harden-all.yml
+            1. Test: ansible linux -m ping
+            2. Run baseline: ansible-playbook playbooks/site.yml --tags common
+            3. Optionally comment out ansible_password in group_vars/linux.yml
 
           ============================================================
-
-# ============================================================
-# Notes:
-# ============================================================
-# - This playbook REQUIRES password authentication to be enabled on target VMs
-# - Use --ask-pass flag to prompt for password interactively
-# - Alternatively, pass password via: -e "ansible_password=YOUR_PASSWORD"
-# - SSH keys are generated with RSA 4096-bit encryption
-# - Public key is added to ~/.ssh/authorized_keys on each Linux VM
-# - After successful deployment, you can use password-less SSH
-# ============================================================
-
-# ============================================================
-# Troubleshooting:
-# ============================================================
-# Error: "Permission denied (publickey,password)"
-#   - Ensure password auth is enabled in /etc/ssh/sshd_config
-#   - Check PasswordAuthentication yes
-#   - Restart sshd: sudo systemctl restart sshd
-#
-# Error: "SSH key deployment failed"
-#   - Verify ~/.ssh directory exists with correct permissions (700)
-#   - Check authorized_keys file permissions (600)
-#   - Ensure user owns ~/.ssh and ~/.ssh/authorized_keys
-#
-# Error: "Host key verification failed"
-#   - Run: ssh-keyscan -H <hostname> >> ~/.ssh/known_hosts
-#   - Or set host_key_checking = False in ansible.cfg
-# ============================================================
