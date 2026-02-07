@@ -62,6 +62,7 @@
     ansible_winrm_transport: ntlm
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
+    ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
 
   roles:
     - role: common
@@ -88,6 +89,7 @@
     ansible_winrm_transport: ntlm
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
+    ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
 
   roles:
     - role: sqlserver
@@ -150,6 +152,7 @@
     ansible_winrm_transport: ntlm
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
+    ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
 
   roles:
     - role: fileserver
@@ -229,6 +232,7 @@
     ansible_winrm_transport: ntlm
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
+    ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
     env_name: "{{ env_name | default('unknown') }}"
 
   tasks:
