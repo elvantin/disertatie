@@ -169,14 +169,20 @@
   hosts: all
   gather_facts: yes
 
+  collections:
+    - ansible.windows
+
+  vars:
+    env_name: "{{ env_name | default('unknown') }}"
+
   tasks:
-    - name: Gather service facts
+    - name: Gather service facts (Linux)
       service_facts:
       when: ansible_os_family != "Windows"
       tags: [verify, summary]
 
-    - name: Gather Windows service facts
-      win_service_info:
+    - name: Gather service facts (Windows)
+      ansible.windows.win_service_info:
       when: ansible_os_family == "Windows"
       tags: [verify, summary]
 
@@ -192,9 +198,9 @@
           IP Address: {{ ansible_default_ipv4.address | default('N/A') }}
           Hostname: {{ ansible_hostname }}
           FQDN: {{ ansible_fqdn }}
-          Environment: {{ environment | default('unknown') }}
+          Environment: {{ env_name }}
           Roles: {{ group_names | join(', ') }}
-          Uptime: {{ ansible_uptime_seconds | default(0) // 3600 }} hours
+          Uptime: {{ (ansible_uptime_seconds | default(0)) // 3600 }} hours
           ============================================================
       when: ansible_os_family != "Windows"
       tags: [verify, summary]
@@ -205,16 +211,17 @@
           ============================================================
           DEPLOYMENT SUMMARY - {{ inventory_hostname }}
           ============================================================
-          OS: {{ ansible_os_family }} {{ ansible_distribution_version }}
+          OS: {{ ansible_os_family }} {{ ansible_distribution_version | default('N/A') }}
           Architecture: {{ ansible_architecture }}
-          IP Address: {{ ansible_ip_addresses[0] | default('N/A') }}
+          IP Address: {{ ansible_ip_addresses | default(['N/A']) | first }}
           Hostname: {{ ansible_hostname }}
           FQDN: {{ ansible_fqdn }}
-          Environment: {{ environment | default('unknown') }}
+          Environment: {{ env_name }}
           Roles: {{ group_names | join(', ') }}
           ============================================================
       when: ansible_os_family == "Windows"
       tags: [verify, summary]
+
 
 # =============================================================================
 # Final Status Report
@@ -223,7 +230,10 @@
 - name: Generate Final Status Report
   hosts: localhost
   connection: local
-  gather_facts: no
+  gather_facts: yes
+
+  vars:
+    env_name: "{{ env_name | default('production') }}"
 
   tasks:
     - name: Display final status
@@ -234,9 +244,9 @@
           ============================================================
 
           Infrastructure: SC MEDIA SRL
-          Environment: {{ environment | default('production') }}
-          Date: {{ ansible_date_time.date | default('N/A') }}
-          Time: {{ ansible_date_time.time | default('N/A') }}
+          Environment: {{ env_name }}
+          Date: {{ ansible_date_time.date }}
+          Time: {{ ansible_date_time.time }}
 
           VMs Configured:
           {% for host in groups['all'] %}

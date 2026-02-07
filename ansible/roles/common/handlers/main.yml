@@ -5,7 +5,7 @@
 
 - name: restart sshd
   systemd:
-    name: "{{ 'sshd' if ansible_os_family == 'RedHat' else 'ssh' }}"
+    name: "{{ 'sshd' if ansible_os_family == 'Debian' else 'ssh' }}"
     state: restarted
   when: ansible_os_family != 'Windows'
 
@@ -19,7 +19,7 @@
   systemd:
     name: chronyd
     state: restarted
-  when: ansible_os_family == 'RedHat'
+  when: ansible_os_family == 'Debian'
 
 - name: restart ufw
   systemd:

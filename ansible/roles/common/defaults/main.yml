@@ -37,16 +37,17 @@ common_packages:
   - apt-transport-https
   - python3
   - python3-pip
+  - systemd-timesyncd
   - build-essential
 
 # Security packages
 security_packages:
-  - ufw
+  - firewalld
   - fail2ban
   - unattended-upgrades
   - update-notifier-common
 
-# Firewall configuration (UFW)
+# Firewall configuration (firewalld)
 firewall_enabled: true
 firewall_default_policy: "deny"
 firewall_allowed_ports:
@@ -77,4 +78,4 @@ company_name: "SC MEDIA SRL"
 company_domain: "media-srl.ro"
 
 # Environment
-environment: "productie"
+env_name: "productie"

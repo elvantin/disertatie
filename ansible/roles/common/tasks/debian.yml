@@ -68,32 +68,39 @@
       notify: restart unattended-upgrades
   when: auto_updates_enabled
 
-- name: Configure UFW firewall
-  block:
-    - name: Reset UFW to default
-      ufw:
-        state: reset
-      when: firewall_enabled
+- name: Ensure firewalld is enabled and running
+  service:
+    name: firewalld
+    state: started
+    enabled: yes
+  when: firewalld_enabled
 
-    - name: Set UFW default policy
-      ufw:
-        direction: incoming
-        policy: "{{ firewall_default_policy }}"
-      when: firewall_enabled
+- name: Configure firewalld allowed ports
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    zone: "{{ firewalld_default_zone }}"
+    immediate: true
+  loop: "{{ firewalld_allowed_ports }}"
+  when: firewalld_enabled
 
-    - name: Allow firewall ports
-      ufw:
-        rule: allow
-        port: "{{ item.split('/')[0] }}"
-        proto: "{{ item.split('/')[1] }}"
-      loop: "{{ firewall_allowed_ports }}"
-      when: firewall_enabled
+  - name: Ensure firewalld is enabled and running
+  service:
+    name: firewalld
+    state: started
+    enabled: yes
+  when: firewalld_enabled
 
-    - name: Enable UFW firewall
-      ufw:
-        state: enabled
-      when: firewall_enabled
-  when: firewall_enabled
+- name: Configure firewalld allowed ports
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    zone: "{{ firewalld_default_zone }}"
+    immediate: true
+  loop: "{{ firewalld_allowed_ports }}"
+  when: firewalld_enabled
 
 - name: Configure SSH hardening
   block:

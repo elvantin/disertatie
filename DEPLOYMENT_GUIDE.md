@@ -85,9 +85,9 @@ az deployment sub create `
 - 1 Log Analytics
 - 6 Azure Policies
 - **5 VMs:**
-  - **vm-jmp-01** (Rocky Linux 9) - cu IP public
+  - **vm-jmp-01** (Ubuntu22.04) - cu IP public
   - **vm-fs-01** (Windows Server 2022)
-  - **vm-web-01, vm-app-01, vm-cms-01** (Rocky Linux 9)
+  - **vm-web-01, vm-app-01, vm-cms-01** (Ubuntu 22.04)
 
 ---
 
