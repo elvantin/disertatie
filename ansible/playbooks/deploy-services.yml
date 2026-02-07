@@ -13,6 +13,12 @@
 
 - name: Deploy Database Server
   hosts: database
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become: false
   roles:
     - mysql
   tags: [database]

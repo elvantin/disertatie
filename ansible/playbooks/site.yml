@@ -56,6 +56,13 @@
   hosts: windows
   gather_facts: yes
 
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become: false
+
   roles:
     - role: common
       when: false  # Windows common role not yet implemented
@@ -74,6 +81,13 @@
 - name: Configure Database Server - SQL Server Express (vm-db-01)
   hosts: database
   gather_facts: yes
+
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become: false
 
   roles:
     - role: sqlserver
@@ -130,6 +144,13 @@
   hosts: fileserver
   gather_facts: yes
 
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become: false
+
   roles:
     - role: fileserver
       when: false  # File server role not yet implemented
@@ -145,8 +166,8 @@
 # Phase 5: Security Hardening (CIS Benchmarks)
 # =============================================================================
 
-- name: Apply Security Hardening to All VMs
-  hosts: all:!jumphost
+- name: Apply Security Hardening to Linux VMs
+  hosts: linux:!jumphost
   become: yes
   gather_facts: yes
 
@@ -165,25 +186,16 @@
 # Phase 6: Verification and Summary
 # =============================================================================
 
-- name: Verify Deployment and Generate Summary
-  hosts: all:!jumphost
+- name: Verify Deployment - Linux VMs
+  hosts: linux:!jumphost
   gather_facts: yes
-
-  collections:
-    - ansible.windows
 
   vars:
     env_name: "{{ env_name | default('unknown') }}"
 
   tasks:
-    - name: Gather service facts (Linux)
+    - name: Gather service facts
       service_facts:
-      when: ansible_os_family != "Windows"
-      tags: [verify, summary]
-
-    - name: Gather service facts (Windows)
-      ansible.windows.win_service_info:
-      when: ansible_os_family == "Windows"
       tags: [verify, summary]
 
     - name: Display deployment summary for Linux VMs
@@ -202,7 +214,26 @@
           Roles: {{ group_names | join(', ') }}
           Uptime: {{ (ansible_uptime_seconds | default(0)) // 3600 }} hours
           ============================================================
-      when: ansible_os_family != "Windows"
+      tags: [verify, summary]
+
+- name: Verify Deployment - Windows VMs
+  hosts: windows
+  gather_facts: yes
+
+  collections:
+    - ansible.windows
+
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become: false
+    env_name: "{{ env_name | default('unknown') }}"
+
+  tasks:
+    - name: Gather service facts
+      ansible.windows.win_service_info:
       tags: [verify, summary]
 
     - name: Display deployment summary for Windows VMs
@@ -219,7 +250,6 @@
           Environment: {{ env_name }}
           Roles: {{ group_names | join(', ') }}
           ============================================================
-      when: ansible_os_family == "Windows"
       tags: [verify, summary]
 
 

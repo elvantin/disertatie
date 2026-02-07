@@ -14,16 +14,6 @@
   notify: restart sshd
   tags: [security, ssh, linux]
 
-- name: Disable password authentication for SSH (Linux)
-  ansible.builtin.lineinfile:
-    path: /etc/ssh/sshd_config
-    regexp: '^PasswordAuthentication'
-    line: 'PasswordAuthentication no'
-    state: present
-  when: ansible_os_family != 'Windows'
-  notify: restart sshd
-  tags: [security, ssh, linux]
-
 - name: Configure SSH to use strong ciphers only (Linux)
   ansible.builtin.blockinfile:
     path: /etc/ssh/sshd_config
