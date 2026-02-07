@@ -1,0 +1,9 @@
+---
+# ============================================================
+# Group Variables for Windows VMs
+# Applied to all hosts in the 'windows' group
+# ============================================================
+
+# WinRM Authentication
+# PRODUCTION: Move to Ansible Vault!
+ansible_password: "Str0ng_P@ssw0rd_2026!"

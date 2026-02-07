@@ -3,58 +3,49 @@
 # Automatically discovers VMs from Azure subscription
 # ============================================================
 
-plugin: azure_rm
+plugin: azure.azcollection.azure_rm
 
-# Azure authentication
-# Uses environment variables or ~/.azure/credentials
-auth_source: auto
+# Azure authentication (uses az login credentials)
+auth_source: cli
 
 # Filter VMs by resource group
 include_vm_resource_groups:
   - rg-mediasrl-productie-swedencentral
 
-# VM filters
+# Only running VMs
 exclude_host_filters:
   - powerstate != 'running'
 
-# Conditional groups based on Azure tags
-conditional_groups:
-  windows: "'Windows' in image_offer"
-  linux: "'rockylinux' in image_offer"
-  production: "tags.environment == 'productie'"
-  development: "tags.environment == 'dezvoltare'"
+# Use VM name as hostname (not FQDN)
+plain_host_names: true
 
-# Keyed groups (group by Azure tags)
+# Conditional groups based on OS type
+conditional_groups:
+  windows: "'WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)"
+  linux: "'ubuntu' in (image_offer | default('') | lower) or 'linux' in (os_profile.system | default('') | lower)"
+  jumphost: "'jmp' in name"
+  database: "'db' in name"
+  fileserver: "'fs' in name"
+  webserver: "'web' in name"
+  appserver: "'app' in name"
+  cmsserver: "'cms' in name"
+
+# Keyed groups
 keyed_groups:
   - prefix: tag
     key: tags
-  - prefix: location
-    key: location
-  - prefix: os
-    key: os_profile.system
+    separator: "_"
 
-# Hostnames
-hostnames:
-  - name
-  - public_ipv4_addresses
-  - private_ipv4_addresses
-
-# Compose variables from Azure properties
+# Compose variables - set ansible_host and connection type per VM
 compose:
-  ansible_host: private_ipv4_addresses[0] | default(public_ipv4_addresses[0])
-  vm_id: id
+  ansible_host: private_ipv4_addresses[0] | default(public_ipv4_addresses[0] | default(''))
+  ansible_connection: "'local' if 'jmp' in name else ('winrm' if ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else 'ssh')"
+  ansible_user: "'azureadmin'"
+  ansible_winrm_transport: "'ntlm' if ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else omit"
+  ansible_winrm_server_cert_validation: "'ignore' if ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else omit"
+  ansible_port: "5985 if ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else 22"
+  ansible_python_interpreter: "'/usr/bin/python3' if not ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else omit"
+  ansible_ssh_common_args: "'-o StrictHostKeyChecking=no' if not ('WindowsServer' in image_offer or 'windows' in (os_profile.system | default('') | lower)) else omit"
   vm_size: hardware_profile.vm_size
   vm_location: location
-  vm_tags: tags
-  vm_resource_group: resource_group
-  vm_image_publisher: image_publisher
-  vm_image_offer: image_offer
-  vm_image_sku: image_sku
-  vm_os_type: os_profile.system
-
-# Use cache for better performance (5 minutes)
-cache: yes
-cache_plugin: jsonfile
-cache_timeout: 300
-cache_connection: /tmp/ansible-azure-cache
-cache_prefix: azure_rm
+  vm_os_type: os_profile.system | default('unknown')
