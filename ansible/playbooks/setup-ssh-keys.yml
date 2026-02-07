@@ -83,11 +83,17 @@
 # ============================================================
 # Deploy SSH Public Key to Linux VMs (excluding jumphost)
 # ============================================================
+# Note: ansible_become must be overridden via vars (not play-level become)
+# because group_vars/linux.yml sets ansible_become: yes which takes
+# precedence over play keywords.
+# ============================================================
 
 - name: Deploy SSH Public Key to Linux VMs
   hosts: linux:!jumphost
   gather_facts: no
-  become: no
+
+  vars:
+    ansible_become: false
 
   tasks:
     - name: Wait for SSH port to be available
@@ -118,9 +124,9 @@
 - name: Verify SSH Key-Based Authentication
   hosts: linux:!jumphost
   gather_facts: yes
-  become: no
 
   vars:
+    ansible_become: false
     ansible_ssh_private_key_file: "~/.ssh/id_rsa"
 
   tasks:

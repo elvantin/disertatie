@@ -4,8 +4,13 @@
 
 - name: restart php-fpm
   ansible.builtin.systemd:
-    name: php-fpm
+    name: "php{{ php_version }}-fpm"
     state: restarted
+
+- name: reload nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
 
 - name: restart nginx
   ansible.builtin.systemd:

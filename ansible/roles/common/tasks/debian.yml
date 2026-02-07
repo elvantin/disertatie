@@ -23,6 +23,35 @@
   delay: 10
   until: apt_upgrade is succeeded
 
+- name: Remove UFW and replace with firewalld
+  block:
+
+    - name: Check if UFW is installed
+      command: which ufw
+      register: ufw_check
+      changed_when: false
+      failed_when: false
+
+    - name: Disable UFW rules
+      command: ufw disable
+      when: ufw_check.rc == 0
+      changed_when: false
+
+    - name: Stop and disable UFW service
+      service:
+        name: ufw
+        state: stopped
+        enabled: no
+      when: ufw_check.rc == 0
+
+    - name: Uninstall UFW package
+      apt:
+        name: ufw
+        state: absent
+        purge: yes
+      when: ufw_check.rc == 0
+
+
 - name: Install common packages
   apt:
     name: "{{ common_packages }}"
@@ -73,7 +102,7 @@
     name: firewalld
     state: started
     enabled: yes
-  when: firewalld_enabled
+  when: firewall_enabled
 
 - name: Configure firewalld allowed ports
   ansible.posix.firewalld:
@@ -82,25 +111,8 @@
     state: enabled
     zone: "{{ firewalld_default_zone }}"
     immediate: true
-  loop: "{{ firewalld_allowed_ports }}"
-  when: firewalld_enabled
-
-  - name: Ensure firewalld is enabled and running
-  service:
-    name: firewalld
-    state: started
-    enabled: yes
-  when: firewalld_enabled
-
-- name: Configure firewalld allowed ports
-  ansible.posix.firewalld:
-    port: "{{ item }}"
-    permanent: true
-    state: enabled
-    zone: "{{ firewalld_default_zone }}"
-    immediate: true
-  loop: "{{ firewalld_allowed_ports }}"
-  when: firewalld_enabled
+  loop: "{{ firewall_allowed_ports }}"
+  when: firewall_enabled
 
 - name: Configure SSH hardening
   block:

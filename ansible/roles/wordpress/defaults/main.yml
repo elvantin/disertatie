@@ -17,13 +17,13 @@ wordpress_document_root: "{{ wordpress_install_dir }}/public_html"
 wordpress_user: "www-data"
 wordpress_group: "www-data"
 
-# Database connection (SQL Server on vm-db-01)
-wordpress_db_type: "mysql"  # WordPress uses MySQL/MariaDB by default
+# Database connection (MariaDB local on vm-cms-01)
+wordpress_db_type: "mysql"  # WordPress uses MySQL/MariaDB
 wordpress_db_name: "wordpress_db"
 wordpress_db_user: "wp_user"
 wordpress_db_password: "Wp_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
-wordpress_db_host: "10.10.10.7"  # vm-db-01 SQL Server (uses MySQL protocol bridge if needed)
-wordpress_db_port: 3306  # MySQL port (1433 for SQL Server direct connection)
+wordpress_db_host: "localhost"  # MariaDB is installed locally on vm-cms-01
+wordpress_db_port: 3306
 wordpress_db_charset: "utf8mb4"
 wordpress_db_collate: "utf8mb4_unicode_ci"
 

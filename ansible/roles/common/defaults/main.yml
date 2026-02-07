@@ -49,7 +49,7 @@ security_packages:
 
 # Firewall configuration (firewalld)
 firewall_enabled: true
-firewall_default_policy: "deny"
+firewalld_default_zone: "public"
 firewall_allowed_ports:
   - "22/tcp"  # SSH
 

@@ -18,7 +18,7 @@
   tags: [database]
 
 - name: Deploy CMS and Mail Server
-  hosts: cms
+  hosts: cmsserver
   become: yes
   roles:
     - wordpress

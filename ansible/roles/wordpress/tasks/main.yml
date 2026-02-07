@@ -194,11 +194,12 @@
   failed_when: nginx_validate.rc != 0
   tags: [wordpress, nginx, validate]
 
-- name: Configure UFW firewall for HTTP and HTTPS
-  ufw:
-    rule: allow
-    port: "{{ item }}"
-    proto: tcp
+- name: Configure firewalld for HTTP and HTTPS
+  ansible.posix.firewalld:
+    port: "{{ item }}/tcp"
+    permanent: true
+    state: enabled
+    immediate: true
   loop:
     - "{{ wordpress_nginx_port }}"
     - "443"

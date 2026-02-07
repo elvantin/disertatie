@@ -1,0 +1,123 @@
+---
+# ============================================================
+# CIS Hardening for Debian-based systems (Ubuntu 22.04 LTS)
+# ============================================================
+
+- name: Set password quality requirements
+  ansible.builtin.lineinfile:
+    path: /etc/security/pwquality.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+    create: yes
+  loop:
+    - { regexp: '^minlen', line: 'minlen = 14' }
+    - { regexp: '^dcredit', line: 'dcredit = -1' }
+    - { regexp: '^ucredit', line: 'ucredit = -1' }
+    - { regexp: '^ocredit', line: 'ocredit = -1' }
+    - { regexp: '^lcredit', line: 'lcredit = -1' }
+  tags: [hardening, password]
+
+- name: Install libpwquality for password quality enforcement
+  ansible.builtin.apt:
+    name: libpam-pwquality
+    state: present
+  tags: [hardening, password]
+
+- name: Configure password aging in login.defs
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    state: present
+  loop:
+    - { regexp: '^PASS_MAX_DAYS', line: 'PASS_MAX_DAYS   90' }
+    - { regexp: '^PASS_MIN_DAYS', line: 'PASS_MIN_DAYS   1' }
+    - { regexp: '^PASS_WARN_AGE', line: 'PASS_WARN_AGE   7' }
+  tags: [hardening, password]
+
+- name: Restrict core dumps
+  ansible.builtin.lineinfile:
+    path: /etc/security/limits.conf
+    line: '*     hard   core    0'
+    state: present
+  tags: [hardening, coredump]
+
+- name: Disable core dumps via sysctl
+  ansible.posix.sysctl:
+    name: fs.suid_dumpable
+    value: '0'
+    state: present
+    reload: yes
+  tags: [hardening, coredump]
+
+- name: Set correct permissions on critical files
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    mode: "{{ item.mode }}"
+    owner: root
+    group: root
+  loop:
+    - { path: '/etc/passwd', mode: '0644' }
+    - { path: '/etc/shadow', mode: '0640' }
+    - { path: '/etc/group', mode: '0644' }
+    - { path: '/etc/gshadow', mode: '0640' }
+  tags: [hardening, permissions]
+
+- name: Install AIDE for file integrity monitoring
+  ansible.builtin.apt:
+    name: aide
+    state: present
+  tags: [hardening, aide]
+
+- name: Initialize AIDE database (if not exists)
+  ansible.builtin.command: aideinit
+  args:
+    creates: /var/lib/aide/aide.db
+  tags: [hardening, aide]
+
+- name: Install and configure auditd
+  ansible.builtin.apt:
+    name:
+      - auditd
+      - audispd-plugins
+    state: present
+  tags: [hardening, audit]
+
+- name: Configure audit rules for Ubuntu
+  ansible.builtin.copy:
+    dest: /etc/audit/rules.d/cis.rules
+    content: |
+      # CIS Benchmark audit rules
+
+      # Monitor user/group changes
+      -w /etc/group -p wa -k identity
+      -w /etc/passwd -p wa -k identity
+      -w /etc/gshadow -p wa -k identity
+      -w /etc/shadow -p wa -k identity
+
+      # Monitor network environment
+      -w /etc/hosts -p wa -k network
+      -w /etc/network -p wa -k network
+
+      # Monitor system authentication
+      -w /var/log/lastlog -p wa -k logins
+      -w /var/log/auth.log -p wa -k logins
+
+      # Monitor privileged commands
+      -a always,exit -F arch=b64 -S execve -F euid=0 -k root_commands
+
+      # Monitor file deletion
+      -a always,exit -F arch=b64 -S unlink,unlinkat,rename,renameat -F auid>=1000 -F auid!=-1 -k delete
+    owner: root
+    group: root
+    mode: '0640'
+  notify: restart auditd
+  tags: [hardening, audit]
+
+- name: Enable and start auditd service
+  ansible.builtin.systemd:
+    name: auditd
+    enabled: yes
+    state: started
+  tags: [hardening, audit]

@@ -38,7 +38,7 @@
 # =============================================================================
 
 - name: Configure Linux VMs - Common Baseline (Ubuntu 22.04)
-  hosts: linux
+  hosts: linux:!jumphost
   become: yes
   gather_facts: yes
 
@@ -146,7 +146,7 @@
 # =============================================================================
 
 - name: Apply Security Hardening to All VMs
-  hosts: all
+  hosts: all:!jumphost
   become: yes
   gather_facts: yes
 
@@ -166,7 +166,7 @@
 # =============================================================================
 
 - name: Verify Deployment and Generate Summary
-  hosts: all
+  hosts: all:!jumphost
   gather_facts: yes
 
   collections:

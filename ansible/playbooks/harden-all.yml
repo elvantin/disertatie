@@ -5,7 +5,7 @@
 
 ---
 - name: Apply security hardening to all systems
-  hosts: all
+  hosts: all:!jumphost
   become: yes
   roles:
     - hardening

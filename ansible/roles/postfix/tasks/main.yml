@@ -4,12 +4,12 @@
 # ============================================================
 
 - name: Install Postfix and related packages
-  ansible.builtin.dnf:
+  ansible.builtin.apt:
     name:
       - postfix
-      - mailx
-      - cyrus-sasl
-      - cyrus-sasl-plain
+      - bsd-mailx
+      - libsasl2-modules
+      - sasl2-bin
     state: present
   tags: [postfix, packages]
 
