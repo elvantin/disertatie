@@ -1,12 +1,12 @@
 [wordpress]
 ; PHP-FPM pool configuration for WordPress - Managed by Ansible
 
-user = nginx
-group = nginx
+user = www-data
+group = www-data
 
-listen = /run/php-fpm/wordpress.sock
-listen.owner = nginx
-listen.group = nginx
+listen = /run/php/wordpress.sock
+listen.owner = www-data
+listen.group = www-data
 listen.mode = 0660
 
 pm = dynamic

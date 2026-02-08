@@ -1,8 +1,13 @@
 ---
 # ============================================================
 # Ansible Role: nginx
-# Installs and configures nginx web server on Ubuntu 22.04
+# Reverse proxy with Let's Encrypt SSL on Ubuntu 22.04
 # Target: vm-web-01
+# Flow: Install → HTTP config → Certbot → HTTPS config
+# ============================================================
+
+# ============================================================
+# Phase 1: Install packages
 # ============================================================
 
 - name: Update apt cache
@@ -15,10 +20,12 @@
   until: apt_update is succeeded
   tags: [nginx, packages]
 
-- name: Install nginx and dependencies
+- name: Install nginx, certbot and dependencies
   apt:
     name:
       - nginx
+      - certbot
+      - python3-certbot-nginx
       - python3-pip
       - python3-cryptography
       - ssl-cert
@@ -28,6 +35,10 @@
   delay: 10
   until: nginx_install is succeeded
   tags: [nginx, packages]
+
+# ============================================================
+# Phase 2: Directory structure
+# ============================================================
 
 - name: Create website directory structure
   file:
@@ -40,6 +51,7 @@
     - "{{ website_root }}"
     - "{{ website_document_root }}"
     - "{{ website_logs_dir }}"
+    - "{{ certbot_webroot }}"
     - "/etc/nginx/sites-available"
     - "/etc/nginx/sites-enabled"
   tags: [nginx, directories]
@@ -53,6 +65,10 @@
     mode: '0644'
   tags: [nginx, content]
 
+# ============================================================
+# Phase 3: Initial HTTP-only configuration (needed for certbot)
+# ============================================================
+
 - name: Configure nginx main configuration
   template:
     src: nginx.conf.j2
@@ -65,7 +81,24 @@
   notify: restart nginx
   tags: [nginx, config]
 
-- name: Configure nginx virtual host for SC MEDIA SRL
+- name: Check if SSL certificate already exists
+  stat:
+    path: "{{ certbot_cert_path }}"
+  register: ssl_cert_exists
+  tags: [nginx, ssl]
+
+- name: Deploy HTTP-only config (before certbot)
+  template:
+    src: mediasrl-http.conf.j2
+    dest: /etc/nginx/sites-available/mediasrl.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: not ssl_cert_exists.stat.exists
+  notify: reload nginx
+  tags: [nginx, config]
+
+- name: Deploy HTTPS config (certificate exists)
   template:
     src: mediasrl.conf.j2
     dest: /etc/nginx/sites-available/mediasrl.conf
@@ -73,8 +106,9 @@
     group: root
     mode: '0644'
     backup: yes
+  when: ssl_cert_exists.stat.exists
   notify: reload nginx
-  tags: [nginx, vhost, config]
+  tags: [nginx, config, ssl]
 
 - name: Remove default nginx site
   file:
@@ -98,6 +132,10 @@
   failed_when: nginx_validate.rc != 0
   tags: [nginx, config, validate]
 
+# ============================================================
+# Phase 4: Firewall + Start nginx
+# ============================================================
+
 - name: Configure firewalld for HTTP and HTTPS
   ansible.posix.firewalld:
     port: "{{ item }}/tcp"
@@ -116,36 +154,147 @@
     state: started
   tags: [nginx, service]
 
-- name: Wait for nginx to be ready
+- name: Flush handlers to apply nginx config changes
+  meta: flush_handlers
+  tags: [nginx, service]
+
+- name: Reload nginx to ensure latest configuration is active
+  systemd:
+    name: nginx
+    state: reloaded
+  tags: [nginx, service]
+
+- name: Wait for nginx to be ready on HTTP
   wait_for:
     port: "{{ nginx_http_port }}"
     host: localhost
     timeout: 30
   tags: [nginx, verify]
 
-- name: Verify nginx is responding
+# ============================================================
+# Phase 5: Let's Encrypt certificate (certbot)
+# ============================================================
+
+- name: Obtain Let's Encrypt certificate
+  command: >
+    certbot certonly --webroot
+    --webroot-path {{ certbot_webroot }}
+    --domain {{ website_domain }}
+    --email {{ certbot_email }}
+    --agree-tos
+    --non-interactive
+    --keep-until-expiring
+  register: certbot_result
+  changed_when: "'Certificate not yet due for renewal' not in certbot_result.stdout"
+  when: not ssl_cert_exists.stat.exists
+  tags: [nginx, ssl, certbot]
+
+- name: Verify SSL certificate exists after certbot
+  stat:
+    path: "{{ certbot_cert_path }}"
+  register: ssl_cert_after_certbot
+  tags: [nginx, ssl]
+
+# ============================================================
+# Phase 6: Deploy HTTPS configuration (after certificate)
+# ============================================================
+
+- name: Deploy HTTPS nginx configuration
+  template:
+    src: mediasrl.conf.j2
+    dest: /etc/nginx/sites-available/mediasrl.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+  when: ssl_cert_after_certbot.stat.exists
+  notify: reload nginx
+  tags: [nginx, config, ssl]
+
+- name: Validate nginx HTTPS configuration
+  command: nginx -t
+  register: nginx_validate_ssl
+  changed_when: false
+  failed_when: nginx_validate_ssl.rc != 0
+  when: ssl_cert_after_certbot.stat.exists
+  tags: [nginx, config, ssl, validate]
+
+- name: Reload nginx with HTTPS configuration
+  systemd:
+    name: nginx
+    state: reloaded
+  when: ssl_cert_after_certbot.stat.exists
+  tags: [nginx, ssl, service]
+
+# ============================================================
+# Phase 7: Certbot auto-renewal
+# ============================================================
+
+- name: Set up certbot auto-renewal cron
+  cron:
+    name: "Let's Encrypt certificate renewal"
+    minute: "30"
+    hour: "2"
+    day: "*/7"
+    job: "certbot renew --quiet --post-hook 'systemctl reload nginx'"
+    user: root
+  tags: [nginx, ssl, certbot]
+
+# ============================================================
+# Phase 8: Verification
+# ============================================================
+
+- name: Wait for nginx to be ready on HTTPS
+  wait_for:
+    port: "{{ nginx_https_port }}"
+    host: localhost
+    timeout: 30
+  when: ssl_cert_after_certbot.stat.exists
+  tags: [nginx, verify, ssl]
+
+- name: Verify nginx is responding on HTTP
   uri:
-    url: "http://localhost:{{ nginx_http_port }}"
-    status_code: 200
+    url: "http://localhost:{{ nginx_http_port }}/health"
+    status_code: [200, 301]
     return_content: yes
-  register: nginx_check
+    follow_redirects: none
+  register: nginx_http_check
   retries: 3
   delay: 5
-  until: nginx_check.status == 200
+  until: nginx_http_check.status in [200, 301]
   tags: [nginx, verify]
+
+- name: Verify nginx is responding on HTTPS
+  uri:
+    url: "https://localhost:{{ nginx_https_port }}/health"
+    status_code: 200
+    return_content: yes
+    validate_certs: no
+  register: nginx_https_check
+  retries: 3
+  delay: 5
+  until: nginx_https_check.status == 200
+  when: ssl_cert_after_certbot.stat.exists
+  tags: [nginx, verify, ssl]
 
 - name: Display nginx configuration status
   debug:
     msg: |
       ============================================================
-      Nginx Web Server Configuration Completed
+      Nginx Reverse Proxy Configuration Completed
       ============================================================
       Server: {{ inventory_hostname }}
       Website: {{ website_name }}
       Domain: {{ website_domain }}
-      Document Root: {{ website_document_root }}
-      HTTP Port: {{ nginx_http_port }}
-      HTTPS Port: {{ nginx_https_port }} ({{ 'Enabled' if nginx_enable_ssl else 'Disabled' }})
-      Service Status: {{ nginx_check.status }}
+      HTTP Port: {{ nginx_http_port }} ({{ 'redirect to HTTPS' if ssl_cert_after_certbot.stat.exists else 'active' }})
+      HTTPS Port: {{ nginx_https_port }} ({{ 'active' if ssl_cert_after_certbot.stat.exists else 'pending certificate' }})
+      SSL Certificate: {{ certbot_cert_path }}
+      Certificate Status: {{ 'INSTALLED' if ssl_cert_after_certbot.stat.exists else 'PENDING - ensure DNS points to this server' }}
+
+      Upstream Backends:
+        WordPress CMS:  10.10.10.8:80 (vm-cms-01)
+        App Server:     10.10.10.7:8080 (vm-app-01)
+
+      Certbot Renewal: cron every 7 days at 02:30
       ============================================================
   tags: [nginx, verify]

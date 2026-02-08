@@ -80,6 +80,23 @@ param useMarketplaceImages bool = true
 @description('Recovery Services Vault name for Azure Backup')
 param backupVaultName string = 'rsv-mediasrl-${environment}'
 
+@description('Persistent Resource Group name (survives az group delete on main RG)')
+param persistentResourceGroupName string = 'rg-mediasrl-persistent'
+
+@description('Persistent Public IPs (created in persistent RG, reused across deployments)')
+param persistentPublicIps array = [
+  {
+    name: 'pip-vm-jmp-01'
+    vmName: 'vm-jmp-01'
+    dnsLabel: ''
+  }
+  {
+    name: 'pip-vm-web-01'
+    vmName: 'vm-web-01'
+    dnsLabel: 'mediasrl'
+  }
+]
+
 @description('VM configurations')
 param vms array = [
   // === ACTIVE VMs for Testing ===
@@ -88,7 +105,7 @@ param vms array = [
     osType: 'Linux'
     size: 'Standard_D2s_v3'
     subnet: 'mgmt'
-    createPublicIp: true
+    createPublicIp: false
     imageDefinition: 'ubuntu'
     osDiskSizeGb: 64
   }
@@ -164,6 +181,34 @@ module resourceGroup 'modules/resource-group.bicep' = {
     project: 'mediasrl'
     owner: 'IT Security SRL'
   }
+}
+
+// ----- Module: Persistent Resource Group (survives environment teardowns) -----
+
+module persistentRg 'modules/resource-group.bicep' = {
+  name: 'deploy-persistent-rg'
+  params: {
+    resourceGroupName: persistentResourceGroupName
+    location: location
+    environment: environment
+    project: 'mediasrl'
+    owner: 'IT Security SRL'
+  }
+}
+
+// ----- Module: Persistent Public IPs (static IPs reused across deployments) -----
+
+module persistentIps 'modules/persistent-ips.bicep' = {
+  name: 'deploy-persistent-ips'
+  scope: az.resourceGroup(persistentResourceGroupName)
+  params: {
+    location: location
+    tags: tags
+    publicIps: persistentPublicIps
+  }
+  dependsOn: [
+    persistentRg
+  ]
 }
 
 // ----- Module: Azure Policy (Subscription Scope) -----
@@ -284,6 +329,10 @@ module backup 'modules/backup.bicep' = {
 
 // ----- Module: Virtual Machines (Loop) -----
 
+// Build a lookup: vmName → persistent public IP ID
+// Used to attach pre-existing static IPs from the persistent resource group
+var persistentIpLookup = reduce(persistentIps.outputs.publicIpIds, {}, (acc, ip) => union(acc, { '${ip.vmName}': ip.id }))
+
 module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
   name: 'deploy-${vm.name}'
   scope: az.resourceGroup(resourceGroupName)
@@ -296,6 +345,9 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     adminPasswordOrKey: adminPassword
     subnetId: vm.subnet == 'prod' ? networking.outputs.subnetProdId : (vm.subnet == 'dev' ? networking.outputs.subnetDevId : networking.outputs.subnetMgmtId)
     createPublicIp: vm.createPublicIp
+    #disable-next-line prefer-safe-access
+    existingPublicIpId: contains(persistentIpLookup, vm.name) ? persistentIpLookup[vm.name] : ''
+    dnsLabel: vm.?dnsLabel ?? ''
     useGalleryImage: !useMarketplaceImages
     galleryImageId: vm.imageDefinition == 'ubuntu' ? galleryImageIdUbuntu : galleryImageIdWindows
     marketplacePublisher: useMarketplaceImages ? (vm.imageDefinition == 'ubuntu' ? 'canonical' : 'MicrosoftWindowsServer') : ''

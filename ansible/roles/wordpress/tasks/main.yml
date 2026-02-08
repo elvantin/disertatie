@@ -151,6 +151,26 @@
     recurse: yes
   tags: [wordpress, permissions]
 
+- name: Create PHP-FPM required directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  loop:
+    - /var/log/php-fpm
+    - /var/lib/php/session
+    - /var/lib/php/wsdlcache
+  tags: [wordpress, php-fpm, directories]
+
+- name: Remove default PHP-FPM pool
+  file:
+    path: "/etc/php/{{ php_version }}/fpm/pool.d/www.conf"
+    state: absent
+  notify: restart php-fpm
+  tags: [wordpress, php-fpm, config]
+
 - name: Configure PHP-FPM pool for WordPress
   template:
     src: wordpress-pool.conf.j2
@@ -205,6 +225,10 @@
     - "443"
   tags: [wordpress, firewall]
 
+- name: Flush handlers before starting services
+  meta: flush_handlers
+  tags: [wordpress, service]
+
 - name: Enable and start PHP-FPM service
   systemd:
     name: "php{{ php_version }}-fpm"
@@ -212,11 +236,23 @@
     state: started
   tags: [wordpress, php-fpm, service]
 
+- name: Reload PHP-FPM to ensure latest configuration
+  systemd:
+    name: "php{{ php_version }}-fpm"
+    state: reloaded
+  tags: [wordpress, php-fpm, service]
+
 - name: Enable and start Nginx service
   systemd:
     name: nginx
     enabled: yes
     state: started
+  tags: [wordpress, nginx, service]
+
+- name: Reload Nginx to ensure latest configuration
+  systemd:
+    name: nginx
+    state: reloaded
   tags: [wordpress, nginx, service]
 
 - name: Install WP-CLI

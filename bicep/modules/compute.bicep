@@ -32,8 +32,14 @@ param adminPasswordOrKey string
 @description('Subnet ID where the VM NIC will be attached')
 param subnetId string
 
-@description('Create Public IP for this VM')
+@description('Create Public IP for this VM (ignored if existingPublicIpId is set)')
 param createPublicIp bool = false
+
+@description('ID of an existing Public IP to attach (from persistent RG). Takes priority over createPublicIp.')
+param existingPublicIpId string = ''
+
+@description('DNS label for Public IP (only used when creating new IP, not with existingPublicIpId)')
+param dnsLabel string = ''
 
 @description('Private IP address (leave empty for dynamic allocation)')
 param privateIpAddress string = ''
@@ -89,9 +95,12 @@ var linuxConfiguration = {
   // (jumphost generates keys and distributes to other Linux VMs)
 }
 
-// ----- Public IP (conditional) -----
+// ----- Public IP (only if creating new, not when using existing from persistent RG) -----
 
-resource publicIp 'Microsoft.Network/publicIPAddresses@2023-09-01' = if (createPublicIp) {
+var useExistingPip = existingPublicIpId != ''
+var shouldCreatePip = createPublicIp && !useExistingPip
+
+resource publicIp 'Microsoft.Network/publicIPAddresses@2023-09-01' = if (shouldCreatePip) {
   name: pipName
   location: location
   tags: tags
@@ -101,10 +110,20 @@ resource publicIp 'Microsoft.Network/publicIPAddresses@2023-09-01' = if (createP
   properties: {
     publicIPAllocationMethod: 'Static'
     publicIPAddressVersion: 'IPv4'
+    dnsSettings: dnsLabel != '' ? {
+      domainNameLabel: dnsLabel
+    } : null
   }
 }
 
 // ----- Network Interface -----
+
+// Determine which public IP to attach (existing from persistent RG, newly created, or none)
+var publicIpConfig = useExistingPip ? {
+  id: existingPublicIpId
+} : shouldCreatePip ? {
+  id: publicIp.id
+} : null
 
 resource nic 'Microsoft.Network/networkInterfaces@2023-09-01' = {
   name: nicName
@@ -120,9 +139,7 @@ resource nic 'Microsoft.Network/networkInterfaces@2023-09-01' = {
           }
           privateIPAllocationMethod: privateIpAddress != '' ? 'Static' : 'Dynamic'
           privateIPAddress: privateIpAddress != '' ? privateIpAddress : null
-          publicIPAddress: createPublicIp ? {
-            id: publicIp.id
-          } : null
+          publicIPAddress: publicIpConfig
         }
       }
     ]

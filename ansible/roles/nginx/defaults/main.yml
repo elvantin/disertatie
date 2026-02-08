@@ -10,7 +10,8 @@ nginx_group: "{{ 'www-data' if ansible_os_family == 'Debian' else 'nginx' }}"
 
 # Website configuration
 website_name: "mediasrl"
-website_domain: "media-srl.ro"
+# Domain: use Azure DNS label FQDN (or replace with custom domain when available)
+website_domain: "mediasrl.swedencentral.cloudapp.azure.com"
 website_root: "/var/www/{{ website_name }}"
 website_document_root: "{{ website_root }}/html"
 website_logs_dir: "{{ website_root }}/logs"
@@ -30,12 +31,18 @@ nginx_server_tokens: "off"
 
 # Enable/disable features
 nginx_enable_gzip: true
-nginx_enable_ssl: false  # Set to true when SSL certificates are available
-nginx_enable_http2: false
+nginx_enable_ssl: true
+nginx_enable_http2: true
 
-# SSL/TLS configuration (when enabled)
-nginx_ssl_certificate: "/etc/nginx/ssl/{{ website_domain }}.crt"
-nginx_ssl_certificate_key: "/etc/nginx/ssl/{{ website_domain }}.key"
+# Let's Encrypt / Certbot configuration
+certbot_email: "admin@{{ website_domain }}"
+certbot_webroot: "/var/www/letsencrypt"
+certbot_cert_path: "/etc/letsencrypt/live/{{ website_domain }}/fullchain.pem"
+certbot_key_path: "/etc/letsencrypt/live/{{ website_domain }}/privkey.pem"
+
+# SSL/TLS configuration
+nginx_ssl_certificate: "{{ certbot_cert_path }}"
+nginx_ssl_certificate_key: "{{ certbot_key_path }}"
 nginx_ssl_protocols: "TLSv1.2 TLSv1.3"
 nginx_ssl_ciphers: "ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
 

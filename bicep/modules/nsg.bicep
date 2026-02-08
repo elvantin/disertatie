@@ -122,19 +122,30 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
         }
       }
       {
-        name: 'Allow-HTTP-HTTPS-To-Web'
+        name: 'Allow-HTTPS-To-Web'
         properties: {
-          description: 'Allow HTTP/HTTPS from Internet to web server'
+          description: 'Allow HTTPS from any source to web server (primary traffic)'
           protocol: 'Tcp'
           sourcePortRange: '*'
-          destinationPortRanges: [
-            '80'
-            '443'
-          ]
-          sourceAddressPrefix: 'Internet'
+          destinationPortRange: '443'
+          sourceAddressPrefix: '*'
           destinationAddressPrefix: '10.10.10.0/24'
           access: 'Allow'
           priority: 120
+          direction: 'Inbound'
+        }
+      }
+      {
+        name: 'Allow-HTTP-To-Web'
+        properties: {
+          description: 'Allow HTTP for ACME cert renewal + HTTPS redirect (nginx returns 301)'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '80'
+          sourceAddressPrefix: '*'
+          destinationAddressPrefix: '10.10.10.0/24'
+          access: 'Allow'
+          priority: 121
           direction: 'Inbound'
         }
       }
