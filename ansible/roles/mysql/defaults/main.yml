@@ -1,20 +1,33 @@
+---
 # ============================================================
 # Ansible Role: mysql - Default Variables
-# IMPORTANT: Override these in group_vars or use Ansible Vault
+# MySQL Community Server 8.0 on Windows Server 2022
+# IMPORTANT: Override passwords in group_vars or Ansible Vault
 # ============================================================
 
-# MySQL root password (MUST be changed and stored in Ansible Vault)
-mysql_root_password: "ChangeMe_R00t_P@ssw0rd!"
+# MySQL Community Server 8.0 ZIP download (Windows x64)
+mysql_download_url: "https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.40-winx64.zip"
 
-# WordPress database credentials
-mysql_wordpress_password: "ChangeMe_WP_P@ssw0rd!"
+# Installation paths
+mysql_install_dir: "C:\\MySQL\\Server"
+mysql_data_dir: "C:\\MySQL\\Data"
+mysql_log_dir: "C:\\MySQL\\Logs"
+mysql_backup_dir: "C:\\MySQL\\Backups"
 
-# Monitoring user password
-mysql_monitoring_password: "ChangeMe_Mon_P@ssw0rd!"
+# MySQL root password (PRODUCTION: Store in Ansible Vault!)
+mysql_root_password: "Str0ng_MySQL_R00t_2026!"
 
-# Database settings
+# WordPress database
+mysql_wordpress_db: "wordpress_db"
+mysql_wordpress_user: "wp_user"
+mysql_wordpress_password: "Wp_P@ssw0rd_2026!"
+
+# Monitoring user
+mysql_monitoring_password: "Mon_P@ssw0rd_2026!"
+
+# Network settings
 mysql_port: 3306
-mysql_bind_address: "10.10.10.5"
+mysql_bind_address: "0.0.0.0"
 mysql_max_connections: 200
 
 # Backup settings

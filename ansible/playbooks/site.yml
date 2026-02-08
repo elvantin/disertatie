@@ -79,7 +79,7 @@
 # Phase 2: Database Services (Must run before application servers)
 # =============================================================================
 
-- name: Configure Database Server - SQL Server Express (vm-db-01)
+- name: Configure Database Server - MySQL Community Server (vm-db-01)
   hosts: database
   gather_facts: yes
 
@@ -92,14 +92,14 @@
     ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
 
   roles:
-    - role: sqlserver
-      tags: [database, sqlserver, windows]
+    - role: mysql
+      tags: [database, mysql, windows]
 
   tasks:
     - name: Display database server status
       debug:
-        msg: "SQL Server Express configuration completed on {{ inventory_hostname }}"
-      tags: [database, sqlserver]
+        msg: "MySQL Community Server configuration completed on {{ inventory_hostname }}"
+      tags: [database, mysql]
 
 # =============================================================================
 # Phase 3: Application Services

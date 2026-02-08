@@ -2,7 +2,7 @@
 # ============================================================
 # Ansible Role: wordpress - Default Variables
 # WordPress CMS with PHP-FPM on Ubuntu 22.04
-# Database: SQL Server Express on vm-db-01
+# Database: MySQL Community Server on vm-db-01
 # ============================================================
 
 # WordPress version
@@ -17,12 +17,12 @@ wordpress_document_root: "{{ wordpress_install_dir }}/public_html"
 wordpress_user: "www-data"
 wordpress_group: "www-data"
 
-# Database connection (MariaDB local on vm-cms-01)
-wordpress_db_type: "mysql"  # WordPress uses MySQL/MariaDB
+# Database connection (MySQL on vm-db-01)
+wordpress_db_type: "mysql"
 wordpress_db_name: "wordpress_db"
 wordpress_db_user: "wp_user"
 wordpress_db_password: "Wp_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
-wordpress_db_host: "localhost"  # MariaDB is installed locally on vm-cms-01
+wordpress_db_host: "10.10.10.5"  # vm-db-01 MySQL Community Server
 wordpress_db_port: 3306
 wordpress_db_charset: "utf8mb4"
 wordpress_db_collate: "utf8mb4_unicode_ci"
@@ -64,10 +64,8 @@ php_fpm_pm_start_servers: 5
 php_fpm_pm_min_spare_servers: 5
 php_fpm_pm_max_spare_servers: 35
 
-# MySQL/MariaDB (local) configuration
-mysql_install_local: true
-mysql_root_password: "MySQL_Root_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
-mysql_bind_address: "127.0.0.1"
+# MySQL/MariaDB local installation (disabled - using remote vm-db-01)
+mysql_install_local: false
 
 # Nginx configuration for WordPress
 wordpress_nginx_port: 80

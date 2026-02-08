@@ -1,45 +1,182 @@
+---
 # ============================================================
 # Ansible Role: mysql
-# Installs and configures MySQL on Windows Server (vm-db-01)
+# Installs and configures MySQL Community Server 8.0 on Windows
+# Target: vm-db-01 (Windows Server 2022)
+# Uses ZIP archive for reliable silent installation
 # ============================================================
 
-- name: Download MySQL Installer
+- name: Create temporary directory
+  ansible.windows.win_file:
+    path: C:\Temp
+    state: directory
+  tags: [mysql, prereq]
+
+- name: Create MySQL directories
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: directory
+  loop:
+    - "{{ mysql_install_dir }}"
+    - "{{ mysql_data_dir }}"
+    - "{{ mysql_backup_dir }}"
+    - "{{ mysql_log_dir }}"
+  tags: [mysql, prereq, directories]
+
+- name: Check if MySQL is already installed
+  ansible.windows.win_service:
+    name: MySQL80
+  register: mysql_service_check
+  failed_when: false
+  tags: [mysql, check]
+
+- name: Display MySQL installation status
+  debug:
+    msg: "MySQL Server is {{ 'already installed' if mysql_service_check.exists | default(false) else 'not installed' }}"
+  tags: [mysql, check]
+
+- name: Download MySQL Community Server ZIP
   ansible.windows.win_get_url:
-    url: https://dev.mysql.com/get/Downloads/MySQLInstaller/mysql-installer-community-8.0.40.0.msi
-    dest: C:\Temp\mysql-installer.msi
+    url: "{{ mysql_download_url }}"
+    dest: "C:\\Temp\\mysql-server.zip"
+    timeout: 600
+  when: not (mysql_service_check.exists | default(false))
+  register: mysql_download
   tags: [mysql, download]
 
-- name: Install MySQL Server
-  ansible.windows.win_package:
-    path: C:\Temp\mysql-installer.msi
-    arguments: '/quiet /norestart ADD FEATURES=Server,Client ADD INSTALLDIR="C:\Program Files\MySQL\MySQL Server 8.0"'
-    state: present
-    product_id: '{4D59C5C9-8D21-4B8E-9A37-C6C8F7F4EA39}'
+- name: Extract MySQL ZIP archive
+  community.windows.win_unzip:
+    src: "C:\\Temp\\mysql-server.zip"
+    dest: "C:\\Temp\\mysql-extract"
+    creates: "C:\\Temp\\mysql-extract"
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, extract]
+
+- name: Move MySQL files to installation directory
+  ansible.windows.win_shell: |
+    $extractedDir = Get-ChildItem "C:\Temp\mysql-extract" -Directory | Select-Object -First 1
+    if ($extractedDir -and (Test-Path $extractedDir.FullName)) {
+        if (-not (Test-Path "{{ mysql_install_dir }}\bin\mysqld.exe")) {
+            Copy-Item -Path "$($extractedDir.FullName)\*" -Destination "{{ mysql_install_dir }}" -Recurse -Force
+            Write-Output "MySQL files copied to {{ mysql_install_dir }}"
+        } else {
+            Write-Output "MySQL files already exist"
+        }
+    }
+  when: not (mysql_service_check.exists | default(false))
   tags: [mysql, install]
 
-- name: Create MySQL data directory
-  ansible.windows.win_file:
-    path: C:\MySQL\Data
-    state: directory
-  tags: [mysql, directories]
+- name: Create MySQL configuration file (my.ini)
+  ansible.windows.win_copy:
+    content: |
+      [mysqld]
+      # Installation paths
+      basedir={{ mysql_install_dir }}
+      datadir={{ mysql_data_dir }}
 
-- name: Create MySQL backup directory
-  ansible.windows.win_file:
-    path: C:\MySQL\Backups
-    state: directory
-  tags: [mysql, directories]
+      # Network
+      port={{ mysql_port }}
+      bind-address={{ mysql_bind_address }}
 
-- name: Configure MySQL (my.ini)
-  ansible.windows.win_template:
-    src: my.ini.j2
-    dest: 'C:\Program Files\MySQL\MySQL Server 8.0\my.ini'
+      # Connections
+      max_connections={{ mysql_max_connections }}
+
+      # Character set
+      character-set-server=utf8mb4
+      collation-server=utf8mb4_unicode_ci
+
+      # InnoDB settings
+      innodb_buffer_pool_size=256M
+      innodb_log_file_size=64M
+      innodb_flush_log_at_trx_commit=1
+
+      # Logging
+      log-error={{ mysql_log_dir }}/error.log
+      slow_query_log=1
+      slow_query_log_file={{ mysql_log_dir }}/slow-query.log
+      long_query_time=2
+
+      # Security
+      local_infile=0
+
+      [client]
+      port={{ mysql_port }}
+      default-character-set=utf8mb4
+    dest: "{{ mysql_install_dir }}\\my.ini"
   notify: restart mysql
   tags: [mysql, config]
 
+- name: Initialize MySQL data directory
+  ansible.windows.win_shell: |
+    if (-not (Test-Path "{{ mysql_data_dir }}\mysql")) {
+        & "{{ mysql_install_dir }}\bin\mysqld.exe" --initialize-insecure --basedir="{{ mysql_install_dir }}" --datadir="{{ mysql_data_dir }}" --console 2>&1
+        Write-Output "MySQL data directory initialized"
+    } else {
+        Write-Output "MySQL data directory already initialized"
+    }
+  register: mysql_init
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, install]
+
+- name: Install MySQL as Windows service
+  ansible.windows.win_shell: |
+    $service = Get-Service -Name MySQL80 -ErrorAction SilentlyContinue
+    if (-not $service) {
+        & "{{ mysql_install_dir }}\bin\mysqld.exe" --install MySQL80 --defaults-file="{{ mysql_install_dir }}\my.ini" 2>&1
+        Write-Output "MySQL service installed"
+    } else {
+        Write-Output "MySQL service already exists"
+    }
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, install]
+
+- name: Start MySQL service
+  ansible.windows.win_service:
+    name: MySQL80
+    start_mode: auto
+    state: started
+  tags: [mysql, service]
+
+- name: Wait for MySQL to be ready
+  ansible.windows.win_shell: |
+    $maxRetries = 30
+    $retry = 0
+    while ($retry -lt $maxRetries) {
+        try {
+            $result = & "{{ mysql_install_dir }}\bin\mysql.exe" -u root --skip-password -e "SELECT 1" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Output "MySQL is ready"
+                exit 0
+            }
+        } catch {}
+        $retry++
+        Start-Sleep -Seconds 2
+    }
+    Write-Output "MySQL failed to start"
+    exit 1
+  register: mysql_ready
+  changed_when: false
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, service]
+
+- name: Set MySQL root password
+  ansible.windows.win_shell: |
+    $testAuth = & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "SELECT 1" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        & "{{ mysql_install_dir }}\bin\mysql.exe" -u root --skip-password -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_root_password }}'; FLUSH PRIVILEGES;" 2>&1
+        Write-Output "Root password set"
+    } else {
+        Write-Output "Root password already configured"
+    }
+  register: mysql_root_set
+  changed_when: "'Root password set' in mysql_root_set.stdout"
+  no_log: true
+  tags: [mysql, config, security]
+
 - name: Configure Windows Firewall for MySQL
   community.windows.win_firewall_rule:
-    name: MySQL Server
-    localport: 3306
+    name: "MySQL Server (TCP {{ mysql_port }})"
+    localport: "{{ mysql_port }}"
     action: allow
     direction: in
     protocol: tcp
@@ -47,63 +184,79 @@
     enabled: yes
   tags: [mysql, firewall]
 
-- name: Ensure MySQL service is running
-  ansible.windows.win_service:
-    name: MySQL80
-    start_mode: auto
-    state: started
-  tags: [mysql, service]
-
-- name: Create database for WordPress
-  community.mysql.mysql_db:
-    name: wordpress_db
-    state: present
-    login_host: localhost
-    login_user: root
-    login_password: "{{ mysql_root_password }}"
+- name: Create WordPress database
+  ansible.windows.win_shell: |
+    & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "CREATE DATABASE IF NOT EXISTS {{ mysql_wordpress_db }}  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>&1
+    Write-Output "Database {{ mysql_wordpress_db }} ensured"
+  register: create_db
+  changed_when: false
   tags: [mysql, database]
 
-- name: Create MySQL user for WordPress
-  community.mysql.mysql_user:
-    name: wordpress_user
-    password: "{{ mysql_wordpress_password }}"
-    priv: 'wordpress_db.*:ALL'
-    host: '10.10.10.%'
-    state: present
-    login_host: localhost
-    login_user: root
-    login_password: "{{ mysql_root_password }}"
-  tags: [mysql, user]
+- name: Create WordPress database user
+  ansible.windows.win_shell: |
+    $checkUser = & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='{{ mysql_wordpress_user }}' AND host='%';" 2>&1
+    if ($checkUser.Trim() -eq "0") {
+        & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "CREATE USER '{{ mysql_wordpress_user }}'@'%' IDENTIFIED BY '{{ mysql_wordpress_password }}'; GRANT ALL PRIVILEGES ON {{ mysql_wordpress_db }}.* TO '{{ mysql_wordpress_user }}'@'%'; FLUSH PRIVILEGES;" 2>&1
+        Write-Output "WordPress user created"
+    } else {
+        Write-Output "WordPress user already exists"
+    }
+  register: create_user
+  changed_when: "'WordPress user created' in create_user.stdout"
+  no_log: true
+  tags: [mysql, database, user]
 
-- name: Create MySQL user for monitoring
-  community.mysql.mysql_user:
-    name: monitoring
-    password: "{{ mysql_monitoring_password }}"
-    priv: '*.*:SELECT,PROCESS,REPLICATION CLIENT'
-    host: 'localhost'
-    state: present
-    login_host: localhost
-    login_user: root
-    login_password: "{{ mysql_root_password }}"
-  tags: [mysql, user, monitoring]
+- name: Create monitoring user
+  ansible.windows.win_shell: |
+    $checkUser = & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='monitoring' AND host='localhost';" 2>&1
+    if ($checkUser.Trim() -eq "0") {
+        & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "CREATE USER 'monitoring'@'localhost' IDENTIFIED BY '{{ mysql_monitoring_password }}'; GRANT SELECT, PROCESS, REPLICATION CLIENT ON *.* TO 'monitoring'@'localhost'; FLUSH PRIVILEGES;" 2>&1
+        Write-Output "Monitoring user created"
+    } else {
+        Write-Output "Monitoring user already exists"
+    }
+  register: create_monitor
+  changed_when: "'Monitoring user created' in create_monitor.stdout"
+  no_log: true
+  tags: [mysql, database, monitoring]
 
-- name: Configure automated backup script
-  ansible.windows.win_template:
-    src: backup-mysql.ps1.j2
-    dest: C:\MySQL\Backups\backup-mysql.ps1
-  tags: [mysql, backup]
+- name: Verify MySQL installation
+  ansible.windows.win_shell: |
+    & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "SELECT VERSION() AS version; SHOW DATABASES;" 2>&1
+  register: mysql_version
+  changed_when: false
+  no_log: true
+  tags: [mysql, verify]
 
-- name: Schedule daily MySQL backup
-  community.windows.win_scheduled_task:
-    name: MySQL Daily Backup
-    description: Automated daily backup of MySQL databases
-    actions:
-      - path: powershell.exe
-        arguments: '-ExecutionPolicy Bypass -File "C:\MySQL\Backups\backup-mysql.ps1"'
-    triggers:
-      - type: daily
-        start_boundary: '2026-01-01T02:00:00'
-    username: SYSTEM
-    state: present
-    enabled: yes
-  tags: [mysql, backup, schedule]
+- name: Display MySQL configuration status
+  debug:
+    msg: |
+      ============================================================
+      MySQL Server Configuration Completed
+      ============================================================
+      Server: {{ inventory_hostname }}
+      MySQL Version: 8.0
+      Port: {{ mysql_port }}
+      Bind Address: {{ mysql_bind_address }}
+      Data Directory: {{ mysql_data_dir }}
+
+      WordPress Database:
+        Database: {{ mysql_wordpress_db }}
+        User: {{ mysql_wordpress_user }}
+        Host: {{ mysql_bind_address }}:{{ mysql_port }}
+
+      Connection from vm-cms-01:
+        mysql -h {{ mysql_bind_address }} -P {{ mysql_port }} -u {{ mysql_wordpress_user }} -p
+
+      ============================================================
+  tags: [mysql, verify]
+
+- name: Cleanup installation files
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "C:\\Temp\\mysql-server.zip"
+    - "C:\\Temp\\mysql-extract"
+  when: mysql_init.changed | default(false)
+  tags: [mysql, cleanup]
