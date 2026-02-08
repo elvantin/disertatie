@@ -10,8 +10,22 @@ Write-Output "========================================="
 Write-Output " Windows Server 2022 — Base Setup"
 Write-Output "========================================="
 
+# ----- Extend C: partition to use full disk -----
+Write-Output "[0/6] Extending C: partition to use all available disk space..."
+
+$maxSize = (Get-PartitionSupportedSize -DriveLetter C).SizeMax
+$currentSize = (Get-Partition -DriveLetter C).Size
+if ($maxSize -gt ($currentSize + 1GB)) {
+    Resize-Partition -DriveLetter C -Size $maxSize
+    $newSizeGB = [math]::Round($maxSize / 1GB, 1)
+    Write-Output "  Partition C: extended to $newSizeGB GB"
+} else {
+    $currentGB = [math]::Round($currentSize / 1GB, 1)
+    Write-Output "  Partition C: already at maximum size ($currentGB GB)"
+}
+
 # ----- Install Windows Features -----
-Write-Output "[1/5] Installing Windows features..."
+Write-Output "[1/6] Installing Windows features..."
 
 $features = @(
     "NET-Framework-45-Core",    # .NET Framework 4.5
@@ -32,7 +46,7 @@ foreach ($feature in $features) {
 }
 
 # ----- Configure PowerShell -----
-Write-Output "[2/5] Configuring PowerShell..."
+Write-Output "[2/6] Configuring PowerShell..."
 
 # Enable PowerShell script execution for Ansible
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force
@@ -41,7 +55,7 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force
 Enable-PSRemoting -Force -SkipNetworkProfileCheck
 
 # ----- Configure WinRM for Ansible -----
-Write-Output "[3/5] Configuring WinRM for Ansible management..."
+Write-Output "[3/6] Configuring WinRM for Ansible management..."
 
 # Set WinRM service to auto-start
 Set-Service -Name WinRM -StartupType Automatic
@@ -58,15 +72,25 @@ winrm set winrm/config/service/auth '@{CredSSP="true"}'
 winrm set winrm/config/winrs '@{MaxMemoryPerShellMB="1024"}'
 
 # ----- Configure NTP -----
-Write-Output "[4/5] Configuring time synchronization..."
+Write-Output "[4/6] Configuring time synchronization..."
 
 # Configure Windows Time service
 w32tm /config /manualpeerlist:"time.windows.com" /syncfromflags:manual /reliable:YES /update | Out-Null
 Restart-Service w32time -ErrorAction SilentlyContinue
 w32tm /resync /force | Out-Null
 
+# ----- Install Visual C++ Redistributable (required by MySQL Server) -----
+Write-Output "[5/6] Installing Visual C++ 2015-2022 Redistributable x64..."
+
+$vcRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+$vcRedistPath = "$env:TEMP\vc_redist.x64.exe"
+Invoke-WebRequest -Uri $vcRedistUrl -OutFile $vcRedistPath -UseBasicParsing
+Start-Process -FilePath $vcRedistPath -ArgumentList "/install", "/quiet", "/norestart" -Wait -NoNewWindow
+Remove-Item $vcRedistPath -Force -ErrorAction SilentlyContinue
+Write-Output "  Visual C++ Redistributable installed"
+
 # ----- Install Windows Updates -----
-Write-Output "[5/5] Installing Windows Updates..."
+Write-Output "[6/6] Installing Windows Updates..."
 
 # Install PSWindowsUpdate module for update management
 Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null

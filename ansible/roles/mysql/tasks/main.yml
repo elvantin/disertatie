@@ -3,7 +3,7 @@
 # Ansible Role: mysql
 # Installs and configures MySQL Community Server 8.0 on Windows
 # Target: vm-db-01 (Windows Server 2022)
-# Uses ZIP archive for reliable silent installation
+# Uses MySQL Installer MSI for reliable silent installation
 # ============================================================
 
 - name: Create temporary directory
@@ -12,15 +12,10 @@
     state: directory
   tags: [mysql, prereq]
 
-- name: Create MySQL directories
+- name: Create backup directory
   ansible.windows.win_file:
-    path: "{{ item }}"
+    path: "{{ mysql_backup_dir }}"
     state: directory
-  loop:
-    - "{{ mysql_install_dir }}"
-    - "{{ mysql_data_dir }}"
-    - "{{ mysql_backup_dir }}"
-    - "{{ mysql_log_dir }}"
   tags: [mysql, prereq, directories]
 
 - name: Check if MySQL is already installed
@@ -35,36 +30,183 @@
     msg: "MySQL Server is {{ 'already installed' if mysql_service_check.exists | default(false) else 'not installed' }}"
   tags: [mysql, check]
 
-- name: Download MySQL Community Server ZIP
-  ansible.windows.win_get_url:
-    url: "{{ mysql_download_url }}"
-    dest: "C:\\Temp\\mysql-server.zip"
-    timeout: 600
+# ============================================================
+# Phase 1: Download MySQL Installer MSI (~350MB)
+# ============================================================
+
+- name: Check if MySQL MSI already downloaded
+  ansible.windows.win_stat:
+    path: "C:\\Temp\\mysql-installer.msi"
+  register: mysql_msi_stat
   when: not (mysql_service_check.exists | default(false))
-  register: mysql_download
   tags: [mysql, download]
 
-- name: Extract MySQL ZIP archive
-  community.windows.win_unzip:
-    src: "C:\\Temp\\mysql-server.zip"
-    dest: "C:\\Temp\\mysql-extract"
-    creates: "C:\\Temp\\mysql-extract"
-  when: not (mysql_service_check.exists | default(false))
-  tags: [mysql, extract]
-
-- name: Move MySQL files to installation directory
+- name: Download MySQL Installer MSI (~350MB, please wait)
   ansible.windows.win_shell: |
-    $extractedDir = Get-ChildItem "C:\Temp\mysql-extract" -Directory | Select-Object -First 1
-    if ($extractedDir -and (Test-Path $extractedDir.FullName)) {
-        if (-not (Test-Path "{{ mysql_install_dir }}\bin\mysqld.exe")) {
-            Copy-Item -Path "$($extractedDir.FullName)\*" -Destination "{{ mysql_install_dir }}" -Recurse -Force
-            Write-Output "MySQL files copied to {{ mysql_install_dir }}"
-        } else {
-            Write-Output "MySQL files already exist"
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $url = "{{ mysql_download_url }}"
+    $dest = "C:\Temp\mysql-installer.msi"
+    # Method 1: Invoke-WebRequest with session (handles redirects + cookies)
+    try {
+        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 600 `
+            -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" `
+            -WebSession $session
+    } catch {
+        Write-Output "Invoke-WebRequest failed: $_"
+        # Method 2: BITS Transfer (Background Intelligent Transfer Service)
+        try {
+            Import-Module BitsTransfer
+            Start-BitsTransfer -Source $url -Destination $dest -Description "MySQL Installer"
+        } catch {
+            Write-Output "BITS failed: $_"
+            # Method 3: curl.exe (ships with Windows Server 2022)
+            & curl.exe -L -o $dest -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" $url 2>&1
         }
     }
+    if (Test-Path $dest) {
+        $size = (Get-Item $dest).Length / 1MB
+        if ($size -lt 10) {
+            Remove-Item $dest -Force
+            Write-Output "Downloaded file too small ($([math]::Round($size,1)) MB) - likely an error page"
+            exit 1
+        }
+        Write-Output "Downloaded successfully: $([math]::Round($size,1)) MB"
+    } else {
+        Write-Output "All download methods failed"
+        exit 1
+    }
+  when:
+    - not (mysql_service_check.exists | default(false))
+    - not (mysql_msi_stat.stat.exists | default(false))
+  register: mysql_download
+  timeout: 900
+  tags: [mysql, download]
+
+- name: Verify MSI file was downloaded
+  ansible.windows.win_stat:
+    path: "C:\\Temp\\mysql-installer.msi"
+  register: mysql_msi_verify
+  failed_when: not mysql_msi_verify.stat.exists
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, download]
+
+# ============================================================
+# Phase 2: Install MySQL Installer (meta-installer)
+# ============================================================
+
+- name: Check if MySQL Installer is already installed
+  ansible.windows.win_stat:
+    path: "{{ mysql_installer_dir }}\\MySQLInstallerConsole.exe"
+  register: mysql_installer_check
   when: not (mysql_service_check.exists | default(false))
   tags: [mysql, install]
+
+- name: Install MySQL Installer via MSI (silent)
+  ansible.windows.win_shell: |
+    $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "C:\Temp\mysql-installer.msi", "/quiet", "/norestart", "ACCEPT=YES" -Wait -PassThru -NoNewWindow
+    if ($process.ExitCode -eq 0) {
+        Write-Output "MySQL Installer installed successfully"
+    } else {
+        Write-Output "MySQL Installer exit code: $($process.ExitCode)"
+        exit $process.ExitCode
+    }
+  when:
+    - not (mysql_service_check.exists | default(false))
+    - not (mysql_installer_check.stat.exists | default(false))
+  register: mysql_installer_install
+  tags: [mysql, install]
+
+- name: Wait for MySQL Installer to be ready
+  ansible.windows.win_stat:
+    path: "{{ mysql_installer_dir }}\\MySQLInstallerConsole.exe"
+  register: installer_ready
+  until: installer_ready.stat.exists
+  retries: 10
+  delay: 5
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, install]
+
+# ============================================================
+# Phase 3: Prerequisites + Install MySQL Server
+# ============================================================
+
+- name: Check if Visual C++ Redistributable is installed
+  ansible.windows.win_shell: |
+    $vcInstalled = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue
+    if ($vcInstalled) {
+        Write-Output "VC++ Redistributable already installed (version $($vcInstalled.Version))"
+    } else {
+        Write-Output "NOT_INSTALLED"
+    }
+  register: vcredist_check
+  changed_when: false
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, prereq]
+
+- name: Download Visual C++ 2015-2022 Redistributable x64
+  ansible.windows.win_get_url:
+    url: 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+    dest: 'C:\Temp\vc_redist.x64.exe'
+    force: no
+  when:
+    - not (mysql_service_check.exists | default(false))
+    - "'NOT_INSTALLED' in vcredist_check.stdout"
+  tags: [mysql, prereq]
+
+- name: Install Visual C++ 2015-2022 Redistributable x64
+  ansible.windows.win_shell: |
+    Start-Process -FilePath 'C:\Temp\vc_redist.x64.exe' -ArgumentList '/install', '/quiet', '/norestart' -Wait -NoNewWindow
+    Write-Output 'Visual C++ Redistributable installed'
+  when:
+    - not (mysql_service_check.exists | default(false))
+    - "'NOT_INSTALLED' in vcredist_check.stdout"
+  tags: [mysql, prereq]
+
+- name: Install MySQL Server from cached MSI
+  ansible.windows.win_package:
+    path: 'C:\ProgramData\MySQL\MySQL Installer for Windows\Product Cache\mysql-{{ mysql_version_label }}-winx64.msi'
+    state: present
+    arguments: '/quiet /norestart'
+  when: not (mysql_service_check.exists | default(false))
+  register: mysql_server_install
+  tags: [mysql, install]
+
+- name: Find mysqld.exe installation path
+  ansible.windows.win_shell: |
+    $found = Get-ChildItem -Path 'C:\Program Files\MySQL' -Filter 'mysqld.exe' -Recurse -ErrorAction SilentlyContinue
+    if ($found) {
+        Write-Output $found[0].Directory.Parent.FullName
+    } else {
+        Write-Output 'NOT_FOUND'
+    }
+  register: mysql_actual_path
+  changed_when: false
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, install]
+
+- name: Debug - detected MySQL path
+  debug:
+    msg: "MySQL detected at: {{ mysql_actual_path.stdout | default('skipped') | trim }}"
+  tags: [mysql, install]
+
+- name: Set MySQL install dir fact from detected path
+  set_fact:
+    mysql_install_dir: "{{ mysql_actual_path.stdout | trim }}"
+  when:
+    - mysql_actual_path.stdout is defined
+    - "'NOT_FOUND' not in mysql_actual_path.stdout"
+  tags: [mysql, install]
+
+# ============================================================
+# Phase 4: Configure and start MySQL service
+# ============================================================
+
+- name: Create logs directory
+  ansible.windows.win_file:
+    path: "{{ mysql_log_dir }}"
+    state: directory
+  tags: [mysql, config]
 
 - name: Create MySQL configuration file (my.ini)
   ansible.windows.win_copy:
@@ -106,31 +248,7 @@
   notify: restart mysql
   tags: [mysql, config]
 
-- name: Initialize MySQL data directory
-  ansible.windows.win_shell: |
-    if (-not (Test-Path "{{ mysql_data_dir }}\mysql")) {
-        & "{{ mysql_install_dir }}\bin\mysqld.exe" --initialize-insecure --basedir="{{ mysql_install_dir }}" --datadir="{{ mysql_data_dir }}" --console 2>&1
-        Write-Output "MySQL data directory initialized"
-    } else {
-        Write-Output "MySQL data directory already initialized"
-    }
-  register: mysql_init
-  when: not (mysql_service_check.exists | default(false))
-  tags: [mysql, install]
-
-- name: Install MySQL as Windows service
-  ansible.windows.win_shell: |
-    $service = Get-Service -Name MySQL80 -ErrorAction SilentlyContinue
-    if (-not $service) {
-        & "{{ mysql_install_dir }}\bin\mysqld.exe" --install MySQL80 --defaults-file="{{ mysql_install_dir }}\my.ini" 2>&1
-        Write-Output "MySQL service installed"
-    } else {
-        Write-Output "MySQL service already exists"
-    }
-  when: not (mysql_service_check.exists | default(false))
-  tags: [mysql, install]
-
-- name: Start MySQL service
+- name: Ensure MySQL service is running
   ansible.windows.win_service:
     name: MySQL80
     start_mode: auto
@@ -141,37 +259,60 @@
   ansible.windows.win_shell: |
     $maxRetries = 30
     $retry = 0
+    $mysqlExe = "{{ mysql_install_dir }}\bin\mysql.exe"
     while ($retry -lt $maxRetries) {
         try {
-            $result = & "{{ mysql_install_dir }}\bin\mysql.exe" -u root --skip-password -e "SELECT 1" 2>&1
+            $result = & $mysqlExe -u root --skip-password -e "SELECT 1" 2>&1
             if ($LASTEXITCODE -eq 0) {
-                Write-Output "MySQL is ready"
+                Write-Output "MySQL is ready (no password set yet)"
+                exit 0
+            }
+            # Try with password (might already be configured)
+            $result = & $mysqlExe -u root -p"{{ mysql_root_password }}" -e "SELECT 1" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Output "MySQL is ready (password already set)"
                 exit 0
             }
         } catch {}
         $retry++
         Start-Sleep -Seconds 2
     }
-    Write-Output "MySQL failed to start"
+    Write-Output "MySQL failed to become ready after $maxRetries attempts"
     exit 1
   register: mysql_ready
   changed_when: false
-  when: not (mysql_service_check.exists | default(false))
+  no_log: true
   tags: [mysql, service]
+
+# ============================================================
+# Phase 5: Security configuration
+# ============================================================
 
 - name: Set MySQL root password
   ansible.windows.win_shell: |
-    $testAuth = & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "SELECT 1" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        & "{{ mysql_install_dir }}\bin\mysql.exe" -u root --skip-password -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_root_password }}'; FLUSH PRIVILEGES;" 2>&1
-        Write-Output "Root password set"
-    } else {
+    $mysqlExe = "{{ mysql_install_dir }}\bin\mysql.exe"
+    # Test if password is already set
+    $testAuth = & $mysqlExe -u root -p"{{ mysql_root_password }}" -e "SELECT 1" 2>&1
+    if ($LASTEXITCODE -eq 0) {
         Write-Output "Root password already configured"
+    } else {
+        # Try setting password (root has no password after fresh install)
+        & $mysqlExe -u root --skip-password -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_root_password }}'; FLUSH PRIVILEGES;" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Output "Root password set"
+        } else {
+            Write-Output "Failed to set root password"
+            exit 1
+        }
     }
   register: mysql_root_set
   changed_when: "'Root password set' in mysql_root_set.stdout"
   no_log: true
   tags: [mysql, config, security]
+
+# ============================================================
+# Phase 6: Firewall
+# ============================================================
 
 - name: Configure Windows Firewall for MySQL
   community.windows.win_firewall_rule:
@@ -184,19 +325,25 @@
     enabled: yes
   tags: [mysql, firewall]
 
+# ============================================================
+# Phase 7: Create databases and users
+# ============================================================
+
 - name: Create WordPress database
   ansible.windows.win_shell: |
-    & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "CREATE DATABASE IF NOT EXISTS {{ mysql_wordpress_db }}  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>&1
+    & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "CREATE DATABASE IF NOT EXISTS {{ mysql_wordpress_db }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>&1
     Write-Output "Database {{ mysql_wordpress_db }} ensured"
   register: create_db
   changed_when: false
+  no_log: true
   tags: [mysql, database]
 
 - name: Create WordPress database user
   ansible.windows.win_shell: |
-    $checkUser = & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='{{ mysql_wordpress_user }}' AND host='%';" 2>&1
+    $mysqlExe = "{{ mysql_install_dir }}\bin\mysql.exe"
+    $checkUser = & $mysqlExe -u root -p"{{ mysql_root_password }}" -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='{{ mysql_wordpress_user }}' AND host='%';" 2>&1
     if ($checkUser.Trim() -eq "0") {
-        & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "CREATE USER '{{ mysql_wordpress_user }}'@'%' IDENTIFIED BY '{{ mysql_wordpress_password }}'; GRANT ALL PRIVILEGES ON {{ mysql_wordpress_db }}.* TO '{{ mysql_wordpress_user }}'@'%'; FLUSH PRIVILEGES;" 2>&1
+        & $mysqlExe -u root -p"{{ mysql_root_password }}" -e "CREATE USER '{{ mysql_wordpress_user }}'@'%' IDENTIFIED BY '{{ mysql_wordpress_password }}'; GRANT ALL PRIVILEGES ON {{ mysql_wordpress_db }}.* TO '{{ mysql_wordpress_user }}'@'%'; FLUSH PRIVILEGES;" 2>&1
         Write-Output "WordPress user created"
     } else {
         Write-Output "WordPress user already exists"
@@ -208,9 +355,10 @@
 
 - name: Create monitoring user
   ansible.windows.win_shell: |
-    $checkUser = & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='monitoring' AND host='localhost';" 2>&1
+    $mysqlExe = "{{ mysql_install_dir }}\bin\mysql.exe"
+    $checkUser = & $mysqlExe -u root -p"{{ mysql_root_password }}" -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='monitoring' AND host='localhost';" 2>&1
     if ($checkUser.Trim() -eq "0") {
-        & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "CREATE USER 'monitoring'@'localhost' IDENTIFIED BY '{{ mysql_monitoring_password }}'; GRANT SELECT, PROCESS, REPLICATION CLIENT ON *.* TO 'monitoring'@'localhost'; FLUSH PRIVILEGES;" 2>&1
+        & $mysqlExe -u root -p"{{ mysql_root_password }}" -e "CREATE USER 'monitoring'@'localhost' IDENTIFIED BY '{{ mysql_monitoring_password }}'; GRANT SELECT, PROCESS, REPLICATION CLIENT ON *.* TO 'monitoring'@'localhost'; FLUSH PRIVILEGES;" 2>&1
         Write-Output "Monitoring user created"
     } else {
         Write-Output "Monitoring user already exists"
@@ -219,6 +367,10 @@
   changed_when: "'Monitoring user created' in create_monitor.stdout"
   no_log: true
   tags: [mysql, database, monitoring]
+
+# ============================================================
+# Phase 8: Verification
+# ============================================================
 
 - name: Verify MySQL installation
   ansible.windows.win_shell: |
@@ -235,10 +387,11 @@
       MySQL Server Configuration Completed
       ============================================================
       Server: {{ inventory_hostname }}
-      MySQL Version: 8.0
+      MySQL Version: {{ mysql_version_label }}
       Port: {{ mysql_port }}
       Bind Address: {{ mysql_bind_address }}
-      Data Directory: {{ mysql_data_dir }}
+      Install Dir: {{ mysql_install_dir }}
+      Data Dir: {{ mysql_data_dir }}
 
       WordPress Database:
         Database: {{ mysql_wordpress_db }}
@@ -251,12 +404,13 @@
       ============================================================
   tags: [mysql, verify]
 
+# ============================================================
+# Phase 9: Cleanup
+# ============================================================
+
 - name: Cleanup installation files
   ansible.windows.win_file:
-    path: "{{ item }}"
+    path: "C:\\Temp\\mysql-installer.msi"
     state: absent
-  loop:
-    - "C:\\Temp\\mysql-server.zip"
-    - "C:\\Temp\\mysql-extract"
-  when: mysql_init.changed | default(false)
+  when: mysql_server_install.changed | default(false)
   tags: [mysql, cleanup]

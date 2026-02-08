@@ -49,6 +49,10 @@ if ($LASTEXITCODE -ne 0) {
 # Step 2: Set permissions + verify (password prompt 2/2)
 Write-Host "[2/2] Setting permissions and verifying deployment..."
 ssh @SSHOpts $SSHTarget @"
+# Fix world-writable directory (Ansible refuses ansible.cfg otherwise)
+chmod 755 ${RemotePath}
+chmod 755 ${RemotePath}/inventory
+chmod 755 ${RemotePath}/group_vars
 chmod 644 ${RemotePath}/ansible.cfg
 chmod 644 ${RemotePath}/inventory/hosts.ini 2>/dev/null
 chmod 755 ${RemotePath}/playbooks
