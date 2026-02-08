@@ -194,7 +194,7 @@
   gather_facts: yes
 
   vars:
-    env_name: "{{ env_name | default('unknown') }}"
+    env_name: "productie"
 
   tasks:
     - name: Gather service facts
@@ -233,7 +233,7 @@
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
     ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
-    env_name: "{{ env_name | default('unknown') }}"
+    env_name: "productie"
 
   tasks:
     - name: Gather service facts
@@ -267,7 +267,7 @@
   gather_facts: yes
 
   vars:
-    env_name: "{{ env_name | default('production') }}"
+    env_name: "productie"
 
   tasks:
     - name: Display final status

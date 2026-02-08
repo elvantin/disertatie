@@ -202,6 +202,12 @@
 # Phase 4: Configure and start MySQL service
 # ============================================================
 
+- name: Create data directory
+  ansible.windows.win_file:
+    path: "{{ mysql_data_dir }}"
+    state: directory
+  tags: [mysql, config]
+
 - name: Create logs directory
   ansible.windows.win_file:
     path: "{{ mysql_log_dir }}"
@@ -247,6 +253,34 @@
     dest: "{{ mysql_install_dir }}\\my.ini"
   notify: restart mysql
   tags: [mysql, config]
+
+- name: Check if MySQL data directory is initialized
+  ansible.windows.win_stat:
+    path: "{{ mysql_data_dir }}\\mysql"
+  register: mysql_data_check
+  tags: [mysql, config]
+
+- name: Initialize MySQL data directory
+  ansible.windows.win_shell: |
+    & '{{ mysql_install_dir }}\bin\mysqld.exe' --defaults-file='{{ mysql_install_dir }}\my.ini' --initialize-insecure --console 2>&1
+    Write-Output "Data directory initialized (exit code: $LASTEXITCODE)"
+  when: not mysql_data_check.stat.exists
+  register: mysql_init
+  tags: [mysql, config]
+
+- name: Check if MySQL80 service exists
+  ansible.windows.win_service:
+    name: MySQL80
+  register: mysql_svc_exists
+  failed_when: false
+  tags: [mysql, service]
+
+- name: Install MySQL as Windows service
+  ansible.windows.win_shell: |
+    & '{{ mysql_install_dir }}\bin\mysqld.exe' --install MySQL80 --defaults-file='{{ mysql_install_dir }}\my.ini' 2>&1
+    Write-Output "Service installed (exit code: $LASTEXITCODE)"
+  when: not (mysql_svc_exists.exists | default(false))
+  tags: [mysql, service]
 
 - name: Ensure MySQL service is running
   ansible.windows.win_service:
@@ -339,32 +373,28 @@
   tags: [mysql, database]
 
 - name: Create WordPress database user
-  ansible.windows.win_shell: |
-    $mysqlExe = "{{ mysql_install_dir }}\bin\mysql.exe"
-    $checkUser = & $mysqlExe -u root -p"{{ mysql_root_password }}" -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='{{ mysql_wordpress_user }}' AND host='%';" 2>&1
-    if ($checkUser.Trim() -eq "0") {
-        & $mysqlExe -u root -p"{{ mysql_root_password }}" -e "CREATE USER '{{ mysql_wordpress_user }}'@'%' IDENTIFIED BY '{{ mysql_wordpress_password }}'; GRANT ALL PRIVILEGES ON {{ mysql_wordpress_db }}.* TO '{{ mysql_wordpress_user }}'@'%'; FLUSH PRIVILEGES;" 2>&1
-        Write-Output "WordPress user created"
-    } else {
-        Write-Output "WordPress user already exists"
-    }
+  ansible.windows.win_shell: >-
+    & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
+    -p'{{ mysql_root_password }}'
+    -e "CREATE USER IF NOT EXISTS '{{ mysql_wordpress_user }}'@'%%'
+    IDENTIFIED BY '{{ mysql_wordpress_password }}';
+    GRANT ALL PRIVILEGES ON {{ mysql_wordpress_db }}.* TO '{{ mysql_wordpress_user }}'@'%%';
+    FLUSH PRIVILEGES;"
   register: create_user
-  changed_when: "'WordPress user created' in create_user.stdout"
+  changed_when: false
   no_log: true
   tags: [mysql, database, user]
 
 - name: Create monitoring user
-  ansible.windows.win_shell: |
-    $mysqlExe = "{{ mysql_install_dir }}\bin\mysql.exe"
-    $checkUser = & $mysqlExe -u root -p"{{ mysql_root_password }}" -N -e "SELECT COUNT(*) FROM mysql.user WHERE user='monitoring' AND host='localhost';" 2>&1
-    if ($checkUser.Trim() -eq "0") {
-        & $mysqlExe -u root -p"{{ mysql_root_password }}" -e "CREATE USER 'monitoring'@'localhost' IDENTIFIED BY '{{ mysql_monitoring_password }}'; GRANT SELECT, PROCESS, REPLICATION CLIENT ON *.* TO 'monitoring'@'localhost'; FLUSH PRIVILEGES;" 2>&1
-        Write-Output "Monitoring user created"
-    } else {
-        Write-Output "Monitoring user already exists"
-    }
+  ansible.windows.win_shell: >-
+    & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
+    -p'{{ mysql_root_password }}'
+    -e "CREATE USER IF NOT EXISTS 'monitoring'@'localhost'
+    IDENTIFIED BY '{{ mysql_monitoring_password }}';
+    GRANT SELECT, PROCESS, REPLICATION CLIENT ON *.* TO 'monitoring'@'localhost';
+    FLUSH PRIVILEGES;"
   register: create_monitor
-  changed_when: "'Monitoring user created' in create_monitor.stdout"
+  changed_when: false
   no_log: true
   tags: [mysql, database, monitoring]
 
@@ -374,10 +404,11 @@
 
 - name: Verify MySQL installation
   ansible.windows.win_shell: |
-    & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "SELECT VERSION() AS version; SHOW DATABASES;" 2>&1
+    $ErrorActionPreference = 'SilentlyContinue'
+    & '{{ mysql_install_dir }}\bin\mysql.exe' -u root -p'{{ mysql_root_password }}' -e 'SELECT VERSION() AS version; SHOW DATABASES;' 2>$null
   register: mysql_version
   changed_when: false
-  no_log: true
+  failed_when: "'version' not in mysql_version.stdout"
   tags: [mysql, verify]
 
 - name: Display MySQL configuration status
