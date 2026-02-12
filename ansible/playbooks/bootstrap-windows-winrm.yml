@@ -1,0 +1,151 @@
+---
+# ============================================================
+# Playbook: Bootstrap WinRM on Windows VMs
+# Runs from jumphost using Azure CLI (az vm run-command)
+# Enables WinRM so Ansible can manage Windows VMs afterwards
+#
+# Usage: ansible-playbook playbooks/bootstrap-windows-winrm.yml
+# Prerequisites: az login on jumphost
+# ============================================================
+
+- name: Bootstrap WinRM on Windows VMs via Azure CLI
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    resource_group: "rg-mediasrl-productie-swedencentral"
+    windows_vms:
+      - vm-db-01
+      - vm-fs-01
+    winrm_script_path: "/tmp/winrm-bootstrap.ps1"
+
+  tasks:
+    - name: Verify Azure CLI is logged in
+      command: az account show --query "name" -o tsv
+      register: az_account
+      changed_when: false
+      failed_when: az_account.rc != 0
+
+    - name: Display Azure account
+      debug:
+        msg: "Using Azure subscription: {{ az_account.stdout }}"
+
+    - name: Write WinRM bootstrap script to temp file
+      copy:
+        dest: "{{ winrm_script_path }}"
+        mode: '0644'
+        content: |
+          $ErrorActionPreference = "Stop"
+          $LogFile = "C:\Temp\winrm-bootstrap.log"
+          New-Item -Path "C:\Temp" -ItemType Directory -Force | Out-Null
+          Start-Transcript -Path $LogFile -Append
+
+          Write-Host "[1/8] Enabling PowerShell Remoting..."
+          Enable-PSRemoting -Force -SkipNetworkProfileCheck
+
+          Write-Host "[2/8] Configuring WinRM service..."
+          Set-Service -Name WinRM -StartupType Automatic
+          Start-Service -Name WinRM
+
+          Write-Host "[3/8] Configuring WinRM HTTP listener..."
+          $listeners = Get-ChildItem -Path WSMan:\localhost\Listener -ErrorAction SilentlyContinue
+          foreach ($listener in $listeners) {
+              if ($listener.Keys -contains "Transport=HTTP") {
+                  Remove-Item -Path $listener.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+              }
+          }
+          New-Item -Path WSMan:\localhost\Listener -Transport HTTP -Address * -Force | Out-Null
+
+          Write-Host "[4/8] Configuring WinRM settings for Ansible..."
+          Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true -Force
+          Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true -Force
+          Set-Item -Path WSMan:\localhost\Service\Auth\Certificate -Value $false -Force
+          Set-Item -Path WSMan:\localhost\Service\Auth\Kerberos -Value $true -Force
+          Set-Item -Path WSMan:\localhost\Service\Auth\Negotiate -Value $true -Force
+          Set-Item -Path WSMan:\localhost\Service\Auth\CredSSP -Value $true -Force
+          Set-Item -Path WSMan:\localhost\Shell\MaxMemoryPerShellMB -Value 1024 -Force
+          Set-Item -Path WSMan:\localhost\MaxTimeoutms -Value 1800000 -Force
+          Set-Item -Path WSMan:\localhost\Client\TrustedHosts -Value "*" -Force
+
+          Write-Host "[5/8] Configuring Windows Firewall rules..."
+          Enable-NetFirewallRule -Name "WINRM-HTTP-In-TCP-PUBLIC" -ErrorAction SilentlyContinue
+          $firewallRule = Get-NetFirewallRule -Name "WinRM-HTTP-In-TCP" -ErrorAction SilentlyContinue
+          if (-not $firewallRule) {
+              New-NetFirewallRule -Name "WinRM-HTTP-In-TCP" -DisplayName "Windows Remote Management (HTTP-In)" -Enabled True -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow -Profile Any | Out-Null
+          } else {
+              Set-NetFirewallRule -Name "WinRM-HTTP-In-TCP" -Enabled True -RemoteAddress Any
+          }
+          Set-NetFirewallRule -DisplayGroup "Windows Remote Management" -Enabled True -Profile Any
+
+          Write-Host "[6/8] Configuring network connection profile..."
+          try {
+              Set-NetConnectionProfile -NetworkCategory Private -ErrorAction SilentlyContinue
+          } catch {
+              Write-Host "  [WARN] Could not set network profile (non-critical)"
+          }
+
+          Write-Host "[7/8] Configuring CredSSP..."
+          try {
+              Enable-WSManCredSSP -Role Server -Force | Out-Null
+          } catch {
+              Write-Host "  [WARN] Could not configure CredSSP (non-critical)"
+          }
+
+          Write-Host "[8/8] Testing WinRM configuration..."
+          $testResult = Test-WSMan -ComputerName localhost -ErrorAction Stop
+          if ($testResult) {
+              Write-Host "[OK] WinRM is responding correctly"
+          }
+
+          Stop-Transcript
+          Write-Host "WinRM Bootstrap Complete!"
+
+    - name: Bootstrap WinRM on Windows VMs
+      shell: >
+        az vm run-command invoke
+        --resource-group {{ resource_group }}
+        --name {{ item }}
+        --command-id RunPowerShellScript
+        --scripts @{{ winrm_script_path }}
+      loop: "{{ windows_vms }}"
+      register: winrm_results
+
+    - name: Display results
+      debug:
+        msg: "{{ (item.stdout | from_json).value[0].message | default('See Azure portal for output') }}"
+      loop: "{{ winrm_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      ignore_errors: true
+
+    - name: Verify WinRM connectivity with win_ping
+      command: ansible windows -m win_ping
+      register: win_ping_result
+      changed_when: false
+      retries: 3
+      delay: 10
+      until: win_ping_result.rc == 0
+
+    - name: Display WinRM test result
+      debug:
+        msg: "{{ win_ping_result.stdout }}"
+
+    - name: Cleanup temp script
+      file:
+        path: "{{ winrm_script_path }}"
+        state: absent
+
+    - name: Bootstrap summary
+      debug:
+        msg: |
+          ============================================================
+          Windows WinRM Bootstrap Complete
+          ============================================================
+          VMs configured: {{ windows_vms | join(', ') }}
+          WinRM Port: 5985 (HTTP)
+          Authentication: Basic, Negotiate, Kerberos, CredSSP
+
+          Next step: ansible-playbook playbooks/site.yml
+          ============================================================
