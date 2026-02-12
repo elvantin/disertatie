@@ -150,14 +150,29 @@ apt-get install -y \
 # STEP 8: Install Azure CLI
 # =============================================================================
 
-echo "[16/23] Installing Azure CLI..."
+echo "[16/24] Installing Azure CLI..."
 curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
+# =============================================================================
+# STEP 8b: Install Azure Ansible Collection + Python SDK
+# =============================================================================
+
+echo "[17/24] Installing Azure Ansible Collection and Python SDK..."
+# Install the Azure collection for Ansible (needed for azure_rm dynamic inventory)
+ansible-galaxy collection install azure.azcollection --force
+
+# Install Python dependencies required by the azure_rm inventory plugin
+pip3 install -r /root/.ansible/collections/ansible_collections/azure/azcollection/requirements.txt
+
+# Also install for the admin user
+su - ${ADMIN_USER} -c "ansible-galaxy collection install azure.azcollection --force"
+pip3 install -r /home/${ADMIN_USER}/.ansible/collections/ansible_collections/azure/azcollection/requirements.txt
 
 # =============================================================================
 # STEP 9: Install Visual Studio Code
 # =============================================================================
 
-echo "[17/23] Installing Visual Studio Code..."
+echo "[18/24] Installing Visual Studio Code..."
 # Clean up any existing VS Code repository configuration to avoid conflicts
 rm -f /etc/apt/sources.list.d/vscode.list
 rm -f /etc/apt/keyrings/packages.microsoft.gpg
