@@ -159,13 +159,14 @@ curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
 echo "[17/24] Installing Azure Ansible Collection and Python SDK..."
 # Install the Azure collection for Ansible (needed for azure_rm dynamic inventory)
-ansible-galaxy collection install azure.azcollection --force
+# Use -p to install into ~/ansible/collections/ instead of default ~/.ansible/collections/
+ansible-galaxy collection install azure.azcollection --force -p /root/ansible/collections
 
 # Install Python dependencies required by the azure_rm inventory plugin
 pip3 install -r /root/ansible/collections/ansible_collections/azure/azcollection/requirements.txt
 
 # Also install for the admin user
-su - ${ADMIN_USER} -c "ansible-galaxy collection install azure.azcollection --force"
+su - ${ADMIN_USER} -c "ansible-galaxy collection install azure.azcollection --force -p /home/${ADMIN_USER}/ansible/collections"
 pip3 install -r /home/${ADMIN_USER}/ansible/collections/ansible_collections/azure/azcollection/requirements.txt
 
 # =============================================================================
