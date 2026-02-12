@@ -162,11 +162,11 @@ echo "[17/24] Installing Azure Ansible Collection and Python SDK..."
 ansible-galaxy collection install azure.azcollection --force
 
 # Install Python dependencies required by the azure_rm inventory plugin
-pip3 install -r /root/.ansible/collections/ansible_collections/azure/azcollection/requirements.txt
+pip3 install -r /root/ansible/collections/ansible_collections/azure/azcollection/requirements.txt
 
 # Also install for the admin user
 su - ${ADMIN_USER} -c "ansible-galaxy collection install azure.azcollection --force"
-pip3 install -r /home/${ADMIN_USER}/.ansible/collections/ansible_collections/azure/azcollection/requirements.txt
+pip3 install -r /home/${ADMIN_USER}/ansible/collections/ansible_collections/azure/azcollection/requirements.txt
 
 # =============================================================================
 # STEP 9: Install Visual Studio Code
@@ -532,8 +532,15 @@ echo "  (saved for troubleshooting and verification)"
 echo ""
 echo "IMPORTANT: Change the default password after first login!"
 echo ""
-echo "System will reboot in 10 seconds..."
 echo "========================================="
 
-sleep 10
-reboot
+# Reboot conditionally: skip if running non-interactively (e.g., Azure Custom Script Extension)
+# When run via CSE, stdin is not a terminal, so [ -t 0 ] is false
+if [ -t 0 ]; then
+    echo "System will reboot in 10 seconds..."
+    sleep 10
+    reboot
+else
+    echo "Skipping automatic reboot (running via Azure Custom Script Extension)"
+    echo "The VM will apply changes on next reboot or you can reboot manually: sudo reboot"
+fi

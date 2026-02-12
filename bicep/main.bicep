@@ -166,6 +166,11 @@ var tags = {
   'managed-by': 'bicep'
 }
 
+// ----- Bootstrap Scripts (loaded at compile time, passed to Custom Script Extension) -----
+
+var jumphostBootstrapScript = loadTextContent('../scripts/bootstrap-jumphost.sh')
+var windowsWinrmBootstrapScript = loadTextContent('../scripts/bootstrap-windows-winrm.ps1')
+
 var galleryResourceGroupName = resourceGroupName
 var galleryImageIdUbuntu = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${ubuntuImageDefinition}/versions/${imageVersion}'
 var galleryImageIdWindows = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${windowsImageDefinition}/versions/${imageVersion}'
@@ -358,6 +363,7 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     osDiskStorageType: 'StandardSSD_LRS'
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     deployMonitoringAgent: false // Disable to avoid package manager lock issues during deployment
+    customScriptContent: vm.name == 'vm-jmp-01' ? jumphostBootstrapScript : (vm.osType == 'Windows' ? windowsWinrmBootstrapScript : '')
     tags: tags
   }
 }]
@@ -382,9 +388,10 @@ module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
 }]
 */
 
-// NOTE: Jumphost bootstrap is done via az vm run-command after deployment
-// to avoid Azure Policy tag requirements on VM extensions
-// Run: az vm run-command invoke --scripts @scripts/bootstrap-jumphost.sh
+// NOTE: Bootstrap scripts run automatically at VM creation via Custom Script Extension
+// - vm-jmp-01 (Linux): scripts/bootstrap-jumphost.sh (xRDP, Ansible, Azure CLI, etc.)
+// - vm-db-01, vm-fs-01 (Windows): scripts/bootstrap-windows-winrm.ps1 (WinRM for Ansible)
+// - Other Linux VMs: no bootstrap (configured by Ansible from jumphost)
 
 // ----- Outputs -----
 

@@ -81,6 +81,9 @@ param logAnalyticsWorkspaceId string = ''
 @description('Deploy Log Analytics agent extension (disable to avoid package manager lock issues)')
 param deployMonitoringAgent bool = false
 
+@description('Custom script to execute after VM creation (raw text, empty = skip)')
+param customScriptContent string = ''
+
 @description('Tags to apply to resources')
 param tags object = {}
 
@@ -248,6 +251,49 @@ resource vmExtensionOmsLinux 'Microsoft.Compute/virtualMachines/extensions@2023-
     }
     protectedSettings: {
       workspaceKey: listKeys(logAnalyticsWorkspaceId, '2023-09-01').primarySharedKey
+    }
+  }
+}
+
+// ----- VM Extension: Custom Script (Linux) -----
+
+resource customScriptLinux 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = if (osType == 'Linux' && customScriptContent != '') {
+  parent: vm
+  name: 'CustomScript'
+  location: location
+  tags: tags
+  properties: {
+    publisher: 'Microsoft.Azure.Extensions'
+    type: 'CustomScript'
+    typeHandlerVersion: '2.1'
+    autoUpgradeMinorVersion: true
+    protectedSettings: {
+      script: base64(customScriptContent)
+    }
+  }
+}
+
+// ----- VM Extension: Custom Script (Windows) -----
+
+// Build the PowerShell command using multi-line string + replace() to avoid Bicep quote escaping issues
+var windowsScriptB64 = customScriptContent != '' ? base64(customScriptContent) : ''
+var windowsCmdTemplate = '''
+powershell -ExecutionPolicy Bypass -Command "$d=[Convert]::FromBase64String('__B64__');$t=[Text.Encoding]::UTF8.GetString($d);Set-Content -Path C:/Temp/bootstrap.ps1 -Value $t;& C:/Temp/bootstrap.ps1"
+'''
+var windowsBootstrapCmd = replace(windowsCmdTemplate, '__B64__', windowsScriptB64)
+
+resource customScriptWindows 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = if (osType == 'Windows' && customScriptContent != '') {
+  parent: vm
+  name: 'CustomScriptExtension'
+  location: location
+  tags: tags
+  properties: {
+    publisher: 'Microsoft.Compute'
+    type: 'CustomScriptExtension'
+    typeHandlerVersion: '1.10'
+    autoUpgradeMinorVersion: true
+    protectedSettings: {
+      commandToExecute: windowsBootstrapCmd
     }
   }
 }
