@@ -1,7 +1,7 @@
 // ============================================================
-// Packer Template — Rocky Linux 10 Golden Image
-// Builds a hardened Rocky Linux 10 image and publishes it
-// to Azure Compute Gallery for use by Bicep deployments.
+// Packer Template — Ubuntu 22.04 Base Golden Image
+// Builds a base Ubuntu image with updates and common packages
+// for production VMs (web, app, cms servers).
 // ============================================================
 
 packer {
@@ -15,7 +15,7 @@ packer {
 
 // ----- Source: Azure ARM Builder -----
 
-source "azure-arm" "rocky-linux" {
+source "azure-arm" "ubuntu-base" {
   // Authentication
   use_azure_cli_auth = var.use_azure_cli_auth
   subscription_id    = var.subscription_id
@@ -35,46 +35,40 @@ source "azure-arm" "rocky-linux" {
 
   // Publish to Azure Compute Gallery
   shared_image_gallery_destination {
-    resource_group = var.gallery_resource_group
-    gallery_name   = var.gallery_name
-    image_name     = var.image_definition
-    image_version  = var.image_version
-    replication_regions = var.replication_regions
+    resource_group       = var.gallery_resource_group
+    gallery_name         = var.gallery_name
+    image_name           = var.image_definition
+    image_version        = var.image_version
+    replication_regions  = var.replication_regions
     storage_account_type = "Standard_LRS"
   }
 
   // Temporary resource group (auto-created and auto-deleted by Packer)
-  temp_resource_group_name = "rg-packer-rocky-build"
+  temp_resource_group_name = "rg-packer-ubuntu-base-build"
 
   // Tags applied to the build VM
   azure_tags = {
-    project     = "media"
-    environment = "prod"
+    project     = "mediasrl"
+    environment = "productie"
     managed-by  = "packer"
     owner       = "IT Security SRL"
-    os          = "rocky-linux-10"
+    os          = "ubuntu-2204-base"
   }
 }
 
 // ----- Build Pipeline -----
 
 build {
-  sources = ["source.azure-arm.rocky-linux"]
+  sources = ["source.azure-arm.ubuntu-base"]
 
-  // Step 1: Base OS setup — packages, services, repositories
+  // Step 1: Base OS setup — updates, common packages, SSH hardening
   provisioner "shell" {
     execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E bash '{{ .Path }}'"
     script          = "${path.root}/scripts/base-setup.sh"
     pause_before    = "10s"
   }
 
-  // Step 2: CIS Benchmark hardening
-  provisioner "shell" {
-    execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E bash '{{ .Path }}'"
-    script          = "${path.root}/scripts/hardening.sh"
-  }
-
-  // Step 3: Deprovision the Azure Linux Agent (generalize the VM)
+  // Step 2: Deprovision the Azure Linux Agent (generalize the VM)
   provisioner "shell" {
     execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E bash '{{ .Path }}'"
     inline = [

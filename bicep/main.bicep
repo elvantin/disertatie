@@ -55,8 +55,11 @@ param adminObjectId string
 @description('Azure Compute Gallery name')
 param computeGalleryName string = 'gal_mediasrl'
 
-@description('Ubuntu 22.04 LTS image definition name in gallery')
+@description('Ubuntu 22.04 LTS base image definition name in gallery')
 param ubuntuImageDefinition string = 'imgdef-ubuntu2204'
+
+@description('Ubuntu 22.04 LTS jumphost image definition name in gallery')
+param jumphostImageDefinition string = 'imgdef-ubuntu2204-jumphost'
 
 @description('Windows Server 2022 image definition name in gallery')
 param windowsImageDefinition string = 'imgdef-winserver2022'
@@ -106,7 +109,7 @@ param vms array = [
     size: 'Standard_D2s_v3'
     subnet: 'mgmt'
     createPublicIp: false
-    imageDefinition: 'ubuntu'
+    imageDefinition: 'jumphost'
     osDiskSizeGb: 64
   }
   {
@@ -173,6 +176,7 @@ var windowsWinrmBootstrapScript = loadTextContent('../scripts/bootstrap-windows-
 
 var galleryResourceGroupName = resourceGroupName
 var galleryImageIdUbuntu = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${ubuntuImageDefinition}/versions/${imageVersion}'
+var galleryImageIdJumphost = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${jumphostImageDefinition}/versions/${imageVersion}'
 var galleryImageIdWindows = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${windowsImageDefinition}/versions/${imageVersion}'
 
 // ----- Module: Resource Group -----
@@ -354,16 +358,17 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     existingPublicIpId: contains(persistentIpLookup, vm.name) ? persistentIpLookup[vm.name] : ''
     dnsLabel: vm.?dnsLabel ?? ''
     useGalleryImage: !useMarketplaceImages
-    galleryImageId: vm.imageDefinition == 'ubuntu' ? galleryImageIdUbuntu : galleryImageIdWindows
-    marketplacePublisher: useMarketplaceImages ? (vm.imageDefinition == 'ubuntu' ? 'canonical' : 'MicrosoftWindowsServer') : ''
-    marketplaceOffer: useMarketplaceImages ? (vm.imageDefinition == 'ubuntu' ? 'ubuntu-22_04-lts' : 'WindowsServer') : ''
-    marketplaceSku: useMarketplaceImages ? (vm.imageDefinition == 'ubuntu' ? 'server' : '2022-datacenter-azure-edition-smalldisk') : ''
+    galleryImageId: vm.imageDefinition == 'jumphost' ? galleryImageIdJumphost : (vm.imageDefinition == 'ubuntu' ? galleryImageIdUbuntu : galleryImageIdWindows)
+    marketplacePublisher: useMarketplaceImages ? (vm.imageDefinition == 'windows' ? 'MicrosoftWindowsServer' : 'canonical') : ''
+    marketplaceOffer: useMarketplaceImages ? (vm.imageDefinition == 'windows' ? 'WindowsServer' : 'ubuntu-22_04-lts') : ''
+    marketplaceSku: useMarketplaceImages ? (vm.imageDefinition == 'windows' ? '2022-datacenter-azure-edition-smalldisk' : 'server') : ''
     marketplaceVersion: 'latest'
     osDiskSizeGb: vm.osDiskSizeGb
     osDiskStorageType: 'StandardSSD_LRS'
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     deployMonitoringAgent: false // Disable to avoid package manager lock issues during deployment
-    customScriptContent: vm.name == 'vm-jmp-01' ? jumphostBootstrapScript : (vm.osType == 'Windows' ? windowsWinrmBootstrapScript : '')
+    // CSE only needed with marketplace images; gallery images have bootstrap baked in by Packer
+    customScriptContent: useMarketplaceImages ? (vm.name == 'vm-jmp-01' ? jumphostBootstrapScript : (vm.osType == 'Windows' ? windowsWinrmBootstrapScript : '')) : ''
     tags: tags
   }
 }]
@@ -388,10 +393,12 @@ module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
 }]
 */
 
-// NOTE: Bootstrap scripts run automatically at VM creation via Custom Script Extension
-// - vm-jmp-01 (Linux): scripts/bootstrap-jumphost.sh (xRDP, Ansible, Azure CLI, etc.)
-// - vm-db-01, vm-fs-01 (Windows): scripts/bootstrap-windows-winrm.ps1 (WinRM for Ansible)
-// - Other Linux VMs: no bootstrap (configured by Ansible from jumphost)
+// NOTE: Bootstrap strategy depends on useMarketplaceImages parameter:
+// - Gallery images (useMarketplaceImages = false): bootstrap baked in by Packer, no CSE needed
+// - Marketplace images (useMarketplaceImages = true): CSE runs bootstrap at first boot:
+//   - vm-jmp-01: scripts/bootstrap-jumphost.sh (xRDP, Ansible, Azure CLI, etc.)
+//   - Windows VMs: scripts/bootstrap-windows-winrm.ps1 (WinRM for Ansible)
+//   - Other Linux VMs: no bootstrap (configured by Ansible from jumphost)
 
 // ----- Outputs -----
 

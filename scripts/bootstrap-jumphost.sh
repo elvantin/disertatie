@@ -52,8 +52,8 @@ apt upgrade -y -qq
 echo "[4/23] Removing UFW and installing firewalld..."
 systemctl stop ufw || true
 systemctl disable ufw || true
-apt-get remove -y ufw
-apt-get install -y firewalld
+apt remove -y ufw
+apt install -y firewalld
 
 echo "[5/23] Configuring firewalld..."
 systemctl enable firewalld
@@ -70,10 +70,10 @@ firewall-cmd --reload
 # =============================================================================
 
 echo "[7/23] Installing XFCE Desktop Environment..."
-apt-get install -y xfce4 xfce4-goodies
+apt install -y xfce4 xfce4-goodies
 
 echo "[8/23] Installing additional X11 components..."
-apt-get install -y \
+apt install -y \
     xorg \
     dbus-x11 \
     x11-xserver-utils \
@@ -87,7 +87,7 @@ systemctl set-default graphical.target
 # =============================================================================
 
 echo "[10/23] Installing xRDP..."
-apt-get install -y xrdp
+apt install -y xrdp
 
 echo "[11/23] Configuring xRDP for XFCE..."
 systemctl enable xrdp
@@ -129,18 +129,18 @@ systemctl restart xrdp
 
 echo "[14/23] Installing Remmina (RDP/VNC client) from PPA..."
 apt-add-repository -y ppa:remmina-ppa-team/remmina-next
-apt-get update
-apt-get install -y remmina remmina-plugin-rdp remmina-plugin-secret
+apt update
+apt install -y remmina remmina-plugin-rdp remmina-plugin-secret
 
 # =============================================================================
 # STEP 7: Install Ansible and Configuration Management Tools
 # =============================================================================
 
 echo "[15/23] Installing Ansible and dependencies..."
-apt-get install -y \
+apt install -y \
     software-properties-common
 add-apt-repository --yes --update ppa:ansible/ansible
-apt-get install -y \
+apt install -y \
     ansible \
     python3-pip \
     python3-winrm \
@@ -184,8 +184,8 @@ wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > pa
 install -D -o root -g root -m 644 packages.microsoft.gpg /usr/share/keyrings/packages.microsoft.gpg
 sh -c 'echo "deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list'
 rm -f packages.microsoft.gpg
-apt-get update -qq
-apt-get install -y code
+apt update -qq
+apt install -y code
 
 # =============================================================================
 # STEP 10: Install Firefox ESR Browser
@@ -203,8 +203,8 @@ Pin-Priority: 1001
 EOF
 
 # Update and install Firefox ESR
-apt-get update -qq
-apt-get install -y firefox-esr
+apt update -qq
+apt install -y firefox-esr
 
 # Set Firefox ESR as default browser for all users
 update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/bin/firefox-esr 200
@@ -228,7 +228,7 @@ chown -R ${ADMIN_USER}:${ADMIN_USER} /home/${ADMIN_USER}/.config
 # =============================================================================
 
 echo "[19/23] Installing DevOps tools..."
-apt-get install -y \
+apt install -y \
     git \
     vim \
     nano \
@@ -496,8 +496,8 @@ systemctl is-active ssh || (echo "ERROR: ssh is not running" && exit 1)
 # =============================================================================
 
 echo "[23/23] Cleaning up..."
-apt-get autoremove -y
-apt-get clean
+apt autoremove -y
+apt clean
 
 # =============================================================================
 # COMPLETION

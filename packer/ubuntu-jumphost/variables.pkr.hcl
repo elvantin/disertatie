@@ -1,10 +1,8 @@
 // ============================================================
-// Variables — Packer Rocky Linux 10 Golden Image
+// Variables — Packer Ubuntu 22.04 Jumphost Image
 // ============================================================
 
 // ----- Azure Authentication -----
-// Use Azure CLI auth for local development, Service Principal for CI/CD.
-// Set use_azure_cli_auth = false and provide client_id/secret/tenant for SP auth.
 
 variable "subscription_id" {
   type        = string
@@ -40,36 +38,33 @@ variable "use_azure_cli_auth" {
 
 variable "location" {
   type        = string
-  default     = "westeurope"
+  default     = "swedencentral"
   description = "Azure region for the build VM and resources"
 }
 
 variable "vm_size" {
   type        = string
-  default     = "Standard_B2s"
-  description = "VM size for the Packer build process"
+  default     = "Standard_D2s_v3"
+  description = "VM size for the Packer build process (needs enough RAM for desktop)"
 }
 
 // ----- Source Image -----
-// NOTE: Verify Rocky Linux 10 availability in Azure Marketplace.
-// Run: az vm image list --publisher erockyenterprisesoftwarefoundation --output table --all
-// If Rocky Linux 10 is not yet available, use Rocky Linux 9 (sku = "9-lvm-gen2").
 
 variable "image_publisher" {
   type        = string
-  default     = "erockyenterprisesoftwarefoundation"
+  default     = "canonical"
   description = "Marketplace image publisher"
 }
 
 variable "image_offer" {
   type        = string
-  default     = "rockylinux-x86_64"
+  default     = "ubuntu-22_04-lts"
   description = "Marketplace image offer"
 }
 
 variable "image_sku" {
   type        = string
-  default     = "10-lvm-gen2"
+  default     = "server"
   description = "Marketplace image SKU"
 }
 
@@ -77,19 +72,19 @@ variable "image_sku" {
 
 variable "gallery_resource_group" {
   type        = string
-  default     = "rg-media-prod-westeurope"
+  default     = "rg-mediasrl-productie-swedencentral"
   description = "Resource group containing the Azure Compute Gallery"
 }
 
 variable "gallery_name" {
   type        = string
-  default     = "gal_media"
+  default     = "gal_mediasrl"
   description = "Azure Compute Gallery name"
 }
 
 variable "image_definition" {
   type        = string
-  default     = "imgdef-rockylinux10"
+  default     = "imgdef-ubuntu2204-jumphost"
   description = "Image definition name in the gallery"
 }
 
@@ -101,6 +96,6 @@ variable "image_version" {
 
 variable "replication_regions" {
   type        = list(string)
-  default     = ["westeurope"]
+  default     = ["swedencentral"]
   description = "Regions to replicate the gallery image to"
 }

@@ -58,7 +58,7 @@ source "azure-arm" "windows-server" {
     project     = "media"
     environment = "prod"
     managed-by  = "packer"
-    owner       = "IT Security SRL"
+    owner       = "SC MEDIA SRL"
     os          = "windows-server-2022"
   }
 }
@@ -68,22 +68,17 @@ source "azure-arm" "windows-server" {
 build {
   sources = ["source.azure-arm.windows-server"]
 
-  // Step 1: Base OS setup — features, tools, updates
+  // Step 1: Configure WinRM for Ansible management
   provisioner "powershell" {
-    script = "${path.root}/scripts/base-setup.ps1"
+    script = "${path.root}/scripts/configure-winrm.ps1"
   }
 
-  // Step 2: CIS Benchmark hardening
-  provisioner "powershell" {
-    script = "${path.root}/scripts/hardening.ps1"
-  }
-
-  // Step 3: Run Windows Update
+  // Step 2: Run Windows Update and restart
   provisioner "windows-restart" {
     restart_timeout = "15m"
   }
 
-  // Step 4: Final cleanup before sysprep
+  // Step 3: Final cleanup before sysprep
   provisioner "powershell" {
     inline = [
       "Write-Output 'Cleaning up temporary files...'",
@@ -93,7 +88,7 @@ build {
     ]
   }
 
-  // Step 5: Generalize with Sysprep
+  // Step 4: Generalize with Sysprep
   provisioner "powershell" {
     inline = [
       "Write-Output 'Running Sysprep...'",

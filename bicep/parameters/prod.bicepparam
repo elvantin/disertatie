@@ -32,6 +32,7 @@ param useMarketplaceImages = true
 
 param computeGalleryName = 'gal_mediasrl'
 param ubuntuImageDefinition = 'imgdef-ubuntu2204'
+param jumphostImageDefinition = 'imgdef-ubuntu2204-jumphost'
 param windowsImageDefinition = 'imgdef-winserver2022'
 param imageVersion = '1.0.0'
 
@@ -73,7 +74,7 @@ param vms = [
     size: 'Standard_D2s_v3'
     subnet: 'mgmt'
     createPublicIp: false
-    imageDefinition: 'ubuntu'
+    imageDefinition: 'jumphost'
     osDiskSizeGb: 64
   }
   {

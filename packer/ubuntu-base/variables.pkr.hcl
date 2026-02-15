@@ -1,5 +1,5 @@
 // ============================================================
-// Variables — Packer Windows Server 2022 Golden Image
+// Variables — Packer Ubuntu 22.04 Base Image
 // ============================================================
 
 // ----- Azure Authentication -----
@@ -44,7 +44,7 @@ variable "location" {
 
 variable "vm_size" {
   type        = string
-  default     = "Standard_D2s_v3"
+  default     = "Standard_B2s"
   description = "VM size for the Packer build process"
 }
 
@@ -52,27 +52,27 @@ variable "vm_size" {
 
 variable "image_publisher" {
   type        = string
-  default     = "MicrosoftWindowsServer"
+  default     = "canonical"
   description = "Marketplace image publisher"
 }
 
 variable "image_offer" {
   type        = string
-  default     = "WindowsServer"
+  default     = "ubuntu-22_04-lts"
   description = "Marketplace image offer"
 }
 
 variable "image_sku" {
   type        = string
-  default     = "2022-datacenter-azure-edition-smalldisk"
-  description = "Marketplace image SKU (Gen2 Azure Edition)"
+  default     = "server"
+  description = "Marketplace image SKU"
 }
 
 // ----- Azure Compute Gallery Destination -----
 
 variable "gallery_resource_group" {
   type        = string
-  default     = "rg-mediasrl-prod-swedencentral"
+  default     = "rg-mediasrl-productie-swedencentral"
   description = "Resource group containing the Azure Compute Gallery"
 }
 
@@ -84,7 +84,7 @@ variable "gallery_name" {
 
 variable "image_definition" {
   type        = string
-  default     = "imgdef-winserver2022"
+  default     = "imgdef-ubuntu2204"
   description = "Image definition name in the gallery"
 }
 
@@ -98,12 +98,4 @@ variable "replication_regions" {
   type        = list(string)
   default     = ["swedencentral"]
   description = "Regions to replicate the gallery image to"
-}
-
-// ----- WinRM Configuration -----
-
-variable "winrm_username" {
-  type        = string
-  default     = "packer"
-  description = "Temporary admin username for WinRM during build"
 }
