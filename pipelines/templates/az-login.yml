@@ -19,11 +19,11 @@ steps:
     displayName: 'Verify Azure Connection'
     inputs:
       azureSubscription: ${{ parameters.azureSubscription }}
-      scriptType: 'bash'
+      scriptType: 'ps'
       scriptLocation: 'inlineScript'
       inlineScript: |
-        echo "=== Azure Connection Verified ==="
-        echo "Subscription: $(az account show --query name -o tsv)"
-        echo "Subscription ID: $(az account show --query id -o tsv)"
-        echo "Tenant: $(az account show --query tenantId -o tsv)"
-        echo "================================="
+        Write-Host "=== Azure Connection Verified ==="
+        Write-Host "Subscription: $(az account show --query name -o tsv)"
+        Write-Host "Subscription ID: $(az account show --query id -o tsv)"
+        Write-Host "Tenant: $(az account show --query tenantId -o tsv)"
+        Write-Host "================================="

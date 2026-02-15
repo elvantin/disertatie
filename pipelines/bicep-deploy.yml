@@ -30,14 +30,14 @@ variables:
   - name: azureSubscription
     value: 'azure-service-connection'
   - name: templateFile
-    value: '$(Build.SourcesDirectory)/bicep/main.bicep'
+    value: '$(Build.SourcesDirectory)\bicep\main.bicep'
   - name: parametersFile
-    value: '$(Build.SourcesDirectory)/bicep/parameters/prod.bicepparam'
+    value: '$(Build.SourcesDirectory)\bicep\parameters\prod.bicepparam'
   - name: deploymentName
     value: 'deploy-mediasrl-$(Build.BuildNumber)'
 
 pool:
-  vmImage: 'ubuntu-latest'
+  name: 'Default'  # Self-hosted agent (Windows)
 
 stages:
   # ============================================================
@@ -57,45 +57,39 @@ stages:
             displayName: 'Bicep Build (syntax check)'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "=== Compiling Bicep to ARM template ==="
-                az bicep build --file $(templateFile)
-                echo "Bicep compilation successful — no syntax errors."
+                Write-Host "=== Compiling Bicep to ARM template ==="
+                az bicep build --file "$(templateFile)"
+                if ($LASTEXITCODE -ne 0) { throw "Bicep build failed" }
+                Write-Host "Bicep compilation successful — no syntax errors."
 
           # Step 2: Validate against Azure API (checks parameter values, resource availability)
           - task: AzureCLI@2
             displayName: 'Azure Deployment Validate'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "=== Validating deployment against Azure ==="
-                az deployment sub validate \
-                  --location $(location) \
-                  --template-file $(templateFile) \
-                  --parameters $(parametersFile) \
-                  --name validate-$(Build.BuildNumber)
-                echo "Validation successful — template and parameters are valid."
+                Write-Host "=== Validating deployment against Azure ==="
+                az deployment sub validate --location "$(location)" --template-file "$(templateFile)" --parameters "$(parametersFile)" --name "validate-$(Build.BuildNumber)"
+                if ($LASTEXITCODE -ne 0) { throw "Deployment validation failed" }
+                Write-Host "Validation successful — template and parameters are valid."
 
           # Step 3: What-If (preview changes without applying)
           - task: AzureCLI@2
             displayName: 'What-If Preview (dry run)'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "=== What-If: Preview of changes ==="
-                echo "This shows what WOULD change if deployed (nothing is modified yet)."
-                echo ""
-                az deployment sub what-if \
-                  --location $(location) \
-                  --template-file $(templateFile) \
-                  --parameters $(parametersFile) \
-                  --name whatif-$(Build.BuildNumber)
+                Write-Host "=== What-If: Preview of changes ==="
+                Write-Host "This shows what WOULD change if deployed (nothing is modified yet)."
+                Write-Host ""
+                az deployment sub what-if --location "$(location)" --template-file "$(templateFile)" --parameters "$(parametersFile)" --name "whatif-$(Build.BuildNumber)"
 
   # ============================================================
   # STAGE 2: Deploy — Apply changes to Azure
@@ -121,34 +115,25 @@ stages:
                   displayName: 'Deploy Bicep Template'
                   inputs:
                     azureSubscription: $(azureSubscription)
-                    scriptType: 'bash'
+                    scriptType: 'ps'
                     scriptLocation: 'inlineScript'
                     inlineScript: |
-                      echo "=== Deploying infrastructure to Azure ==="
-                      az deployment sub create \
-                        --location $(location) \
-                        --template-file $(templateFile) \
-                        --parameters $(parametersFile) \
-                        --name $(deploymentName)
-                      echo ""
-                      echo "=== Deployment complete! ==="
+                      Write-Host "=== Deploying infrastructure to Azure ==="
+                      az deployment sub create --location "$(location)" --template-file "$(templateFile)" --parameters "$(parametersFile)" --name "$(deploymentName)"
+                      if ($LASTEXITCODE -ne 0) { throw "Deployment failed" }
+                      Write-Host ""
+                      Write-Host "=== Deployment complete! ==="
 
                 # Verify: List VMs and their status
                 - task: AzureCLI@2
                   displayName: 'Verify: List VMs'
                   inputs:
                     azureSubscription: $(azureSubscription)
-                    scriptType: 'bash'
+                    scriptType: 'ps'
                     scriptLocation: 'inlineScript'
                     inlineScript: |
-                      echo "=== Deployed VMs ==="
-                      az vm list \
-                        -g rg-mediasrl-productie-swedencentral \
-                        -o table \
-                        --query "[].{Name:name, Size:hardwareProfile.vmSize, OS:storageProfile.osDisk.osType}"
-                      echo ""
-                      echo "=== Persistent Public IPs ==="
-                      az network public-ip list \
-                        -g rg-mediasrl-persistent \
-                        -o table \
-                        --query "[].{Name:name, IP:ipAddress, FQDN:dnsSettings.fqdn}"
+                      Write-Host "=== Deployed VMs ==="
+                      az vm list -g rg-mediasrl-productie-swedencentral -o table --query "[].{Name:name, Size:hardwareProfile.vmSize, OS:storageProfile.osDisk.osType}"
+                      Write-Host ""
+                      Write-Host "=== Persistent Public IPs ==="
+                      az network public-ip list -g rg-mediasrl-persistent -o table --query "[].{Name:name, IP:ipAddress, FQDN:dnsSettings.fqdn}"

@@ -41,7 +41,7 @@ variables:
     value: '/home/azureadmin/ansible'
 
 pool:
-  vmImage: 'ubuntu-latest'
+  name: 'Default'  # Self-hosted agent (Windows)
 
 stages:
   # ============================================================
@@ -61,44 +61,31 @@ stages:
             name: getIp
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                JUMPHOST_IP=$(az network public-ip show \
-                  -g rg-mediasrl-persistent \
-                  -n pip-vm-jmp-01 \
-                  --query ipAddress -o tsv)
-                echo "Jumphost IP: $JUMPHOST_IP"
-                echo "##vso[task.setvariable variable=jumphostIp;isOutput=true]$JUMPHOST_IP"
-
-          # Install SSH key for jumphost access
-          - task: InstallSSHKey@0
-            displayName: 'Install SSH Key'
-            inputs:
-              knownHostsEntry: 'placeholder'  # Will be replaced at runtime
-              sshPublicKey: '$(sshPublicKey)'
-              sshKeySecureFile: 'jumphost-ssh-key'  # Uploaded to Secure Files in Azure DevOps
+                $JumphostIp = az network public-ip show -g rg-mediasrl-persistent -n pip-vm-jmp-01 --query ipAddress -o tsv
+                Write-Host "Jumphost IP: $JumphostIp"
+                Write-Host "##vso[task.setvariable variable=jumphostIp;isOutput=true]$JumphostIp"
 
           # Copy Ansible directory to jumphost via SCP
           - task: AzureCLI@2
             displayName: 'SCP: Copy Ansible files'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                JUMPHOST_IP=$(getIp.jumphostIp)
-                SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+                $JumphostIp = "$(getIp.jumphostIp)"
+                $SshKeyPath = "$(Build.SourcesDirectory)\ssh-keypair\id_rsa_mediasrl"
+                $AnsibleSrc = "$(Build.SourcesDirectory)\ansible"
 
-                echo "=== Copying Ansible files to jumphost ($JUMPHOST_IP) ==="
+                Write-Host "=== Copying Ansible files to jumphost ($JumphostIp) ==="
 
-                # Sync ansible directory to jumphost
-                rsync -avz --delete \
-                  -e "ssh $SSH_OPTS" \
-                  $(Build.SourcesDirectory)/ansible/ \
-                  $(jumphostUser)@$JUMPHOST_IP:$(ansibleRemotePath)/
+                # Use scp to copy ansible directory to jumphost
+                scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -i "$SshKeyPath" -r "$AnsibleSrc\*" "$(jumphostUser)@${JumphostIp}:$(ansibleRemotePath)/"
 
-                echo "Files copied successfully."
+                Write-Host "Files copied successfully."
 
   # ============================================================
   # STAGE 2: Configure — Run Ansible playbook on jumphost
@@ -118,35 +105,37 @@ stages:
               steps:
                 - checkout: none  # Files already on jumphost
 
-                # Build ansible-playbook command
+                # Build and run ansible-playbook command
                 - task: AzureCLI@2
                   displayName: 'Run Ansible Playbook via SSH'
                   inputs:
                     azureSubscription: $(azureSubscription)
-                    scriptType: 'bash'
+                    scriptType: 'ps'
                     scriptLocation: 'inlineScript'
                     inlineScript: |
-                      SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+                      $SshKeyPath = "$(Build.SourcesDirectory)\ssh-keypair\id_rsa_mediasrl"
 
                       # Build the ansible-playbook command
-                      PLAYBOOK_CMD="cd $(ansibleRemotePath) && ansible-playbook playbooks/${{ parameters.playbookName }}"
+                      $PlaybookCmd = "cd $(ansibleRemotePath) && ansible-playbook playbooks/${{ parameters.playbookName }}"
 
                       # Add tags if specified
-                      if [ -n "${{ parameters.ansibleTags }}" ]; then
-                        PLAYBOOK_CMD="$PLAYBOOK_CMD --tags ${{ parameters.ansibleTags }}"
-                      fi
+                      $Tags = "${{ parameters.ansibleTags }}"
+                      if ($Tags -ne "") {
+                        $PlaybookCmd = "$PlaybookCmd --tags $Tags"
+                      }
 
                       # Add verbosity if specified
-                      if [ -n "${{ parameters.ansibleVerbosity }}" ]; then
-                        PLAYBOOK_CMD="$PLAYBOOK_CMD ${{ parameters.ansibleVerbosity }}"
-                      fi
+                      $Verbosity = "${{ parameters.ansibleVerbosity }}"
+                      if ($Verbosity -ne "") {
+                        $PlaybookCmd = "$PlaybookCmd $Verbosity"
+                      }
 
-                      echo "=== Running Ansible on Jumphost ($(jumphostIp)) ==="
-                      echo "Command: $PLAYBOOK_CMD"
-                      echo ""
+                      Write-Host "=== Running Ansible on Jumphost ($(jumphostIp)) ==="
+                      Write-Host "Command: $PlaybookCmd"
+                      Write-Host ""
 
                       # Execute playbook on jumphost via SSH
-                      ssh $SSH_OPTS $(jumphostUser)@$(jumphostIp) "$PLAYBOOK_CMD"
+                      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL -i "$SshKeyPath" "$(jumphostUser)@$(jumphostIp)" "$PlaybookCmd"
 
-                      echo ""
-                      echo "=== Ansible playbook completed! ==="
+                      Write-Host ""
+                      Write-Host "=== Ansible playbook completed! ==="

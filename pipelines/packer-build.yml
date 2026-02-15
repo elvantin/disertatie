@@ -33,7 +33,7 @@ variables:
     value: 'azure-service-connection'
 
 pool:
-  vmImage: 'ubuntu-latest'
+  name: 'Default'  # Self-hosted agent (Windows)
 
 stages:
   # ============================================================
@@ -51,76 +51,51 @@ stages:
             displayName: 'Ensure Resource Group exists'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                RG_EXISTS=$(az group exists --name $(galleryResourceGroup))
-                if [ "$RG_EXISTS" = "false" ]; then
-                  echo "Creating Resource Group $(galleryResourceGroup)..."
-                  az group create \
-                    --name $(galleryResourceGroup) \
-                    --location $(location) \
-                    --tags environment=productie project=mediasrl managed-by=packer
-                else
-                  echo "Resource Group $(galleryResourceGroup) already exists."
-                fi
+                $rgExists = az group exists --name "$(galleryResourceGroup)"
+                if ($rgExists -eq "false") {
+                  Write-Host "Creating Resource Group $(galleryResourceGroup)..."
+                  az group create --name "$(galleryResourceGroup)" --location "$(location)" --tags environment=productie project=mediasrl managed-by=packer
+                } else {
+                  Write-Host "Resource Group $(galleryResourceGroup) already exists."
+                }
 
           - task: AzureCLI@2
             displayName: 'Ensure Compute Gallery exists'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                az sig show \
-                  --resource-group $(galleryResourceGroup) \
-                  --gallery-name $(galleryName) 2>/dev/null
-                if [ $? -ne 0 ]; then
-                  echo "Creating Gallery $(galleryName)..."
-                  az sig create \
-                    --resource-group $(galleryResourceGroup) \
-                    --gallery-name $(galleryName) \
-                    --location $(location) \
-                    --tags environment=productie project=mediasrl managed-by=packer
-                else
-                  echo "Gallery $(galleryName) already exists."
-                fi
+                az sig show --resource-group "$(galleryResourceGroup)" --gallery-name "$(galleryName)" 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                  Write-Host "Creating Gallery $(galleryName)..."
+                  az sig create --resource-group "$(galleryResourceGroup)" --gallery-name "$(galleryName)" --location "$(location)" --tags environment=productie project=mediasrl managed-by=packer
+                } else {
+                  Write-Host "Gallery $(galleryName) already exists."
+                }
 
           - task: AzureCLI@2
             displayName: 'Ensure Image Definitions exist'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                create_imgdef() {
-                  local DEF_NAME=$1 PUBLISHER=$2 OFFER=$3 SKU=$4 OS_TYPE=$5
-                  az sig image-definition show \
-                    --resource-group $(galleryResourceGroup) \
-                    --gallery-name $(galleryName) \
-                    --gallery-image-definition "$DEF_NAME" 2>/dev/null
-                  if [ $? -ne 0 ]; then
-                    echo "Creating Image Definition: $DEF_NAME"
-                    az sig image-definition create \
-                      --resource-group $(galleryResourceGroup) \
-                      --gallery-name $(galleryName) \
-                      --gallery-image-definition "$DEF_NAME" \
-                      --publisher "$PUBLISHER" \
-                      --offer "$OFFER" \
-                      --sku "$SKU" \
-                      --os-type "$OS_TYPE" \
-                      --os-state Generalized \
-                      --hyper-v-generation V2 \
-                      --location $(location) \
-                      --tags environment=productie project=mediasrl managed-by=packer
-                  else
-                    echo "Image Definition $DEF_NAME already exists."
-                  fi
+                function New-ImgDef($DefName, $Publisher, $Offer, $Sku, $OsType) {
+                  az sig image-definition show --resource-group "$(galleryResourceGroup)" --gallery-name "$(galleryName)" --gallery-image-definition $DefName 2>$null
+                  if ($LASTEXITCODE -ne 0) {
+                    Write-Host "Creating Image Definition: $DefName"
+                    az sig image-definition create --resource-group "$(galleryResourceGroup)" --gallery-name "$(galleryName)" --gallery-image-definition $DefName --publisher $Publisher --offer $Offer --sku $Sku --os-type $OsType --os-state Generalized --hyper-v-generation V2 --location "$(location)" --tags environment=productie project=mediasrl managed-by=packer
+                  } else {
+                    Write-Host "Image Definition $DefName already exists."
+                  }
                 }
-
-                create_imgdef "imgdef-ubuntu2204" "SCMediaSRL" "Ubuntu" "22.04-LTS-Base" "Linux"
-                create_imgdef "imgdef-ubuntu2204-jumphost" "SCMediaSRL" "Ubuntu" "22.04-LTS-Jumphost" "Linux"
-                create_imgdef "imgdef-winserver2022" "SCMediaSRL" "WindowsServer" "2022-Datacenter" "Windows"
+                New-ImgDef "imgdef-ubuntu2204" "SCMediaSRL" "Ubuntu" "22.04-LTS-Base" "Linux"
+                New-ImgDef "imgdef-ubuntu2204-jumphost" "SCMediaSRL" "Ubuntu" "22.04-LTS-Jumphost" "Linux"
+                New-ImgDef "imgdef-winserver2022" "SCMediaSRL" "WindowsServer" "2022-Datacenter" "Windows"
 
   # ============================================================
   # STAGE 2: Build Ubuntu Base Image
@@ -140,48 +115,33 @@ stages:
             displayName: 'Detect next version & Build'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                set -e
-                IMG_DEF="imgdef-ubuntu2204"
-                PACKER_DIR="$(Build.SourcesDirectory)/packer/ubuntu-base"
+                $ErrorActionPreference = "Continue"
+                $ImgDef = "imgdef-ubuntu2204"
+                $PackerDir = "$(Build.SourcesDirectory)\packer\ubuntu-base"
 
                 # Auto-detect next version
-                LATEST=$(az sig image-version list \
-                  --resource-group $(galleryResourceGroup) \
-                  --gallery-name $(galleryName) \
-                  --gallery-image-definition $IMG_DEF \
-                  --query "[].name" -o tsv 2>/dev/null \
-                  | sort -V | tail -1)
+                $versions = az sig image-version list --resource-group "$(galleryResourceGroup)" --gallery-name "$(galleryName)" --gallery-image-definition $ImgDef --query "[].name" -o tsv 2>$null
+                if (-not $versions) {
+                  $NextVersion = "1.0.0"
+                } else {
+                  $latest = $versions -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+\.\d+\.\d+$' } | Sort-Object { [version]$_ } | Select-Object -Last 1
+                  $parts = $latest -split '\.'
+                  $NextVersion = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
+                }
+                Write-Host "Next version: $NextVersion"
 
-                if [ -z "$LATEST" ]; then
-                  NEXT_VERSION="1.0.0"
-                else
-                  MAJOR=$(echo $LATEST | cut -d. -f1)
-                  MINOR=$(echo $LATEST | cut -d. -f2)
-                  PATCH=$(echo $LATEST | cut -d. -f3)
-                  NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-                fi
-                echo "Next version: $NEXT_VERSION"
-
-                # Packer Init + Validate + Build
-                cd "$PACKER_DIR"
-                SUB_ID=$(az account show --query id -o tsv)
-
+                $SubId = az account show --query id -o tsv
+                Push-Location $PackerDir
                 packer init .
-                packer validate \
-                  -var "subscription_id=$SUB_ID" \
-                  -var "gallery_resource_group=$(galleryResourceGroup)" \
-                  -var "image_version=$NEXT_VERSION" .
-                packer build \
-                  -var "subscription_id=$SUB_ID" \
-                  -var "gallery_resource_group=$(galleryResourceGroup)" \
-                  -var "image_version=$NEXT_VERSION" \
-                  -color=false .
-
-                echo "##vso[task.setvariable variable=imageVersion]$NEXT_VERSION"
-                echo "Ubuntu Base image $NEXT_VERSION published successfully!"
+                packer validate -var "subscription_id=$SubId" -var "gallery_resource_group=$(galleryResourceGroup)" -var "image_version=$NextVersion" .
+                if ($LASTEXITCODE -ne 0) { throw "Packer validate failed" }
+                packer build -var "subscription_id=$SubId" -var "gallery_resource_group=$(galleryResourceGroup)" -var "image_version=$NextVersion" -color=false .
+                if ($LASTEXITCODE -ne 0) { throw "Packer build failed" }
+                Pop-Location
+                Write-Host "Ubuntu Base image $NextVersion published successfully!"
 
   # ============================================================
   # STAGE 3: Build Jumphost Image
@@ -201,45 +161,32 @@ stages:
             displayName: 'Detect next version & Build'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                set -e
-                IMG_DEF="imgdef-ubuntu2204-jumphost"
-                PACKER_DIR="$(Build.SourcesDirectory)/packer/ubuntu-jumphost"
+                $ErrorActionPreference = "Continue"
+                $ImgDef = "imgdef-ubuntu2204-jumphost"
+                $PackerDir = "$(Build.SourcesDirectory)\packer\ubuntu-jumphost"
 
-                LATEST=$(az sig image-version list \
-                  --resource-group $(galleryResourceGroup) \
-                  --gallery-name $(galleryName) \
-                  --gallery-image-definition $IMG_DEF \
-                  --query "[].name" -o tsv 2>/dev/null \
-                  | sort -V | tail -1)
+                $versions = az sig image-version list --resource-group "$(galleryResourceGroup)" --gallery-name "$(galleryName)" --gallery-image-definition $ImgDef --query "[].name" -o tsv 2>$null
+                if (-not $versions) {
+                  $NextVersion = "1.0.0"
+                } else {
+                  $latest = $versions -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+\.\d+\.\d+$' } | Sort-Object { [version]$_ } | Select-Object -Last 1
+                  $parts = $latest -split '\.'
+                  $NextVersion = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
+                }
+                Write-Host "Next version: $NextVersion"
 
-                if [ -z "$LATEST" ]; then
-                  NEXT_VERSION="1.0.0"
-                else
-                  MAJOR=$(echo $LATEST | cut -d. -f1)
-                  MINOR=$(echo $LATEST | cut -d. -f2)
-                  PATCH=$(echo $LATEST | cut -d. -f3)
-                  NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-                fi
-                echo "Next version: $NEXT_VERSION"
-
-                cd "$PACKER_DIR"
-                SUB_ID=$(az account show --query id -o tsv)
-
+                $SubId = az account show --query id -o tsv
+                Push-Location $PackerDir
                 packer init .
-                packer validate \
-                  -var "subscription_id=$SUB_ID" \
-                  -var "gallery_resource_group=$(galleryResourceGroup)" \
-                  -var "image_version=$NEXT_VERSION" .
-                packer build \
-                  -var "subscription_id=$SUB_ID" \
-                  -var "gallery_resource_group=$(galleryResourceGroup)" \
-                  -var "image_version=$NEXT_VERSION" \
-                  -color=false .
-
-                echo "Jumphost image $NEXT_VERSION published successfully!"
+                packer validate -var "subscription_id=$SubId" -var "gallery_resource_group=$(galleryResourceGroup)" -var "image_version=$NextVersion" .
+                if ($LASTEXITCODE -ne 0) { throw "Packer validate failed" }
+                packer build -var "subscription_id=$SubId" -var "gallery_resource_group=$(galleryResourceGroup)" -var "image_version=$NextVersion" -color=false .
+                if ($LASTEXITCODE -ne 0) { throw "Packer build failed" }
+                Pop-Location
+                Write-Host "Jumphost image $NextVersion published successfully!"
 
   # ============================================================
   # STAGE 4: Build Windows Server Image
@@ -259,45 +206,32 @@ stages:
             displayName: 'Detect next version & Build'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                set -e
-                IMG_DEF="imgdef-winserver2022"
-                PACKER_DIR="$(Build.SourcesDirectory)/packer/windows-server"
+                $ErrorActionPreference = "Continue"
+                $ImgDef = "imgdef-winserver2022"
+                $PackerDir = "$(Build.SourcesDirectory)\packer\windows-server"
 
-                LATEST=$(az sig image-version list \
-                  --resource-group $(galleryResourceGroup) \
-                  --gallery-name $(galleryName) \
-                  --gallery-image-definition $IMG_DEF \
-                  --query "[].name" -o tsv 2>/dev/null \
-                  | sort -V | tail -1)
+                $versions = az sig image-version list --resource-group "$(galleryResourceGroup)" --gallery-name "$(galleryName)" --gallery-image-definition $ImgDef --query "[].name" -o tsv 2>$null
+                if (-not $versions) {
+                  $NextVersion = "1.0.0"
+                } else {
+                  $latest = $versions -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^\d+\.\d+\.\d+$' } | Sort-Object { [version]$_ } | Select-Object -Last 1
+                  $parts = $latest -split '\.'
+                  $NextVersion = "$($parts[0]).$($parts[1]).$([int]$parts[2] + 1)"
+                }
+                Write-Host "Next version: $NextVersion"
 
-                if [ -z "$LATEST" ]; then
-                  NEXT_VERSION="1.0.0"
-                else
-                  MAJOR=$(echo $LATEST | cut -d. -f1)
-                  MINOR=$(echo $LATEST | cut -d. -f2)
-                  PATCH=$(echo $LATEST | cut -d. -f3)
-                  NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-                fi
-                echo "Next version: $NEXT_VERSION"
-
-                cd "$PACKER_DIR"
-                SUB_ID=$(az account show --query id -o tsv)
-
+                $SubId = az account show --query id -o tsv
+                Push-Location $PackerDir
                 packer init .
-                packer validate \
-                  -var "subscription_id=$SUB_ID" \
-                  -var "gallery_resource_group=$(galleryResourceGroup)" \
-                  -var "image_version=$NEXT_VERSION" .
-                packer build \
-                  -var "subscription_id=$SUB_ID" \
-                  -var "gallery_resource_group=$(galleryResourceGroup)" \
-                  -var "image_version=$NEXT_VERSION" \
-                  -color=false .
-
-                echo "Windows Server image $NEXT_VERSION published successfully!"
+                packer validate -var "subscription_id=$SubId" -var "gallery_resource_group=$(galleryResourceGroup)" -var "image_version=$NextVersion" .
+                if ($LASTEXITCODE -ne 0) { throw "Packer validate failed" }
+                packer build -var "subscription_id=$SubId" -var "gallery_resource_group=$(galleryResourceGroup)" -var "image_version=$NextVersion" -color=false .
+                if ($LASTEXITCODE -ne 0) { throw "Packer build failed" }
+                Pop-Location
+                Write-Host "Windows Server image $NextVersion published successfully!"
 
   # ============================================================
   # STAGE 5: Verify — List all published image versions
@@ -317,18 +251,14 @@ stages:
             displayName: 'Show all image versions'
             inputs:
               azureSubscription: $(azureSubscription)
-              scriptType: 'bash'
+              scriptType: 'ps'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                echo "=== Azure Compute Gallery: $(galleryName) ==="
-                echo ""
-                for DEF in imgdef-ubuntu2204 imgdef-ubuntu2204-jumphost imgdef-winserver2022; do
-                  echo "--- $DEF ---"
-                  az sig image-version list \
-                    --resource-group $(galleryResourceGroup) \
-                    --gallery-name $(galleryName) \
-                    --gallery-image-definition $DEF \
-                    --query "[].{Version:name, State:provisioningState, Created:publishingProfile.publishedDate}" \
-                    -o table 2>/dev/null || echo "  (no versions)"
-                  echo ""
-                done
+                Write-Host "=== Azure Compute Gallery: $(galleryName) ==="
+                Write-Host ""
+                foreach ($def in @("imgdef-ubuntu2204", "imgdef-ubuntu2204-jumphost", "imgdef-winserver2022")) {
+                  Write-Host "--- $def ---"
+                  az sig image-version list --resource-group "$(galleryResourceGroup)" --gallery-name "$(galleryName)" --gallery-image-definition $def --query "[].{Version:name, State:provisioningState}" -o table 2>$null
+                  if ($LASTEXITCODE -ne 0) { Write-Host "  (no versions)" }
+                  Write-Host ""
+                }
