@@ -1,24 +1,24 @@
 # ============================================================
 # Pipeline: Bicep Infrastructure Deploy
 # Validates, previews and deploys Azure infrastructure
-# Trigger: Automatic on changes to bicep/ files on main branch
+# Trigger: Automatic on changes to bicep/ files on master branch
 # ============================================================
 
 trigger:
   branches:
     include:
-      - main
+      - master
   paths:
     include:
       - bicep/*
       - scripts/bootstrap-jumphost.sh
       - scripts/bootstrap-windows-winrm.ps1
 
-# Also run on Pull Requests targeting main (validation only)
+# Also run on Pull Requests targeting master (validation only)
 pr:
   branches:
     include:
-      - main
+      - master
   paths:
     include:
       - bicep/*
@@ -100,7 +100,7 @@ stages:
   # ============================================================
   # STAGE 2: Deploy — Apply changes to Azure
   # Requires manual approval via Azure DevOps Environment
-  # Only runs on main branch (not on Pull Requests)
+  # Only runs on master branch (not on Pull Requests)
   # ============================================================
   - stage: Deploy
     displayName: 'Deploy Infrastructure'

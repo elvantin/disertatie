@@ -17,6 +17,11 @@
 !*secret*.bicep
 !*secret*.example
 
+# ----- SSH Keys -----
+ssh-keypair/
+id_rsa*
+*.ppk
+
 # ----- Azure -----
 .azure/
 azureProfile.json

@@ -286,52 +286,105 @@ Proiectul include 3 pipeline-uri Azure DevOps YAML care automatizeaza fluxul de 
 | Pipeline | Fisier | Trigger | Scop |
 |----------|--------|---------|------|
 | Packer Build | `pipelines/packer-build.yml` | Manual | Construieste imagini golden si le publica in gallery |
-| Bicep Deploy | `pipelines/bicep-deploy.yml` | Auto (push pe `main`) | Valideaza si deployeaza infrastructura Azure |
+| Bicep Deploy | `pipelines/bicep-deploy.yml` | Auto (push pe `master`) | Valideaza si deployeaza infrastructura Azure |
 | Ansible Configure | `pipelines/ansible-configure.yml` | Manual | Ruleaza playbook-uri Ansible pe jumphost |
 
-### Cerinte Azure DevOps
+### Configurare Azure DevOps (pas cu pas)
 
-Inainte de a folosi pipeline-urile, configureaza in Azure DevOps:
+#### Pas 1: Creare organizatie si proiect
 
-1. **Service Connection** (`azure-service-connection`)
-   - Project Settings → Service connections → New → Azure Resource Manager
-   - Tip: Service Principal (automatic sau manual)
-   - Scope: Subscription level
+1. Mergi la [dev.azure.com](https://dev.azure.com)
+2. Creeaza organizatie (daca nu ai una)
+3. Creeaza proiect nou: `SC-MEDIA-SRL` (visibility: Private, version control: Git)
 
-2. **Variable Group** (`mediasrl-secrets`)
-   - Pipelines → Library → + Variable group
-   - Variabile: `adminPassword`, `sshPublicKey`
-   - Bifezi "lock" pe fiecare variabila secreta
+#### Pas 2: Import repository
 
-3. **Environment** (`production`)
-   - Pipelines → Environments → New → "production"
-   - Adauga Approval gate: click pe environment → Approvals and checks → +
-   - Adauga-te pe tine ca approver
+Push codul local in Azure Repos:
+```powershell
+git remote add azure https://dev.azure.com/{ORGANIZATIE}/SC-MEDIA-SRL/_git/SC-MEDIA-SRL
+git push -u azure --all
+```
 
-4. **Secure File** (`jumphost-ssh-key`)
-   - Pipelines → Library → Secure files → + Secure file
-   - Incarca cheia SSH privata pentru jumphost
+#### Pas 3: Service Connection (`azure-service-connection`)
+
+Project Settings → Service connections → New service connection → Azure Resource Manager:
+
+| Camp | Valoare |
+|------|---------|
+| Identity type | App registration (automatic) |
+| Credential | Workload identity federation (automatic) |
+| Scope level | Subscription |
+| Subscription | Selecteaza subscriptia (`7a0255bf-...`) |
+| Resource group | **Lasa GOL** (acces la nivel de subscriptie) |
+| Service connection name | `azure-service-connection` |
+| Description | Service connection for SC MEDIA SRL infrastructure |
+| Grant access to all pipelines | **Bifat** |
+
+#### Pas 4: Variable Group (`mediasrl-secrets`)
+
+Pipelines → Library → + Variable group:
+
+| Variabila | Valoare | Secret (lock)? |
+|-----------|---------|----------------|
+| `adminPassword` | Parola admin VMs | Da |
+| `sshPublicKey` | Cheia SSH publica | Da |
+
+Pipeline permissions → Open access (permite tuturor pipeline-urilor).
+
+#### Pas 5: Environment (`production`) cu Approval Gate
+
+Pipelines → Environments → New environment:
+
+| Camp | Valoare |
+|------|---------|
+| Name | `production` |
+| Resource | None |
+
+Dupa creare: ⋮ → Approvals and checks → + Approvals:
+- Approvers: adauga-te pe tine
+- Timeout: 1440 min (24h)
+- Instructions: `Review What-If output before approving deployment.`
+
+#### Pas 6: Secure File (`jumphost-ssh-key`)
+
+Pipelines → Library → Secure files → + Secure file:
+- Upload: cheia SSH **privata** (fisierul fara `.pub`)
+- Name: `jumphost-ssh-key`
+- Pipeline permissions → Authorize for all pipelines
+
+#### Pas 7: Creare pipeline-uri (x3)
+
+Pipelines → New pipeline → Azure Repos Git → repo → **Existing Azure Pipelines YAML file**:
+
+| Pipeline | Path YAML | Nume recomandat |
+|----------|-----------|-----------------|
+| Packer | `/pipelines/packer-build.yml` | `Packer - Build Images` |
+| Bicep | `/pipelines/bicep-deploy.yml` | `Bicep - Deploy Infrastructure` |
+| Ansible | `/pipelines/ansible-configure.yml` | `Ansible - Configure VMs` |
+
+#### Pas 8: Branch Policies pe `master`
+
+Project Settings → Repos → Repositories → repo → Policies → branch `master`:
+
+| Setare | Valoare |
+|--------|---------|
+| Require minimum reviewers | On, 1 reviewer |
+| Allow requestors to approve own changes | Bifat |
+| Check for comment resolution | Required |
+| Build validation | + pipeline `Bicep - Deploy Infrastructure`, Trigger: Automatic |
 
 ### Utilizare pipeline-uri
 
 ```bash
-# Packer: se ruleaza manual din Azure DevOps UI
-# Pipelines → packer-build → Run pipeline → selecteaza imaginile dorite
+# Packer: manual — Pipelines → Packer - Build Images → Run pipeline
+#   Selecteaza imaginile dorite (buildUbuntuBase, buildJumphost, buildWindows)
 
-# Bicep: ruleaza automat la push pe main cu modificari in bicep/
-# Stage 1 (Validate) = automat, Stage 2 (Deploy) = necesita aprobare
+# Bicep: automat la push pe master cu modificari in bicep/
+#   Stage 1 (Validate) = automat, Stage 2 (Deploy) = necesita aprobare manuala
 
-# Ansible: se ruleaza manual dupa deploy Bicep
-# Pipelines → ansible-configure → Run pipeline → alege playbook si tags
+# Ansible: manual — Pipelines → Ansible - Configure VMs → Run pipeline
+#   Alege playbook (site.yml, deploy-services.yml, etc.) si tags optional
 ```
-
-### Branch Policies (recomandat)
-
-Pe branch-ul `main`:
-- Project Settings → Repos → Policies → `main`
-- **Require PR** (minim 1 reviewer)
-- **Build validation** (ruleaza bicep-deploy validate la fiecare PR)
-- **Comment resolution** (toate comentariile trebuie rezolvate)
 
 ---
 
