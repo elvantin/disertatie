@@ -174,7 +174,7 @@ var tags = {
 var jumphostBootstrapScript = loadTextContent('../scripts/bootstrap-jumphost.sh')
 var windowsWinrmBootstrapScript = loadTextContent('../scripts/bootstrap-windows-winrm.ps1')
 
-var galleryResourceGroupName = resourceGroupName
+var galleryResourceGroupName = 'rg-mediasrl-packer-${location}'
 var galleryImageIdUbuntu = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${ubuntuImageDefinition}/versions/${imageVersion}'
 var galleryImageIdJumphost = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${jumphostImageDefinition}/versions/${imageVersion}'
 var galleryImageIdWindows = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${windowsImageDefinition}/versions/${imageVersion}'

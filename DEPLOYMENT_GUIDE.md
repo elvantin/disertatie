@@ -1,248 +1,281 @@
-# 🚀 Deployment Guide - Infrastructure SC MEDIA SRL
+# Deployment Guide - Infrastructura SC MEDIA SRL
 
-## ✅ **Ce s-a modificat (Opțiunea B activată):**
+## Prezentare generala
 
-### **Arhitectură Nouă:**
+Infrastructura SC MEDIA SRL este deployata in Azure folosind 3 instrumente, in aceasta ordine:
 
-| Înainte | După |
-|---------|------|
-| vm-jmp-01: **Windows** Jumphost | vm-jmp-01: **Rocky Linux 9** + GNOME + xRDP + Ansible |
-| vm-db-01: **Windows** Database (MySQL) | vm-fs-01: **Windows** File Server (SMB shares) |
-| vm-cms-01: CMS (WordPress) | vm-cms-01: CMS (WordPress + **MySQL local**) |
-
-### **Avantaje noua arhitectură:**
-✅ **Ansible nativ** pe jumphost Linux (control node)
-✅ **RDP access** prin xfreerdp către Windows File Server
-✅ **SSH key distribution** automată între jumphost și Linux VMs
-✅ **File Server** pentru shared folders (Marketing, IT, Backups)
-✅ **Cost redus** (Rocky Linux free vs Windows Server license)
+1. **Packer** - Construieste imaginile golden (Ubuntu base, Ubuntu jumphost, Windows Server)
+2. **Bicep** - Deployeaza infrastructura Azure (VNet, NSG, VMs, Key Vault, etc.)
+3. **Ansible** - Configureaza VM-urile (roluri: nginx, wordpress, mysql, fileserver, hardening, etc.)
 
 ---
 
-## 📋 **Fișiere Modificate:**
+## Arhitectura
 
-### **Bicep (Infrastructure):**
-- ✏️ `bicep/main.bicep` - vm-jmp-01: Windows → Linux, vm-db-01 → vm-fs-01
-- ✏️ `bicep/parameters/prod.bicepparam` - actualizat VM configs
+| VM | OS | Rol | Subnet | IP |
+|----|-----|-----|--------|----|
+| vm-jmp-01 | Ubuntu 22.04 (jumphost image) | Jumphost: XFCE + xRDP + Ansible control node | snet-mgmt | Public (persistent) |
+| vm-web-01 | Ubuntu 22.04 (base image) | Nginx reverse proxy + SSL/Let's Encrypt | snet-prod | Public (persistent) |
+| vm-app-01 | Ubuntu 22.04 (base image) | Application server (Nginx port 8080) | snet-prod | Privat |
+| vm-cms-01 | Ubuntu 22.04 (base image) | WordPress + MySQL local + Postfix | snet-prod | Privat |
+| vm-db-01 | Windows Server 2022 | SQL Server (rezervat) | snet-prod | Privat |
+| vm-fs-01 | Windows Server 2022 | File Server (SMB shares) | snet-prod | Privat |
 
-### **Ansible (Configuration):**
-- ✏️ `ansible/inventory/hosts.ini` - actualizat cu noua arhitectură
-- ✏️ `ansible/playbooks/site.yml` - orchestrare pentru jumphost + fileserver
-- ➕ `ansible/playbooks/setup-ssh-keys.yml` - distribuire SSH keys (NOU)
-- ➕ `ansible/roles/jumphost/` - Rocky Linux GUI + xRDP + Ansible tools (NOU)
-- ➕ `ansible/roles/fileserver/` - Windows File Server cu SMB shares (NOU)
-- ✏️ `ansible/roles/wordpress/` - acum instalează MySQL local (nu remote)
-- ✏️ `README.md` - documentație actualizată
-
----
-
-## 🔧 **Deployment Steps:**
-
-### **Pas 1: Cleanup VMs Existente (IMPORTANT!)**
-
-Înainte de re-deployment, **șterge VM-urile existente** (sunt cu arhitectură veche):
-
-```powershell
-# Șterge toate VM-urile existente
-az vm delete --resource-group rg-mediasrl-productie-swedencentral --ids $(az vm list -g rg-mediasrl-productie-swedencentral --query "[].id" -o tsv) --yes --no-wait
-
-# Șterge NICs
-az network nic list -g rg-mediasrl-productie-swedencentral --query "[].name" -o tsv | ForEach-Object { az network nic delete -g rg-mediasrl-productie-swedencentral -n $_ --no-wait }
-
-# Șterge disks
-az disk list -g rg-mediasrl-productie-swedencentral --query "[].name" -o tsv | ForEach-Object { az disk delete -g rg-mediasrl-productie-swedencentral -n $_ --yes --no-wait }
-
-
-**SAU mai rapid:**
-```powershell
-az group delete --name rg-mediasrl-productie-swedencentral --yes --no-wait
+```
+DevOps Engineer (local)
+  | (RDP:3389)
+  v
+vm-jmp-01 (Ubuntu + XFCE + Ansible)
+  |-- (SSH) --> vm-web-01, vm-app-01, vm-cms-01
+  |-- (WinRM) --> vm-db-01, vm-fs-01
+  v
+vm-web-01 (nginx reverse proxy)
+  |-- proxy_pass --> vm-cms-01:80 (WordPress)
+  |-- proxy_pass --> vm-app-01:8080 (API)
 ```
 
 ---
 
-### **Pas 2: Deploy Infrastructure (Bicep)**
+## Cerinte preliminare
 
-```powershell
-cd bicep
+Pe masina locala (Windows):
 
-# Deploy complet (cu noua arhitectură)
-az deployment sub create `
-  --location swedencentral `
-  --template-file main.bicep `
-  --parameters parameters/prod.bicepparam `
-  --name deploy-mediasrl-final
-```
-
-**Durată estimată:** 8-10 minute
-
-**Output așteptat:**
-- 1 Resource Group
-- 1 VNet + 3 Subnets + 3 NSGs
-- 1 Key Vault
-- 1 Log Analytics
-- 6 Azure Policies
-- **5 VMs:**
-  - **vm-jmp-01** (Ubuntu22.04) - cu IP public
-  - **vm-fs-01** (Windows Server 2022)
-  - **vm-web-01, vm-app-01, vm-cms-01** (Ubuntu 22.04)
+- **Azure CLI** - `winget install Microsoft.AzureCLI`
+- **Packer** - `winget install HashiCorp.Packer`
+- **Bicep** - inclus in Azure CLI (`az bicep install`)
+- Autentificare: `az login`
 
 ---
 
-### **Pas 3: Obține IP Public al Jumphost**
+## Pas 1: Construire imagini Packer
+
+Imaginile golden trebuie construite INAINTE de a deploya infrastructura Bicep. Scriptul automatizat se ocupa de tot: creeaza Resource Group-ul dedicat, Azure Compute Gallery, Image Definitions si ruleaza Packer build.
 
 ```powershell
-$jumphostIP = az vm show -d -g rg-mediasrl-productie-swedencentral -n vm-jmp-01 --query publicIps -o tsv
-Write-Host "Jumphost Public IP: $jumphostIP"
+# Prima rulare (creeaza gallery + image definitions + construieste imaginile)
+.\scripts\build-packer-images.ps1
+
+# Rulari ulterioare (gallery exista deja, doar rebuild imagini)
+.\scripts\build-packer-images.ps1 -SkipGallery
+
+# Fara confirmare interactiva (construieste tot)
+.\scripts\build-packer-images.ps1 -NoConfirm
+
+# Doar o imagine specifica
+.\scripts\build-packer-images.ps1 -SkipGallery  # apoi selectezi d/n per imagine
+```
+
+Scriptul:
+- Verifica Azure CLI si Packer
+- Creeaza `rg-mediasrl-packer-swedencentral` (daca nu exista)
+- Creeaza gallery `gal_mediasrl` cu 3 image definitions
+- Detecteaza automat versiunea urmatoare per imagine (auto-increment patch)
+- Intreaba interactiv care imagini doresti sa le construiesti
+- Salveaza output-ul complet in `logs/packer-*.log`
+
+**Durata estimata:** 10-30 minute per imagine
+
+**Imagini create:**
+
+| Image Definition | Continut |
+|------------------|----------|
+| imgdef-ubuntu2204 | Ubuntu 22.04 base: update, pachete comune, SSH hardening, timezone |
+| imgdef-ubuntu2204-jumphost | Ubuntu 22.04 jumphost: XFCE, xRDP, Ansible, Azure CLI, VS Code, Firefox |
+| imgdef-winserver2022 | Windows Server 2022: WinRM configurat pentru Ansible, firewall port 5985 |
+
+---
+
+## Pas 2: Deploy infrastructura Bicep
+
+Dupa ce imaginile Packer sunt publicate in gallery:
+
+### 2a. Configureaza parametrii
+
+Editeaza `bicep/parameters/prod.bicepparam`:
+- Seteaza `useMarketplaceImages = false` (foloseste imagini din gallery)
+- Verifica `imageVersion` sa corespunda cu versiunea publicata
+- Verifica `adminIpAddress` (IP-ul tau pentru RDP/SSH access)
+- Verifica `adminPassword` si `sshPublicKey`
+
+### 2b. Deploy
+
+```powershell
+az deployment sub create --location swedencentral --template-file bicep/main.bicep --parameters bicep/parameters/prod.bicepparam --name deploy-mediasrl
+```
+
+**Durata estimata:** 8-12 minute
+
+**Ce se creeaza:**
+- 2 Resource Groups: `rg-mediasrl-productie-swedencentral` (principal) + `rg-mediasrl-persistent` (IP-uri publice)
+- 1 VNet (10.10.0.0/20) cu 3 subnets (prod, dev, mgmt) + 3 NSG-uri
+- 1 Key Vault + 1 Log Analytics Workspace
+- 6 Azure Policies (la nivel de subscription)
+- 6 VM-uri (din imagini gallery sau marketplace)
+- 2 IP-uri publice persistente (jumphost + webserver)
+
+**Nota:** Cand `useMarketplaceImages = true`, VM-urile sunt create din marketplace si se ruleaza Custom Script Extension la boot (bootstrap jumphost + WinRM). Cand `false`, imaginile gallery au deja bootstrap-ul baked in.
+
+### 2c. Verificare
+
+```powershell
+# Lista VM-urilor
+az vm list -g rg-mediasrl-productie-swedencentral -o table --query "[].{Name:name, State:powerState}"
+
+# IP-urile publice persistente
+az network public-ip list -g rg-mediasrl-persistent -o table --query "[].{Name:name, IP:ipAddress}"
 ```
 
 ---
 
-### **Pas 4: Conectare RDP la Jumphost**
+## Pas 3: Conectare la Jumphost
 
-**Windows:**
+### Obtine IP-ul public
+
 ```powershell
-mstsc /v:$jumphostIP
+az network public-ip show -g rg-mediasrl-persistent -n pip-vm-jmp-01 --query ipAddress -o tsv
 ```
 
-**Credențiale:**
+### Conectare RDP
+
+```powershell
+mstsc /v:<IP_JUMPHOST>
+```
+
+Credentiale:
 - Username: `azureadmin`
-- Password: `Str0ng_P@ssw0rd_2026!` (din prod.bicepparam)
+- Password: cel din `prod.bicepparam`
 
 ---
 
-### **Pas 5: Din Jumphost - Run Ansible**
+## Pas 4: Configurare cu Ansible (din Jumphost)
 
-După conectare RDP la vm-jmp-01 (Rocky Linux cu GNOME desktop):
+Dupa conectare RDP la vm-jmp-01 (Ubuntu cu desktop XFCE):
 
 ```bash
-# 1. Test connectivity
-ansible all -m ping
+# Navigheaza la workspace
+cd ~/ansible
 
-# 2. Setup SSH keys (distribuie cheia jumphost către Linux VMs)
-ansible-playbook playbooks/setup-ssh-keys.yml
+# Verifica conectivitate
+ansible all -m ping                    # Linux VMs (SSH)
+ansible windows -m win_ping            # Windows VMs (WinRM)
 
-# 3. Deploy complet (toate rolurile)
+# Deploy complet (toate rolurile)
 ansible-playbook playbooks/site.yml
 
-# SAU deploy selectiv:
-ansible-playbook playbooks/site.yml --tags jumphost,fileserver
-ansible-playbook playbooks/site.yml --tags webserver,cms
-ansible-playbook playbooks/site.yml --tags hardening
+# Deploy selectiv
+ansible-playbook playbooks/site.yml --tags common          # pachete de baza
+ansible-playbook playbooks/site.yml --tags webserver        # nginx pe vm-web-01
+ansible-playbook playbooks/site.yml --tags cms              # WordPress pe vm-cms-01
+ansible-playbook playbooks/site.yml --tags appserver        # nginx:8080 pe vm-app-01
+ansible-playbook playbooks/site.yml --tags fileserver       # SMB shares pe vm-fs-01
+ansible-playbook playbooks/site.yml --tags hardening        # CIS hardening
+```
+
+**Roluri Ansible disponibile:**
+
+| Rol | Target | Descriere |
+|-----|--------|-----------|
+| common | Toate Linux | Pachete de baza, NTP, hardening SSH |
+| jumphost | vm-jmp-01 | XFCE, xRDP, tools |
+| nginx | vm-web-01 | Reverse proxy, SSL/Let's Encrypt |
+| appserver | vm-app-01 | Nginx pe port 8080 |
+| wordpress | vm-cms-01 | WordPress + PHP-FPM + config |
+| mysql | vm-cms-01 | MySQL Server + databases |
+| postfix | vm-cms-01 | Mail server local |
+| sqlserver | vm-db-01 | SQL Server (Windows) |
+| fileserver | vm-fs-01 | Windows File Server + SMB shares |
+| hardening | Toate | CIS Benchmark hardening |
+
+---
+
+## Resurse create
+
+```
+Subscription (7a0255bf-...)
+|
++-- rg-mediasrl-persistent/
+|   +-- pip-vm-jmp-01 (IP public static jumphost)
+|   +-- pip-vm-web-01 (IP public static webserver, DNS: mediasrl)
+|
++-- rg-mediasrl-packer-swedencentral/
+|   +-- gal_mediasrl (Azure Compute Gallery)
+|       +-- imgdef-ubuntu2204 (v1.0.x)
+|       +-- imgdef-ubuntu2204-jumphost (v1.0.x)
+|       +-- imgdef-winserver2022 (v1.0.x)
+|
++-- rg-mediasrl-productie-swedencentral/
+|   +-- vnet-mediasrl-productie (10.10.0.0/20)
+|   |   +-- snet-prod (10.10.10.0/24) + nsg-prod
+|   |   +-- snet-dev (10.10.11.0/24) + nsg-dev
+|   |   +-- snet-mgmt (10.10.12.0/24) + nsg-mgmt
+|   +-- kv-mediasrl-productie (Key Vault)
+|   +-- log-mediasrl-productie (Log Analytics)
+|   +-- vm-jmp-01 (Ubuntu Jumphost)
+|   +-- vm-web-01 (Ubuntu Nginx)
+|   +-- vm-app-01 (Ubuntu App)
+|   +-- vm-cms-01 (Ubuntu WordPress)
+|   +-- vm-db-01 (Windows SQL)
+|   +-- vm-fs-01 (Windows File Server)
+|
++-- Azure Policies (subscription scope)
+    +-- Allowed Locations (swedencentral, westeurope, northeurope)
+    +-- Required Tags (environment, project, managed-by)
 ```
 
 ---
 
-## 🔍 **Verificare Deployment:**
+## Teardown / Recreare environment
 
-### **1. Verifică VM-urile create:**
 ```powershell
-az vm list -g rg-mediasrl-productie-swedencentral --query "[].{Name:name, OS:storageProfile.osDisk.osType, State:powerState}" -o table
-```
+# Sterge DOAR environment-ul principal (IP-urile persistente supravietuiesc)
+az group delete --name rg-mediasrl-productie-swedencentral --yes
 
-### **2. Verifică File Server (din jumphost):**
-```bash
-# RDP către Windows File Server
-xfreerdp /v:vm-fs-01 /u:azureadmin /cert:ignore
+# Imaginile Packer raman in gallery (rg-mediasrl-packer-swedencentral)
+# IP-urile publice raman in rg-mediasrl-persistent
 
-# Sau test SMB shares
-smbclient -L //vm-fs-01 -U azureadmin
-```
-
-### **3. Verifică Web Server:**
-```bash
-curl http://vm-web-01
-```
-
-### **4. Verifică CMS (WordPress + MySQL):**
-```bash
-curl http://vm-cms-01
-ssh azureadmin@vm-cms-01 "sudo systemctl status mysqld"
+# Re-deploy:
+az deployment sub create --location swedencentral --template-file bicep/main.bicep --parameters bicep/parameters/prod.bicepparam
 ```
 
 ---
 
-## 📊 **Resurse Create:**
+## Troubleshooting
 
-```
-Subscription
-├── rg-mediasrl-productie-swedencentral/
-│   ├── vnet-mediasrl-productie (10.10.0.0/20)
-│   ├── nsg-mgmt, nsg-prod, nsg-dev
-│   ├── kv-mediasrl-productie (Key Vault)
-│   ├── log-mediasrl-productie (Log Analytics)
-│   ├── vm-jmp-01 (Rocky Linux + xRDP) - PUBLIC IP
-│   ├── vm-fs-01 (Windows File Server)
-│   ├── vm-web-01 (nginx)
-│   ├── vm-app-01 (app server)
-│   └── vm-cms-01 (WordPress + MySQL + Postfix)
-└── Azure Policies (6 policies la nivel subscription)
-```
+### Ansible: conectivitate SSH
 
----
-
-## 🎯 **Access Pattern:**
-
-```
-DevOps Engineer Laptop
-  ↓ (RDP:3389)
-vm-jmp-01 (Rocky Linux GUI + Ansible)
-  ├─ (SSH) → vm-web-01, vm-app-01, vm-cms-01
-  └─ (RDP via xfreerdp) → vm-fs-01 (Windows File Server)
-```
-
----
-
-## 🔐 **Security Checklist:**
-
-- ✅ NSG rules: deny-all implicit
-- ✅ SSH key-based authentication (no passwords)
-- ✅ Azure Policy enforcement (tags, locations, VM SKUs)
-- ✅ CIS Benchmark hardening (auditd, kernel parameters, password policies)
-- ✅ SMBv1 disabled on File Server
-- ✅ Firewall enabled (firewalld Linux, Windows Firewall)
-- ✅ SELinux enforcing (Linux VMs)
-
----
-
-## 🐛 **Troubleshooting:**
-
-### **Ansible connection issues:**
 ```bash
-# Test SSH connectivity
-ssh -i ~/.ssh/id_rsa azureadmin@vm-web-01
+# Test manual SSH
+ssh azureadmin@vm-web-01
 
-# Test WinRM (File Server)
+# Verifica inventarul dinamic Azure
+ansible-inventory -i inventory/azure_rm.yml --list
+```
+
+### Ansible: conectivitate WinRM
+
+```bash
+# Test WinRM
 ansible windows -m win_ping
+
+# Debug manual
+python3 -c "import winrm; s=winrm.Session('vm-fs-01',auth=('azureadmin','PASSWORD')); print(s.run_cmd('hostname'))"
 ```
 
-### **RDP connection issues:**
+### xRDP pe jumphost
+
 ```bash
-# Verifică xRDP status pe jumphost
 sudo systemctl status xrdp
-
-# Verifică firewall
-sudo firewall-cmd --list-all
+sudo ufw status
 ```
 
-### **File Server shares not accessible:**
+### Packer build esueaza
+
+Verifica logurile din directorul `logs/`:
 ```powershell
-# Pe vm-fs-01
-Get-SmbShare
-Get-SmbServerConfiguration
+Get-Content logs/packer-ubuntu-base-*.log -Tail 50
 ```
 
 ---
 
-## 📝 **Next Steps:**
-
-1. ✅ Test complete deployment
-2. ⏳ Build Packer golden images (Rocky 10 + Windows hardened)
-3. ⏳ Switch to gallery images (set `useMarketplaceImages = false`)
-4. ⏳ Implement Azure DevOps CI/CD pipelines
-5. ⏳ Add SSL certificates (Let's Encrypt sau internal CA)
-
----
-
-**Deployment Guide creat de:** SC IT SECURITY SRL
-**Data:** 2026-02-05
-**Status:** ✅ Ready for testing
+SC MEDIA SRL - Deployment Guide
+Ultima actualizare: 2026-02-15

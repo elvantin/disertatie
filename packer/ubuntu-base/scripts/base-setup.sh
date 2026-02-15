@@ -24,6 +24,8 @@ apt upgrade -y -qq
 # =============================================================================
 # STEP 2: Install Common Packages
 # =============================================================================
+# NOTE: Firewall configuration (ufw) is handled by Ansible roles per VM.
+# The base image keeps ufw installed but unconfigured.
 
 echo "[2/5] Installing common packages..."
 apt install -y \

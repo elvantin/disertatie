@@ -72,7 +72,7 @@ variable "image_sku" {
 
 variable "gallery_resource_group" {
   type        = string
-  default     = "rg-mediasrl-prod-swedencentral"
+  default     = "rg-mediasrl-packer-swedencentral"
   description = "Resource group containing the Azure Compute Gallery"
 }
 

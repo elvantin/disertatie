@@ -28,7 +28,7 @@ param adminObjectId = '9f286d78-d412-436b-9f1d-cdd24b456a0c' // TODO: az ad sign
 // ----- Compute Gallery -----
 
 // TEMPORARY: Use marketplace images until Packer images are built
-param useMarketplaceImages = true
+param useMarketplaceImages = false
 
 param computeGalleryName = 'gal_mediasrl'
 param ubuntuImageDefinition = 'imgdef-ubuntu2204'
