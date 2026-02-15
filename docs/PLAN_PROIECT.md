@@ -267,15 +267,18 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
 
 **Rezultat:** Mediu local complet funcțional pentru IaC.
 
-### Etapa 2 — Crearea imaginilor personalizate cu Packer 🔶
+### Etapa 2 — Crearea imaginilor personalizate cu Packer ✅
 
-- Definirea template-urilor Packer (format HCL):
-  - **Ubuntu 22.04 LTS:** update OS, hardening de bază, instalare pachete comune
-  - **Windows Server 2022:** update OS, hardening de bază, activare WinRM
-- Publicarea imaginilor în **Azure Compute Gallery**
-- **Notă:** În faza actuală se utilizează imagini marketplace (`useMarketplaceImages = true`). Imaginile Packer vor fi activate ulterior.
+- Definirea template-urilor Packer (format HCL) — 3 imagini:
+  - **Ubuntu 22.04 LTS Base** (`imgdef-ubuntu2204`): update OS, pachete comune, SSH hardening, timezone
+  - **Ubuntu 22.04 LTS Jumphost** (`imgdef-ubuntu2204-jumphost`): XFCE, xRDP, Ansible, Azure CLI, VS Code, Firefox, Remmina
+  - **Windows Server 2022** (`imgdef-winserver2022`): WinRM configurat pentru Ansible, firewall port 5985
+- Resource Group dedicat: `rg-mediasrl-packer-swedencentral`
+- Azure Compute Gallery: `gal_mediasrl` cu 3 image definitions
+- Script automatizat de build: `scripts/build-packer-images.ps1` (auto-increment versiune, confirmare interactivă, logging)
+- Imaginile sunt active în producție (`useMarketplaceImages = false` în `prod.bicepparam`)
 
-**Rezultat:** Imagini standardizate, reutilizabile, securizate.
+**Rezultat:** Imagini standardizate, reutilizabile, securizate, publicate în Azure Compute Gallery.
 
 ### Etapa 3 — Definirea infrastructurii Azure cu Bicep ✅
 
@@ -324,16 +327,28 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
 
 **Rezultat:** Sisteme configurate uniform și administrabile automat.
 
-### Etapa 5 — Integrarea completă în Azure DevOps ⏳
+### Etapa 5 — Integrarea completă în Azure DevOps ✅
 
-- Creare organizație și proiect Azure DevOps
-- Creare repository Git cu structura de directoare definită
-- Configurare pipeline-uri YAML:
-  - **Pipeline Packer:** build imagini → push la Gallery
-  - **Pipeline Bicep:** validate → what-if → deploy
-  - **Pipeline Ansible:** configurare post-deploy
-- Configurare branch policies (code review, build validation)
-- Configurare Service Connection pentru Azure
+- **3 pipeline-uri YAML implementate:**
+  - **`pipelines/packer-build.yml`** — Build imagini Packer (manual, cu selecție per imagine)
+    - 5 stage-uri: Setup Gallery → Build Ubuntu Base → Build Jumphost → Build Windows → Verify
+    - Parametri runtime: `buildUbuntuBase`, `buildJumphost`, `buildWindows` (true/false)
+    - Auto-increment versiune, timeout 60 min per imagine
+  - **`pipelines/bicep-deploy.yml`** — Validate + What-If + Deploy infrastructură (automat pe push la `main`)
+    - Stage 1 (Validate): `az bicep build` → `az deployment sub validate` → `az deployment sub what-if`
+    - Stage 2 (Deploy): `az deployment sub create` cu aprobare manuală (Environment `production`)
+    - Trigger automat pe modificări în `bicep/` și `scripts/bootstrap-*`
+    - Rulează și pe Pull Requests (doar validare, fără deploy)
+  - **`pipelines/ansible-configure.yml`** — Configurare VM-uri via Ansible pe jumphost (manual)
+    - Copiază fișierele Ansible pe jumphost via SCP/rsync
+    - Execută playbook-uri via SSH remote command
+    - Parametri: alegere playbook, tags Ansible, nivel verbozitate
+- **Template reutilizabil:** `pipelines/templates/az-login.yml` (login Azure cu Service Connection)
+- **Cerințe Azure DevOps:**
+  - Service Connection `azure-service-connection` (Azure Resource Manager)
+  - Variable Group `mediasrl-secrets` (adminPassword, sshPublicKey)
+  - Environment `production` cu approval gate
+  - Secure File `jumphost-ssh-key` (cheie SSH privată)
 
 **Rezultat:** Flux DevOps complet automatizat (CI/CD).
 
@@ -353,18 +368,21 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
 ```
 IT/
 ├── packer/
-│   ├── ubuntu-2204/
-│   │   ├── ubuntu.pkr.hcl              # Template Packer Ubuntu 22.04 LTS
+│   ├── ubuntu-base/
+│   │   ├── ubuntu-base.pkr.hcl         # Template Packer Ubuntu 22.04 Base
+│   │   ├── variables.pkr.hcl           # Variabile (gallery RG, image def, etc.)
+│   │   └── scripts/
+│   │       └── base-setup.sh           # Update, pachete comune, SSH hardening
+│   ├── ubuntu-jumphost/
+│   │   ├── ubuntu-jumphost.pkr.hcl     # Template Packer Ubuntu 22.04 Jumphost
 │   │   ├── variables.pkr.hcl           # Variabile
 │   │   └── scripts/
-│   │       ├── base-setup.sh           # Update, pachete de bază
-│   │       └── hardening.sh            # CIS hardening
+│   │       └── provision-jumphost.sh   # XFCE, xRDP, Ansible, Azure CLI, etc.
 │   └── windows-server/
 │       ├── windows-server.pkr.hcl      # Template Packer Windows Server 2022
 │       ├── variables.pkr.hcl           # Variabile
 │       └── scripts/
-│           ├── base-setup.ps1          # Update, features
-│           └── hardening.ps1           # CIS hardening
+│           └── configure-winrm.ps1     # WinRM pentru Ansible
 │
 ├── bicep/
 │   ├── main.bicep                      # Orchestrator principal
@@ -411,9 +429,19 @@ IT/
 │   └── files/
 │       └── website/                    # Fișiere site SC MEDIA SRL
 │
+├── pipelines/
+│   ├── packer-build.yml               # Pipeline: build imagini Packer (manual)
+│   ├── bicep-deploy.yml               # Pipeline: validate + deploy Bicep (auto pe main)
+│   ├── ansible-configure.yml          # Pipeline: configurare Ansible (manual)
+│   └── templates/
+│       └── az-login.yml               # Template reutilizabil: login Azure
+│
 ├── scripts/
-│   ├── bootstrap-jumphost.sh           # Bootstrap jumphost (CSE la crearea VM)
-│   └── bootstrap-windows-winrm.ps1     # Bootstrap WinRM (CSE la crearea VM)
+│   ├── bootstrap-jumphost.sh           # Bootstrap jumphost (CSE, fallback marketplace)
+│   ├── bootstrap-windows-winrm.ps1     # Bootstrap WinRM (CSE, fallback marketplace)
+│   └── build-packer-images.ps1         # Script automatizat build + publish imagini Packer
+│
+├── logs/                               # Output Packer builds (generat automat)
 │
 ├── docs/
 │   ├── PLAN_PROIECT.md                 # Planul complet al proiectului
@@ -533,6 +561,7 @@ IT/
 | Tip resursă | Pattern | Exemplu |
 |------------|---------|---------|
 | Resource Group | `rg-{proiect}-{mediu}-{regiune}` | `rg-mediasrl-productie-swedencentral` |
+| Packer RG | `rg-{proiect}-packer-{regiune}` | `rg-mediasrl-packer-swedencentral` |
 | Persistent RG | `rg-{proiect}-persistent` | `rg-mediasrl-persistent` |
 | Virtual Network | `vnet-{proiect}-{mediu}` | `vnet-mediasrl-productie` |
 | Subnet | `snet-{rol}` | `snet-prod`, `snet-dev`, `snet-mgmt` |

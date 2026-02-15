@@ -277,5 +277,63 @@ Get-Content logs/packer-ubuntu-base-*.log -Tail 50
 
 ---
 
+## Azure DevOps — Pipeline-uri CI/CD
+
+### Prezentare generala
+
+Proiectul include 3 pipeline-uri Azure DevOps YAML care automatizeaza fluxul de deployment:
+
+| Pipeline | Fisier | Trigger | Scop |
+|----------|--------|---------|------|
+| Packer Build | `pipelines/packer-build.yml` | Manual | Construieste imagini golden si le publica in gallery |
+| Bicep Deploy | `pipelines/bicep-deploy.yml` | Auto (push pe `main`) | Valideaza si deployeaza infrastructura Azure |
+| Ansible Configure | `pipelines/ansible-configure.yml` | Manual | Ruleaza playbook-uri Ansible pe jumphost |
+
+### Cerinte Azure DevOps
+
+Inainte de a folosi pipeline-urile, configureaza in Azure DevOps:
+
+1. **Service Connection** (`azure-service-connection`)
+   - Project Settings → Service connections → New → Azure Resource Manager
+   - Tip: Service Principal (automatic sau manual)
+   - Scope: Subscription level
+
+2. **Variable Group** (`mediasrl-secrets`)
+   - Pipelines → Library → + Variable group
+   - Variabile: `adminPassword`, `sshPublicKey`
+   - Bifezi "lock" pe fiecare variabila secreta
+
+3. **Environment** (`production`)
+   - Pipelines → Environments → New → "production"
+   - Adauga Approval gate: click pe environment → Approvals and checks → +
+   - Adauga-te pe tine ca approver
+
+4. **Secure File** (`jumphost-ssh-key`)
+   - Pipelines → Library → Secure files → + Secure file
+   - Incarca cheia SSH privata pentru jumphost
+
+### Utilizare pipeline-uri
+
+```bash
+# Packer: se ruleaza manual din Azure DevOps UI
+# Pipelines → packer-build → Run pipeline → selecteaza imaginile dorite
+
+# Bicep: ruleaza automat la push pe main cu modificari in bicep/
+# Stage 1 (Validate) = automat, Stage 2 (Deploy) = necesita aprobare
+
+# Ansible: se ruleaza manual dupa deploy Bicep
+# Pipelines → ansible-configure → Run pipeline → alege playbook si tags
+```
+
+### Branch Policies (recomandat)
+
+Pe branch-ul `main`:
+- Project Settings → Repos → Policies → `main`
+- **Require PR** (minim 1 reviewer)
+- **Build validation** (ruleaza bicep-deploy validate la fiecare PR)
+- **Comment resolution** (toate comentariile trebuie rezolvate)
+
+---
+
 SC MEDIA SRL - Deployment Guide
 Ultima actualizare: 2026-02-15

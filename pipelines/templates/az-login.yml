@@ -1,0 +1,29 @@
+# ============================================================
+# Reusable Template: Azure CLI Login
+# Used by all pipelines to authenticate with Azure
+# ============================================================
+# Usage in a pipeline:
+#   steps:
+#     - template: templates/az-login.yml
+#       parameters:
+#         azureSubscription: 'azure-service-connection'
+# ============================================================
+
+parameters:
+  - name: azureSubscription
+    type: string
+    default: 'azure-service-connection'
+
+steps:
+  - task: AzureCLI@2
+    displayName: 'Verify Azure Connection'
+    inputs:
+      azureSubscription: ${{ parameters.azureSubscription }}
+      scriptType: 'bash'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        echo "=== Azure Connection Verified ==="
+        echo "Subscription: $(az account show --query name -o tsv)"
+        echo "Subscription ID: $(az account show --query id -o tsv)"
+        echo "Tenant: $(az account show --query tenantId -o tsv)"
+        echo "================================="

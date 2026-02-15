@@ -1,0 +1,154 @@
+# ============================================================
+# Pipeline: Bicep Infrastructure Deploy
+# Validates, previews and deploys Azure infrastructure
+# Trigger: Automatic on changes to bicep/ files on main branch
+# ============================================================
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - bicep/*
+      - scripts/bootstrap-jumphost.sh
+      - scripts/bootstrap-windows-winrm.ps1
+
+# Also run on Pull Requests targeting main (validation only)
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - bicep/*
+
+variables:
+  - group: mediasrl-secrets
+  - name: location
+    value: 'swedencentral'
+  - name: azureSubscription
+    value: 'azure-service-connection'
+  - name: templateFile
+    value: '$(Build.SourcesDirectory)/bicep/main.bicep'
+  - name: parametersFile
+    value: '$(Build.SourcesDirectory)/bicep/parameters/prod.bicepparam'
+  - name: deploymentName
+    value: 'deploy-mediasrl-$(Build.BuildNumber)'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  # ============================================================
+  # STAGE 1: Validate — Syntax check + Azure validation + What-If
+  # Runs automatically on every push/PR (no approval needed)
+  # ============================================================
+  - stage: Validate
+    displayName: 'Validate Infrastructure'
+    jobs:
+      - job: ValidateBicep
+        displayName: 'Bicep Validate & What-If'
+        steps:
+          - checkout: self
+
+          # Step 1: Compile Bicep to ARM JSON (syntax check)
+          - task: AzureCLI@2
+            displayName: 'Bicep Build (syntax check)'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "=== Compiling Bicep to ARM template ==="
+                az bicep build --file $(templateFile)
+                echo "Bicep compilation successful — no syntax errors."
+
+          # Step 2: Validate against Azure API (checks parameter values, resource availability)
+          - task: AzureCLI@2
+            displayName: 'Azure Deployment Validate'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "=== Validating deployment against Azure ==="
+                az deployment sub validate \
+                  --location $(location) \
+                  --template-file $(templateFile) \
+                  --parameters $(parametersFile) \
+                  --name validate-$(Build.BuildNumber)
+                echo "Validation successful — template and parameters are valid."
+
+          # Step 3: What-If (preview changes without applying)
+          - task: AzureCLI@2
+            displayName: 'What-If Preview (dry run)'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "=== What-If: Preview of changes ==="
+                echo "This shows what WOULD change if deployed (nothing is modified yet)."
+                echo ""
+                az deployment sub what-if \
+                  --location $(location) \
+                  --template-file $(templateFile) \
+                  --parameters $(parametersFile) \
+                  --name whatif-$(Build.BuildNumber)
+
+  # ============================================================
+  # STAGE 2: Deploy — Apply changes to Azure
+  # Requires manual approval via Azure DevOps Environment
+  # Only runs on main branch (not on Pull Requests)
+  # ============================================================
+  - stage: Deploy
+    displayName: 'Deploy Infrastructure'
+    dependsOn: Validate
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+    jobs:
+      - deployment: DeployInfrastructure
+        displayName: 'Deploy to Azure'
+        environment: 'production'  # Requires approval gate configured in Azure DevOps
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                # Deploy infrastructure
+                - task: AzureCLI@2
+                  displayName: 'Deploy Bicep Template'
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      echo "=== Deploying infrastructure to Azure ==="
+                      az deployment sub create \
+                        --location $(location) \
+                        --template-file $(templateFile) \
+                        --parameters $(parametersFile) \
+                        --name $(deploymentName)
+                      echo ""
+                      echo "=== Deployment complete! ==="
+
+                # Verify: List VMs and their status
+                - task: AzureCLI@2
+                  displayName: 'Verify: List VMs'
+                  inputs:
+                    azureSubscription: $(azureSubscription)
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      echo "=== Deployed VMs ==="
+                      az vm list \
+                        -g rg-mediasrl-productie-swedencentral \
+                        -o table \
+                        --query "[].{Name:name, Size:hardwareProfile.vmSize, OS:storageProfile.osDisk.osType}"
+                      echo ""
+                      echo "=== Persistent Public IPs ==="
+                      az network public-ip list \
+                        -g rg-mediasrl-persistent \
+                        -o table \
+                        --query "[].{Name:name, IP:ipAddress, FQDN:dnsSettings.fqdn}"

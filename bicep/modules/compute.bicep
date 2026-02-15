@@ -190,13 +190,13 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
       adminPassword: adminPasswordOrKey
       linuxConfiguration: osType == 'Linux' ? linuxConfiguration : null
       windowsConfiguration: osType == 'Windows' ? {
-        enableAutomaticUpdates: true
+        enableAutomaticUpdates: !useGalleryImage
         provisionVMAgent: true
         patchSettings: {
-          patchMode: 'AutomaticByPlatform'
-          automaticByPlatformSettings: {
+          patchMode: useGalleryImage ? 'Manual' : 'AutomaticByPlatform'
+          automaticByPlatformSettings: !useGalleryImage ? {
             rebootSetting: 'IfRequired'
-          }
+          } : null
         }
       } : null
     }

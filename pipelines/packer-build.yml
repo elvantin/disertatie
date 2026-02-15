@@ -1,0 +1,334 @@
+# ============================================================
+# Pipeline: Packer Image Build & Publish
+# Builds golden images and publishes them to Azure Compute Gallery
+# Trigger: Manual only (images are built infrequently)
+# ============================================================
+
+trigger: none  # Manual trigger only — run from Azure DevOps UI
+
+parameters:
+  # Choose which images to build when running the pipeline
+  - name: buildUbuntuBase
+    displayName: 'Build Ubuntu 22.04 Base Image'
+    type: boolean
+    default: false
+  - name: buildJumphost
+    displayName: 'Build Ubuntu 22.04 Jumphost Image'
+    type: boolean
+    default: false
+  - name: buildWindows
+    displayName: 'Build Windows Server 2022 Image'
+    type: boolean
+    default: false
+
+variables:
+  - group: mediasrl-secrets  # Variable Group with secrets (created in Azure DevOps)
+  - name: location
+    value: 'swedencentral'
+  - name: galleryResourceGroup
+    value: 'rg-mediasrl-packer-swedencentral'
+  - name: galleryName
+    value: 'gal_mediasrl'
+  - name: azureSubscription
+    value: 'azure-service-connection'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  # ============================================================
+  # STAGE 1: Setup — Ensure Gallery and Image Definitions exist
+  # ============================================================
+  - stage: Setup
+    displayName: 'Setup Gallery & Image Definitions'
+    jobs:
+      - job: SetupGallery
+        displayName: 'Create Gallery if needed'
+        steps:
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: 'Ensure Resource Group exists'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                RG_EXISTS=$(az group exists --name $(galleryResourceGroup))
+                if [ "$RG_EXISTS" = "false" ]; then
+                  echo "Creating Resource Group $(galleryResourceGroup)..."
+                  az group create \
+                    --name $(galleryResourceGroup) \
+                    --location $(location) \
+                    --tags environment=productie project=mediasrl managed-by=packer
+                else
+                  echo "Resource Group $(galleryResourceGroup) already exists."
+                fi
+
+          - task: AzureCLI@2
+            displayName: 'Ensure Compute Gallery exists'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az sig show \
+                  --resource-group $(galleryResourceGroup) \
+                  --gallery-name $(galleryName) 2>/dev/null
+                if [ $? -ne 0 ]; then
+                  echo "Creating Gallery $(galleryName)..."
+                  az sig create \
+                    --resource-group $(galleryResourceGroup) \
+                    --gallery-name $(galleryName) \
+                    --location $(location) \
+                    --tags environment=productie project=mediasrl managed-by=packer
+                else
+                  echo "Gallery $(galleryName) already exists."
+                fi
+
+          - task: AzureCLI@2
+            displayName: 'Ensure Image Definitions exist'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                create_imgdef() {
+                  local DEF_NAME=$1 PUBLISHER=$2 OFFER=$3 SKU=$4 OS_TYPE=$5
+                  az sig image-definition show \
+                    --resource-group $(galleryResourceGroup) \
+                    --gallery-name $(galleryName) \
+                    --gallery-image-definition "$DEF_NAME" 2>/dev/null
+                  if [ $? -ne 0 ]; then
+                    echo "Creating Image Definition: $DEF_NAME"
+                    az sig image-definition create \
+                      --resource-group $(galleryResourceGroup) \
+                      --gallery-name $(galleryName) \
+                      --gallery-image-definition "$DEF_NAME" \
+                      --publisher "$PUBLISHER" \
+                      --offer "$OFFER" \
+                      --sku "$SKU" \
+                      --os-type "$OS_TYPE" \
+                      --os-state Generalized \
+                      --hyper-v-generation V2 \
+                      --location $(location) \
+                      --tags environment=productie project=mediasrl managed-by=packer
+                  else
+                    echo "Image Definition $DEF_NAME already exists."
+                  fi
+                }
+
+                create_imgdef "imgdef-ubuntu2204" "SCMediaSRL" "Ubuntu" "22.04-LTS-Base" "Linux"
+                create_imgdef "imgdef-ubuntu2204-jumphost" "SCMediaSRL" "Ubuntu" "22.04-LTS-Jumphost" "Linux"
+                create_imgdef "imgdef-winserver2022" "SCMediaSRL" "WindowsServer" "2022-Datacenter" "Windows"
+
+  # ============================================================
+  # STAGE 2: Build Ubuntu Base Image
+  # ============================================================
+  - stage: BuildUbuntuBase
+    displayName: 'Build Ubuntu 22.04 Base'
+    dependsOn: Setup
+    condition: eq('${{ parameters.buildUbuntuBase }}', true)
+    jobs:
+      - job: BuildUbuntuBaseJob
+        displayName: 'Packer Build: Ubuntu Base'
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: 'Detect next version & Build'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -e
+                IMG_DEF="imgdef-ubuntu2204"
+                PACKER_DIR="$(Build.SourcesDirectory)/packer/ubuntu-base"
+
+                # Auto-detect next version
+                LATEST=$(az sig image-version list \
+                  --resource-group $(galleryResourceGroup) \
+                  --gallery-name $(galleryName) \
+                  --gallery-image-definition $IMG_DEF \
+                  --query "[].name" -o tsv 2>/dev/null \
+                  | sort -V | tail -1)
+
+                if [ -z "$LATEST" ]; then
+                  NEXT_VERSION="1.0.0"
+                else
+                  MAJOR=$(echo $LATEST | cut -d. -f1)
+                  MINOR=$(echo $LATEST | cut -d. -f2)
+                  PATCH=$(echo $LATEST | cut -d. -f3)
+                  NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+                fi
+                echo "Next version: $NEXT_VERSION"
+
+                # Packer Init + Validate + Build
+                cd "$PACKER_DIR"
+                SUB_ID=$(az account show --query id -o tsv)
+
+                packer init .
+                packer validate \
+                  -var "subscription_id=$SUB_ID" \
+                  -var "gallery_resource_group=$(galleryResourceGroup)" \
+                  -var "image_version=$NEXT_VERSION" .
+                packer build \
+                  -var "subscription_id=$SUB_ID" \
+                  -var "gallery_resource_group=$(galleryResourceGroup)" \
+                  -var "image_version=$NEXT_VERSION" \
+                  -color=false .
+
+                echo "##vso[task.setvariable variable=imageVersion]$NEXT_VERSION"
+                echo "Ubuntu Base image $NEXT_VERSION published successfully!"
+
+  # ============================================================
+  # STAGE 3: Build Jumphost Image
+  # ============================================================
+  - stage: BuildJumphost
+    displayName: 'Build Ubuntu 22.04 Jumphost'
+    dependsOn: Setup
+    condition: eq('${{ parameters.buildJumphost }}', true)
+    jobs:
+      - job: BuildJumphostJob
+        displayName: 'Packer Build: Jumphost'
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: 'Detect next version & Build'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -e
+                IMG_DEF="imgdef-ubuntu2204-jumphost"
+                PACKER_DIR="$(Build.SourcesDirectory)/packer/ubuntu-jumphost"
+
+                LATEST=$(az sig image-version list \
+                  --resource-group $(galleryResourceGroup) \
+                  --gallery-name $(galleryName) \
+                  --gallery-image-definition $IMG_DEF \
+                  --query "[].name" -o tsv 2>/dev/null \
+                  | sort -V | tail -1)
+
+                if [ -z "$LATEST" ]; then
+                  NEXT_VERSION="1.0.0"
+                else
+                  MAJOR=$(echo $LATEST | cut -d. -f1)
+                  MINOR=$(echo $LATEST | cut -d. -f2)
+                  PATCH=$(echo $LATEST | cut -d. -f3)
+                  NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+                fi
+                echo "Next version: $NEXT_VERSION"
+
+                cd "$PACKER_DIR"
+                SUB_ID=$(az account show --query id -o tsv)
+
+                packer init .
+                packer validate \
+                  -var "subscription_id=$SUB_ID" \
+                  -var "gallery_resource_group=$(galleryResourceGroup)" \
+                  -var "image_version=$NEXT_VERSION" .
+                packer build \
+                  -var "subscription_id=$SUB_ID" \
+                  -var "gallery_resource_group=$(galleryResourceGroup)" \
+                  -var "image_version=$NEXT_VERSION" \
+                  -color=false .
+
+                echo "Jumphost image $NEXT_VERSION published successfully!"
+
+  # ============================================================
+  # STAGE 4: Build Windows Server Image
+  # ============================================================
+  - stage: BuildWindows
+    displayName: 'Build Windows Server 2022'
+    dependsOn: Setup
+    condition: eq('${{ parameters.buildWindows }}', true)
+    jobs:
+      - job: BuildWindowsJob
+        displayName: 'Packer Build: Windows Server'
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+
+          - task: AzureCLI@2
+            displayName: 'Detect next version & Build'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                set -e
+                IMG_DEF="imgdef-winserver2022"
+                PACKER_DIR="$(Build.SourcesDirectory)/packer/windows-server"
+
+                LATEST=$(az sig image-version list \
+                  --resource-group $(galleryResourceGroup) \
+                  --gallery-name $(galleryName) \
+                  --gallery-image-definition $IMG_DEF \
+                  --query "[].name" -o tsv 2>/dev/null \
+                  | sort -V | tail -1)
+
+                if [ -z "$LATEST" ]; then
+                  NEXT_VERSION="1.0.0"
+                else
+                  MAJOR=$(echo $LATEST | cut -d. -f1)
+                  MINOR=$(echo $LATEST | cut -d. -f2)
+                  PATCH=$(echo $LATEST | cut -d. -f3)
+                  NEXT_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+                fi
+                echo "Next version: $NEXT_VERSION"
+
+                cd "$PACKER_DIR"
+                SUB_ID=$(az account show --query id -o tsv)
+
+                packer init .
+                packer validate \
+                  -var "subscription_id=$SUB_ID" \
+                  -var "gallery_resource_group=$(galleryResourceGroup)" \
+                  -var "image_version=$NEXT_VERSION" .
+                packer build \
+                  -var "subscription_id=$SUB_ID" \
+                  -var "gallery_resource_group=$(galleryResourceGroup)" \
+                  -var "image_version=$NEXT_VERSION" \
+                  -color=false .
+
+                echo "Windows Server image $NEXT_VERSION published successfully!"
+
+  # ============================================================
+  # STAGE 5: Verify — List all published image versions
+  # ============================================================
+  - stage: Verify
+    displayName: 'Verify Published Images'
+    dependsOn:
+      - BuildUbuntuBase
+      - BuildJumphost
+      - BuildWindows
+    condition: succeededOrFailed()
+    jobs:
+      - job: VerifyImages
+        displayName: 'List Gallery Image Versions'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Show all image versions'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                echo "=== Azure Compute Gallery: $(galleryName) ==="
+                echo ""
+                for DEF in imgdef-ubuntu2204 imgdef-ubuntu2204-jumphost imgdef-winserver2022; do
+                  echo "--- $DEF ---"
+                  az sig image-version list \
+                    --resource-group $(galleryResourceGroup) \
+                    --gallery-name $(galleryName) \
+                    --gallery-image-definition $DEF \
+                    --query "[].{Version:name, State:provisioningState, Created:publishingProfile.publishedDate}" \
+                    -o table 2>/dev/null || echo "  (no versions)"
+                  echo ""
+                done
