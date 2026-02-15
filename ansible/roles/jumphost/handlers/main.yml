@@ -1,3 +1,4 @@
+---
 # ============================================================
 # Ansible Role: jumphost - Handlers
 # ============================================================
@@ -5,4 +6,9 @@
 - name: restart xrdp
   ansible.builtin.systemd:
     name: xrdp
+    state: restarted
+
+- name: restart ssh
+  ansible.builtin.systemd:
+    name: ssh
     state: restarted

@@ -1,0 +1,80 @@
+---
+# ============================================================
+# Ansible Role: appserver
+# Installs nginx on vm-app-01 as backend API server (port 8080)
+# Proxied by vm-web-01 reverse proxy at /api/
+# ============================================================
+
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: yes
+  tags: [appserver, install]
+
+- name: Create application root directory
+  ansible.builtin.file:
+    path: "{{ app_root }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  tags: [appserver, config]
+
+- name: Deploy API index page
+  ansible.builtin.copy:
+    dest: "{{ app_root }}/index.html"
+    content: |
+      {"service":"SC MEDIA SRL API","version":"1.0","status":"running"}
+    owner: www-data
+    group: www-data
+    mode: '0644'
+  tags: [appserver, config]
+
+- name: Remove default nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+  tags: [appserver, config]
+
+- name: Deploy nginx virtual host configuration
+  ansible.builtin.template:
+    src: app-nginx.conf.j2
+    dest: /etc/nginx/sites-available/app.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+  tags: [appserver, config]
+
+- name: Enable nginx virtual host
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/app.conf
+    dest: /etc/nginx/sites-enabled/app.conf
+    state: link
+  notify: reload nginx
+  tags: [appserver, config]
+
+- name: Ensure nginx is enabled and started
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: yes
+    state: started
+  tags: [appserver, service]
+
+- name: Allow port {{ app_listen_port }} through firewall
+  ansible.builtin.ufw:
+    rule: allow
+    port: "{{ app_listen_port }}"
+    proto: tcp
+  when: ansible_facts.services['ufw.service'] is defined
+  ignore_errors: yes
+  tags: [appserver, firewall]
+
+- name: Verify nginx is listening on port {{ app_listen_port }}
+  ansible.builtin.wait_for:
+    port: "{{ app_listen_port }}"
+    host: 0.0.0.0
+    timeout: 10
+  tags: [appserver, verify]

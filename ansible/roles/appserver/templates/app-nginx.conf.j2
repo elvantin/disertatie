@@ -1,0 +1,32 @@
+# Nginx configuration for SC MEDIA SRL Backend API
+# Managed by Ansible - do not edit manually
+
+server {
+    listen {{ app_listen_port }};
+    server_name {{ app_server_name }};
+
+    root {{ app_root }};
+    index index.html;
+
+    # Health check endpoint
+    location /health {
+        access_log off;
+        default_type application/json;
+        return 200 '{"status":"ok","service":"mediasrl-api","host":"{{ inventory_hostname }}"}';
+    }
+
+    # API endpoints
+    location /api/ {
+        default_type application/json;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Default
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # Access and error logs
+    access_log /var/log/nginx/app-access.log;
+    error_log /var/log/nginx/app-error.log;
+}

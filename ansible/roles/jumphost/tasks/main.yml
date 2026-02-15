@@ -1,73 +1,31 @@
+---
 # ============================================================
 # Ansible Role: jumphost
-# Configures Rocky Linux jumphost with GUI, xRDP, Ansible, DevOps tools
+# Configures Ubuntu 22.04 jumphost with XFCE, xRDP, Ansible, DevOps tools
+# Note: Initial bootstrap (packages, xRDP, XFCE) is done by Custom Script
+#       Extension at VM creation. This role handles ongoing configuration,
+#       patching, and idempotent management.
 # ============================================================
 
-- name: Install GNOME Desktop Environment
-  ansible.builtin.dnf:
-    name: '@^graphical-server-environment'
-    state: present
-  tags: [jumphost, gui, desktop]
+# --- Package Management ---
 
-- name: Set graphical target as default
-  ansible.builtin.command: systemctl set-default graphical.target
-  changed_when: false
-  tags: [jumphost, gui]
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  tags: [jumphost, packages]
 
-- name: Install xRDP for Remote Desktop access
-  ansible.builtin.dnf:
+- name: Ensure essential packages are installed
+  ansible.builtin.apt:
     name:
+      - xfce4
+      - xfce4-goodies
       - xrdp
-      - xrdp-selinux
-    state: present
-  tags: [jumphost, xrdp]
-
-- name: Configure xRDP
-  ansible.builtin.lineinfile:
-    path: /etc/xrdp/xrdp.ini
-    regexp: '^port='
-    line: 'port=3389'
-    state: present
-  notify: restart xrdp
-  tags: [jumphost, xrdp, config]
-
-- name: Enable and start xRDP service
-  ansible.builtin.systemd:
-    name: xrdp
-    enabled: yes
-    state: started
-  tags: [jumphost, xrdp, service]
-
-- name: Configure firewall for RDP (port 3389)
-  ansible.posix.firewalld:
-    port: 3389/tcp
-    permanent: yes
-    state: enabled
-    immediate: yes
-  tags: [jumphost, firewall, rdp]
-
-- name: Install Ansible and dependencies
-  ansible.builtin.dnf:
-    name:
+      - firefox
       - ansible
       - python3-pip
       - python3-winrm
       - sshpass
-    state: present
-  tags: [jumphost, ansible]
-
-- name: Install Azure CLI
-  ansible.builtin.shell: |
-    rpm --import https://packages.microsoft.com/keys/microsoft.asc
-    dnf install -y https://packages.microsoft.com/config/rhel/9.0/packages-microsoft-prod.rpm
-    dnf install -y azure-cli
-  args:
-    creates: /usr/bin/az
-  tags: [jumphost, azure-cli]
-
-- name: Install DevOps tools
-  ansible.builtin.dnf:
-    name:
       - git
       - vim
       - nano
@@ -75,52 +33,106 @@
       - curl
       - htop
       - tmux
-      - screen
       - net-tools
-      - bind-utils
+      - dnsutils
       - tcpdump
       - nmap
       - telnet
-      - nc
       - jq
       - tree
+      - remmina
+      - remmina-plugin-rdp
+      - remmina-plugin-vnc
     state: present
-  tags: [jumphost, tools]
+  tags: [jumphost, packages]
 
-- name: Install xfreerdp (RDP client for connecting to Windows VMs)
-  ansible.builtin.dnf:
-    name: freerdp
+# --- xRDP Configuration ---
+
+- name: Configure xRDP to use XFCE
+  ansible.builtin.copy:
+    dest: /etc/xrdp/startwm.sh
+    content: |
+      #!/bin/sh
+      if [ -r /etc/default/locale ]; then
+        . /etc/default/locale
+        export LANG LANGUAGE
+      fi
+      exec startxfce4
+    owner: root
+    group: root
+    mode: '0755'
+  notify: restart xrdp
+  tags: [jumphost, xrdp]
+
+- name: Configure xRDP port
+  ansible.builtin.lineinfile:
+    path: /etc/xrdp/xrdp.ini
+    regexp: '^port='
+    line: 'port=3389'
     state: present
-  tags: [jumphost, freerdp]
+  notify: restart xrdp
+  tags: [jumphost, xrdp]
 
-- name: Install Visual Studio Code repository
-  ansible.builtin.yum_repository:
-    name: vscode
-    description: Visual Studio Code
-    baseurl: https://packages.microsoft.com/yumrepos/vscode
-    gpgcheck: yes
-    gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+- name: Ensure xRDP is enabled and running
+  ansible.builtin.systemd:
+    name: xrdp
     enabled: yes
-  tags: [jumphost, vscode]
+    state: started
+  tags: [jumphost, xrdp]
 
-- name: Install Visual Studio Code
-  ansible.builtin.dnf:
-    name: code
-    state: present
-  tags: [jumphost, vscode]
+# --- Firewall Configuration ---
 
-- name: Generate SSH key pair for ansible user
+- name: Configure UFW - allow SSH (port 22)
+  community.general.ufw:
+    rule: allow
+    port: '22'
+    proto: tcp
+  tags: [jumphost, firewall]
+
+- name: Configure UFW - allow RDP (port 3389)
+  community.general.ufw:
+    rule: allow
+    port: '3389'
+    proto: tcp
+  tags: [jumphost, firewall]
+
+- name: Enable UFW
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+  tags: [jumphost, firewall]
+
+# --- Ansible Control Node ---
+
+- name: Ensure Azure CLI is installed
+  ansible.builtin.shell: az --version
+  register: az_check
+  changed_when: false
+  failed_when: false
+  tags: [jumphost, azure-cli]
+
+- name: Install Azure CLI if missing
+  ansible.builtin.shell: curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+  args:
+    creates: /usr/bin/az
+  when: az_check.rc != 0
+  tags: [jumphost, azure-cli]
+
+# --- SSH Key Management ---
+
+- name: Generate SSH key pair for admin user
   ansible.builtin.user:
-    name: "{{ ansible_user }}"
+    name: "{{ admin_username | default('azureadmin') }}"
     generate_ssh_key: yes
     ssh_key_bits: 4096
-    ssh_key_file: .ssh/id_rsa
+    ssh_key_file: ".ssh/id_rsa"
     ssh_key_comment: "ansible@{{ inventory_hostname }}"
   tags: [jumphost, ssh-key]
 
 - name: Fetch SSH public key
   ansible.builtin.slurp:
-    src: "/home/{{ ansible_user }}/.ssh/id_rsa.pub"
+    src: "/home/{{ admin_username | default('azureadmin') }}/.ssh/id_rsa.pub"
   register: jumphost_ssh_pubkey
   tags: [jumphost, ssh-key]
 
@@ -134,24 +146,20 @@
     msg: "Jumphost SSH public key: {{ jumphost_public_key }}"
   tags: [jumphost, ssh-key]
 
-- name: Create Ansible workspace directory
+# --- Workspace ---
+
+- name: Ensure Ansible workspace exists
   ansible.builtin.file:
-    path: "/home/{{ ansible_user }}/ansible-workspace"
+    path: "/home/{{ admin_username | default('azureadmin') }}/ansible"
     state: directory
-    owner: "{{ ansible_user }}"
-    group: "{{ ansible_user }}"
+    owner: "{{ admin_username | default('azureadmin') }}"
+    group: "{{ admin_username | default('azureadmin') }}"
     mode: '0755'
   tags: [jumphost, workspace]
 
-- name: Configure SELinux for xRDP
-  ansible.posix.seboolean:
-    name: xrdp_can_network_connect
-    state: yes
-    persistent: yes
-  when: ansible_selinux.status == 'enabled'
-  tags: [jumphost, selinux, xrdp]
+# --- MOTD ---
 
-- name: Create welcome message
+- name: Create welcome message (MOTD)
   ansible.builtin.copy:
     dest: /etc/motd
     content: |
@@ -160,13 +168,13 @@
       ==========================================
 
       Hostname: {{ ansible_hostname }}
-      IP: {{ ansible_default_ipv4.address }}
+      IP: {{ ansible_default_ipv4.address | default('N/A') }}
       OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
 
       Tools installed:
       - Ansible (ansible --version)
       - Azure CLI (az --version)
-      - Git, VS Code, xfreerdp
+      - Git, VS Code, Remmina
       - RDP port: 3389
 
       SSH to Linux VMs:
@@ -174,10 +182,10 @@
         ssh azureadmin@vm-app-01
         ssh azureadmin@vm-cms-01
 
-      RDP to Windows File Server:
-        xfreerdp /v:vm-fs-01 /u:azureadmin /cert:ignore
+      RDP to Windows VMs:
+        remmina (pre-configured profiles)
 
-      Ansible workspace: ~/ansible-workspace
+      Ansible workspace: ~/ansible
       ==========================================
     owner: root
     group: root

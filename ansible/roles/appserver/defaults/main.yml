@@ -1,0 +1,5 @@
+---
+# Appserver role defaults
+app_listen_port: 8080
+app_server_name: "{{ inventory_hostname }}"
+app_root: /var/www/app

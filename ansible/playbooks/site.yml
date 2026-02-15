@@ -66,13 +66,12 @@
 
   roles:
     - role: common
-      when: false  # Windows common role not yet implemented
       tags: [common, baseline, windows]
 
   tasks:
     - name: Display Windows baseline status
       debug:
-        msg: "Windows baseline configuration skipped - role not implemented"
+        msg: "Windows baseline configuration completed for {{ inventory_hostname }}"
       tags: [common]
 
 # =============================================================================
@@ -120,6 +119,21 @@
         msg: "Nginx web server configuration completed on {{ inventory_hostname }}"
       tags: [webserver, nginx]
 
+- name: Configure Application Server - Nginx Backend API (vm-app-01)
+  hosts: appserver
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - role: appserver
+      tags: [appserver, nginx]
+
+  tasks:
+    - name: Display app server status
+      debug:
+        msg: "Application server (nginx backend) configuration completed on {{ inventory_hostname }}"
+      tags: [appserver]
+
 - name: Configure CMS Server - WordPress + MySQL + Postfix (vm-cms-01)
   hosts: cmsserver
   become: yes
@@ -156,13 +170,12 @@
 
   roles:
     - role: fileserver
-      when: false  # File server role not yet implemented
       tags: [fileserver, windows]
 
   tasks:
     - name: Display file server status
       debug:
-        msg: "File server configuration skipped - role not implemented"
+        msg: "File server configuration completed on {{ inventory_hostname }}"
       tags: [fileserver]
 
 # =============================================================================
@@ -176,13 +189,12 @@
 
   roles:
     - role: hardening
-      when: false  # Hardening role not yet implemented
       tags: [hardening, security, cis]
 
   tasks:
     - name: Display hardening status
       debug:
-        msg: "Security hardening skipped - role not implemented"
+        msg: "Security hardening completed on {{ inventory_hostname }}"
       tags: [hardening]
 
 # =============================================================================
@@ -307,7 +319,7 @@
 # Notes:
 # ============================================================
 # - Roles are applied in dependency order to avoid failures
-# - Some roles are marked as "when: false" until implemented
+# - All roles are active and implemented
 # - Use tags to run specific phases: --tags common,nginx
 # - Use --limit to target specific hosts: --limit webserver
 # - All tasks respect become/privilege escalation settings

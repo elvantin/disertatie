@@ -27,8 +27,8 @@ ADMIN_PASSWORD="Str0ng_P@ssw0rd_2026!"
 echo ""
 echo "[1/23] Updating system packages..."
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get upgrade -y -qq
+apt update -qq
+apt upgrade -y -qq
 
 # =============================================================================
 # STEP 2: User Authentication Configuration
@@ -43,7 +43,8 @@ sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_
 sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
 sed -i 's/^#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
 systemctl restart ssh
-
+apt update -qq
+apt upgrade -y -qq
 # =============================================================================
 # STEP 3: Replace UFW with Firewalld
 # =============================================================================

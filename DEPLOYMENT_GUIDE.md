@@ -52,9 +52,6 @@ az network nic list -g rg-mediasrl-productie-swedencentral --query "[].name" -o 
 # Șterge disks
 az disk list -g rg-mediasrl-productie-swedencentral --query "[].name" -o tsv | ForEach-Object { az disk delete -g rg-mediasrl-productie-swedencentral -n $_ --yes --no-wait }
 
-# Șterge Public IPs
-az network public-ip list -g rg-mediasrl-productie-swedencentral --query "[].name" -o tsv | ForEach-Object { az network public-ip delete -g rg-mediasrl-productie-swedencentral -n $_ --no-wait }
-```
 
 **SAU mai rapid:**
 ```powershell

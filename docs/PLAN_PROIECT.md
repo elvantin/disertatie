@@ -37,15 +37,16 @@ Neavând personal IT calificat și nici expertiza necesară, SC MEDIA SRL apelea
 
 ## 3. Inventarul mediului (Environment Inventory)
 
-### 3.1 Mașini virtuale (5 VM-uri)
+### 3.1 Mașini virtuale (6 VM-uri)
 
 | # | Nume VM | Sistem de operare | Rol | Subnet | Servicii principale |
 |---|---------|-------------------|-----|--------|---------------------|
-| 1 | vm-jmp-01 | Windows Server 2022 | Jumphost / Management | Management (10.10.12.0/24) | RDP, instrumente de administrare, acces la toate VM-urile |
-| 2 | vm-db-01 | Windows Server 2022 | Server bază de date | Production (10.10.10.0/24) | MySQL Server |
-| 3 | vm-web-01 | Rocky Linux 10 | Server web | Production (10.10.10.0/24) | nginx + site SC MEDIA SRL |
-| 4 | vm-app-01 | Rocky Linux 10 | Server aplicații | Production (10.10.10.0/24) | Backend aplicație |
-| 5 | vm-cms-01 | Rocky Linux 10 | Server CMS / Mail | Production (10.10.10.0/24) | WordPress (CMS) + Postfix (mail) |
+| 1 | vm-jmp-01 | Ubuntu 22.04 LTS | Jumphost / Management | Management (10.10.12.0/24) | XFCE + xRDP, Ansible Control Node, Azure CLI, Remmina, acces la toate VM-urile |
+| 2 | vm-db-01 | Windows Server 2022 | Server bază de date | Production (10.10.10.0/24) | MySQL Community Server 8.0 |
+| 3 | vm-fs-01 | Windows Server 2022 | Server de fișiere | Production (10.10.10.0/24) | SMB File Server (share-uri departamentale) |
+| 4 | vm-web-01 | Ubuntu 22.04 LTS | Server web (reverse proxy) | Production (10.10.10.0/24) | nginx reverse proxy + SSL Let's Encrypt |
+| 5 | vm-app-01 | Ubuntu 22.04 LTS | Server aplicații | Production (10.10.10.0/24) | nginx backend API (port 8080) |
+| 6 | vm-cms-01 | Ubuntu 22.04 LTS | Server CMS / Mail | Production (10.10.10.0/24) | WordPress (CMS) + PHP-FPM + Postfix (mail) |
 
 ### 3.2 Topologie rețea
 
@@ -53,7 +54,7 @@ Neavând personal IT calificat și nici expertiza necesară, SC MEDIA SRL apelea
 
 | Resursă | CIDR | Scop |
 |---------|------|------|
-| **VNet** (vnet-media-prod) | 10.10.0.0/20 | Rețea virtuală principală (10.10.0.0 – 10.10.15.255, 4096 adrese) |
+| **VNet** (vnet-mediasrl-productie) | 10.10.0.0/20 | Rețea virtuală principală (10.10.0.0 – 10.10.15.255, 4096 adrese) |
 | **Subnet Production** (snet-prod) | 10.10.10.0/24 | VM-uri de producție (254 adrese utilizabile) |
 | **Subnet Dev** (snet-dev) | 10.10.11.0/24 | Mediu de dezvoltare/testare (254 adrese utilizabile) |
 | **Subnet Management** (snet-mgmt) | 10.10.12.0/24 | Jumphost și instrumente de administrare (254 adrese utilizabile) |
@@ -65,18 +66,20 @@ Neavând personal IT calificat și nici expertiza necesară, SC MEDIA SRL apelea
                          │          INTERNET                     │
                          └──────────────┬───────────────────────┘
                                         │
-                                   [Public IP]
-                                        │
-                         ┌──────────────┴───────────────────────┐
-                         │     vnet-media-prod (10.10.0.0/20)   │
+                               [Public IPs - Persistent RG]
+                              pip-vm-jmp-01  pip-vm-web-01
+                                   │              │
+                         ┌─────────┴──────────────┴─────────────┐
+                         │  vnet-mediasrl-productie (10.10.0.0/20)│
                          │                                       │
                          │  ┌─────────────────────────────────┐  │
                          │  │ snet-mgmt (10.10.12.0/24)       │  │
                          │  │   ┌───────────┐                 │  │
                          │  │   │ vm-jmp-01 │ (Jumphost)      │  │
-                         │  │   │ Win 2022  │                 │  │
+                         │  │   │Ubuntu22.04│ XFCE+xRDP       │  │
+                         │  │   │ Ansible   │ Control Node     │  │
                          │  │   └─────┬─────┘                 │  │
-                         │  │         │ RDP/SSH to all VMs     │  │
+                         │  │         │ SSH/RDP to all VMs     │  │
                          │  └─────────┼───────────────────────┘  │
                          │            │                           │
                          │  ┌─────────┴───────────────────────┐  │
@@ -84,15 +87,23 @@ Neavând personal IT calificat și nici expertiza necesară, SC MEDIA SRL apelea
                          │  │                                  │  │
                          │  │  ┌──────────┐  ┌──────────┐     │  │
                          │  │  │vm-web-01 │  │vm-app-01 │     │  │
-                         │  │  │Rocky  10 │  │Rocky  10 │     │  │
-                         │  │  │nginx     │  │backend   │     │  │
-                         │  │  └──────────┘  └──────────┘     │  │
-                         │  │                                  │  │
+                         │  │  │Ubuntu22.04│  │Ubuntu22.04│     │  │
+                         │  │  │nginx RP  │─→│nginx:8080 │     │  │
+                         │  │  │SSL/HTTPS │  │backend API│     │  │
+                         │  │  └────┬─────┘  └──────────┘     │  │
+                         │  │       │                          │  │
+                         │  │       ▼                          │  │
                          │  │  ┌──────────┐  ┌──────────┐     │  │
                          │  │  │vm-cms-01 │  │vm-db-01  │     │  │
-                         │  │  │Rocky  10 │  │Win 2022  │     │  │
-                         │  │  │CMS+Mail  │  │MySQL     │     │  │
-                         │  │  └──────────┘  └──────────┘     │  │
+                         │  │  │Ubuntu22.04│  │Win 2022  │     │  │
+                         │  │  │WordPress │  │MySQL 8.0 │     │  │
+                         │  │  │+Postfix  │  └──────────┘     │  │
+                         │  │  └──────────┘                    │  │
+                         │  │                ┌──────────┐      │  │
+                         │  │                │vm-fs-01  │      │  │
+                         │  │                │Win 2022  │      │  │
+                         │  │                │SMB Files │      │  │
+                         │  │                └──────────┘      │  │
                          │  └──────────────────────────────────┘  │
                          │                                        │
                          │  ┌──────────────────────────────────┐  │
@@ -110,6 +121,7 @@ Neavând personal IT calificat și nici expertiza necesară, SC MEDIA SRL apelea
 | Prioritate | Direcție | Sursă | Dest | Port | Protocol | Acțiune | Scop |
 |-----------|----------|-------|------|------|----------|---------|------|
 | 100 | Inbound | IP admin | * | 3389 | TCP | Allow | RDP la jumphost din exterior |
+| 110 | Inbound | IP admin | * | 22 | TCP | Allow | SSH la jumphost din exterior |
 | 200 | Inbound | * | * | * | * | Deny | Blocare rest trafic extern |
 
 **nsg-prod** (atașat la snet-prod):
@@ -118,9 +130,12 @@ Neavând personal IT calificat și nici expertiza necesară, SC MEDIA SRL apelea
 |-----------|----------|-------|------|------|----------|---------|------|
 | 100 | Inbound | snet-mgmt | * | 3389 | TCP | Allow | RDP de la jumphost la Windows |
 | 110 | Inbound | snet-mgmt | * | 22 | TCP | Allow | SSH de la jumphost la Linux |
-| 120 | Inbound | Internet | vm-web-01 | 80,443 | TCP | Allow | HTTP/HTTPS la web server |
+| 115 | Inbound | snet-mgmt | * | 5985 | TCP | Allow | WinRM de la jumphost la Windows (Ansible) |
+| 120 | Inbound | * | vm-web-01 | 443 | TCP | Allow | HTTPS la web server |
+| 121 | Inbound | * | vm-web-01 | 80 | TCP | Allow | HTTP la web server (ACME + redirect) |
 | 200 | Inbound | snet-prod | snet-prod | 3306 | TCP | Allow | MySQL intern |
 | 210 | Inbound | snet-prod | snet-prod | 25,587 | TCP | Allow | SMTP intern |
+| 220 | Inbound | snet-prod | snet-prod | 445 | TCP | Allow | SMB intern (file server) |
 | 300 | Inbound | * | * | * | * | Deny | Blocare rest trafic |
 
 **nsg-dev** (atașat la snet-dev):
@@ -139,6 +154,8 @@ Neavând personal IT calificat și nici expertiza necesară, SC MEDIA SRL apelea
 | **Guvernanță** | Azure Policy | Impunerea conformității (tagging, locație, SKU-uri permise) | $0 (gratuit) |
 | **Route Tables** | UDR (User Defined Routes) | Controlul rutării între subnets | $0 (gratuit) |
 | **Backup** | Recovery Services Vault | Backup VM-uri critice | ~$5–$15/lună |
+| **IP-uri persistente** | Resource Group separat (rg-mediasrl-persistent) | IP-uri publice statice care supraviețuiesc ștergerii mediului | ~$8/lună (2 × Standard IP) |
+| **Bootstrap automat** | Custom Script Extension | Execuție automată scripturi la crearea VM-urilor | $0 (gratuit) |
 
 ---
 
@@ -151,15 +168,15 @@ Neavând personal IT calificat și nici expertiza necesară, SC MEDIA SRL apelea
 | Sursă | Volum estimat/lună |
 |-------|--------------------|
 | Windows Event Logs (2 VM-uri × ~0.5–1 GB) | 1–2 GB |
-| Linux Syslog (3 VM-uri × ~0.3–0.5 GB) | 0.9–1.5 GB |
+| Linux Syslog (4 VM-uri × ~0.3–0.5 GB) | 1.2–2 GB |
 | NSG Flow Logs (opțional) | 0.5–1 GB |
-| **Total estimat** | **~2.5–4.5 GB/lună** |
+| **Total estimat** | **~2.7–5 GB/lună** |
 
 **Free tier Log Analytics:** 5 GB/lună ingestie gratuită, 31 zile retenție.
 
-**Concluzie:** Pentru acest mediu de 5 VM-uri, monitorizarea de bază se încadrează în **free tier** → **$0/lună**.
+**Concluzie:** Pentru acest mediu de 6 VM-uri, monitorizarea de bază se încadrează în **free tier** → **$0/lună**.
 
-Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~7–12 GB/lună → **~$5–$20/lună** (depășire free tier la $2.76/GB).
+Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9–14 GB/lună → **~$10–$25/lună** (depășire free tier la $2.76/GB).
 
 **Recomandare:** Utilizăm Log Analytics cu free tier (suficient pentru acest mediu). Cost: **$0/lună**.
 
@@ -178,14 +195,14 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~7�
 
 | Resursă | Cost estimat/lună |
 |---------|-------------------|
-| 5 VM-uri (B2s: 2 vCPU, 4 GB RAM) | ~$150 ($30/VM) |
-| Managed Disks (5 × 128 GB Standard SSD) | ~$50 |
-| Public IP (1 × Standard SKU pt jumphost) | ~$4 |
+| 6 VM-uri (1× D2s_v3 jumphost + 5× B2s) | ~$190 (~$60 + 5×$26) |
+| Managed Disks (1×64GB + 2×128GB + 3×32GB Standard SSD) | ~$40 |
+| Public IPs (2 × Standard SKU — jumphost + web) | ~$8 |
 | Azure Monitor (free tier) | $0 |
 | Key Vault | ~$0 |
 | Network egress | ~$3 |
 | Recovery Services Vault (opțional) | ~$10 |
-| **TOTAL ESTIMAT** | **~$210–$220/lună** |
+| **TOTAL ESTIMAT** | **~$250–$260/lună** |
 
 > **Notă:** Costurile pot fi reduse semnificativ folosind Reserved Instances (1 an: ~40% reducere), spot VMs pentru Dev, sau oprirea VM-urilor în afara orelor de lucru.
 
@@ -204,22 +221,23 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~7�
 │  - Controlul modificărilor și audit                     │
 ├─────────────────────────────────────────────────────────┤
 │  Nivel 3: CONFIGURARE ȘI ADMINISTRARE POST-PROVISIONING│
-│  Ansible                                                │
+│  Ansible (de pe jumphost Ubuntu 22.04)                  │
 │  - Configurări generale (update, firewall, securitate)  │
 │  - Configurări specifice rolului (nginx, MySQL, CMS)    │
-│  - Administrare continuă (patching, audit)              │
+│  - Administrare continuă (patching, audit, hardening)   │
 ├─────────────────────────────────────────────────────────┤
 │  Nivel 2: CONSTRUIRE IMAGINI (GOLDEN IMAGES)            │
 │  Packer                                                 │
-│  - Rocky Linux 10 hardenizat                            │
+│  - Ubuntu 22.04 LTS hardenizat                          │
 │  - Windows Server 2022 hardenizat                       │
 │  - Publicare în Azure Compute Gallery                   │
 ├─────────────────────────────────────────────────────────┤
 │  Nivel 1: DEFINIRE INFRASTRUCTURĂ (IaC)                 │
 │  Bicep (Azure-native)                                   │
 │  - Resource Groups, VNet, Subnets, NSG, Route Tables    │
-│  - VM-uri din golden images                             │
-│  - Key Vault, Monitor, Policy                           │
+│  - VM-uri (marketplace sau golden images)               │
+│  - Key Vault, Monitor, Policy, Custom Script Extension  │
+│  - IP-uri publice persistente (RG separat)              │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -236,64 +254,77 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~7�
 
 ## 6. Planul de implementare (ordine logică și tehnică)
 
-### Etapa 1 — Pregătirea mediului de dezvoltare
+### Etapa 1 — Pregătirea mediului de dezvoltare ✅
 
-- Instalarea Rocky Linux 10 (VM locală de dezvoltare)
+- Instalarea Windows 11 (mașina de dezvoltare locală)
 - Instalarea uneltelor:
   - Azure CLI
   - Packer (HashiCorp)
-  - Ansible
   - Visual Studio Code + extensii (Bicep, Ansible, Azure)
 - Configurarea autentificării Azure:
-  - Creare Service Principal
   - Configurare Azure CLI (`az login`)
-  - Stocare credențiale în variabile de mediu
+  - Configurare subscription și tenant ID
 
 **Rezultat:** Mediu local complet funcțional pentru IaC.
 
-### Etapa 2 — Crearea imaginilor personalizate cu Packer
+### Etapa 2 — Crearea imaginilor personalizate cu Packer 🔶
 
 - Definirea template-urilor Packer (format HCL):
-  - **Rocky Linux 10:** update OS, hardening de bază, instalare pachete comune (curl, wget, vim, firewalld, etc.)
-  - **Windows Server 2022:** update OS, hardening de bază, instalare features (IIS opțional, .NET, MySQL client tools)
-- Aplicarea CIS Benchmarks de bază
+  - **Ubuntu 22.04 LTS:** update OS, hardening de bază, instalare pachete comune
+  - **Windows Server 2022:** update OS, hardening de bază, activare WinRM
 - Publicarea imaginilor în **Azure Compute Gallery**
+- **Notă:** În faza actuală se utilizează imagini marketplace (`useMarketplaceImages = true`). Imaginile Packer vor fi activate ulterior.
 
 **Rezultat:** Imagini standardizate, reutilizabile, securizate.
 
-### Etapa 3 — Definirea infrastructurii Azure cu Bicep
+### Etapa 3 — Definirea infrastructurii Azure cu Bicep ✅
 
 - Crearea modulelor Bicep:
   - `resource-group.bicep` — Resource Group
   - `networking.bicep` — VNet, Subnets, Route Tables
   - `nsg.bicep` — Network Security Groups și reguli
   - `keyvault.bicep` — Azure Key Vault
-  - `monitoring.bicep` — Log Analytics Workspace, Diagnostic Settings
+  - `monitoring.bicep` — Log Analytics Workspace
   - `policy.bicep` — Azure Policy Assignments
-  - `compute.bicep` — VM-uri din imaginile Packer (NIC, OS Disk, etc.)
-- Parametrizare pentru medii multiple (prod/dev) prin fișiere `.bicepparam`
-- Validare (`az deployment sub what-if`) și deploy prin Azure CLI
+  - `compute.bicep` — VM-uri cu NIC, OS Disk, Custom Script Extension
+  - `persistent-ips.bicep` — IP-uri publice statice în RG separat
+  - `backup.bicep` — Recovery Services Vault (dezactivat temporar)
+- Parametrizare prin fișiere `.bicepparam` (prod.bicepparam)
+- Custom Script Extension pentru bootstrap automat la crearea VM-urilor:
+  - Linux (vm-jmp-01): `scripts/bootstrap-jumphost.sh`
+  - Windows (vm-db-01, vm-fs-01): `scripts/bootstrap-windows-winrm.ps1`
+- IP-uri publice persistente (supraviețuiesc `az group delete`)
+- Deploy prin Azure CLI (`az deployment sub create`)
 
 **Rezultat:** Infrastructură completă, declarativă, reproductibilă, idempotentă.
 
-### Etapa 4 — Automatizarea configurării cu Ansible
+### Etapa 4 — Automatizarea configurării cu Ansible ✅
 
-- Definirea inventarului dinamic (sau static) pentru cele 5 VM-uri
-- **Playbook-uri generale:**
-  - Update OS (Windows + Linux)
-  - Configurare firewall (firewalld / Windows Firewall)
-  - Politici de securitate (SSH hardening, disable root, password policies)
-- **Playbook-uri specifice:**
-  - **vm-web-01:** nginx + deploy site static SC MEDIA SRL
-  - **vm-app-01:** configurare backend aplicație
-  - **vm-cms-01:** WordPress + Postfix
-  - **vm-db-01:** MySQL Server pe Windows
-  - **vm-jmp-01:** instrumente administrare, configurare RDP
-- Testarea idempotentei (rulări multiple, same result)
+- Inventar dinamic Azure (`azure_rm.yml`) + inventar static de fallback (`hosts.ini`)
+- **11 roluri Ansible implementate:**
+  - `common` — baseline Linux (Ubuntu) și Windows (update, firewall, NTP, SSH hardening)
+  - `nginx` — reverse proxy cu SSL Let's Encrypt pe vm-web-01
+  - `appserver` — nginx backend API pe port 8080 pe vm-app-01
+  - `wordpress` — WordPress + PHP-FPM pe vm-cms-01
+  - `postfix` — server SMTP pe vm-cms-01
+  - `mysql` — MySQL Community Server 8.0 pe vm-db-01 (Windows)
+  - `fileserver` — SMB shares pe vm-fs-01 (Windows)
+  - `hardening` — CIS Benchmarks (audit, kernel, servicii, parole)
+  - `jumphost` — configurare Ubuntu jumphost (XFCE, xRDP, Ansible, az CLI)
+  - `sqlserver` — SQL Server Express 2022 (alternativă la MySQL)
+  - `mssql` — variantă alternativă SQL Server
+- **5 playbook-uri:**
+  - `site.yml` — orchestrator principal (7 faze: baseline → DB → app → files → hardening → verify)
+  - `setup-ssh-keys.yml` — generare și distribuire chei SSH
+  - `deploy-services.yml` — deploy doar servicii (fără baseline)
+  - `harden-all.yml` — hardening CIS Benchmarks
+  - `bootstrap-windows-winrm.yml` — activare WinRM via `az vm run-command`
+- Conexiuni: SSH pentru Linux, WinRM (NTLM, port 5985) pentru Windows
+- Ansible rulează de pe vm-jmp-01 (jumphost Ubuntu)
 
 **Rezultat:** Sisteme configurate uniform și administrabile automat.
 
-### Etapa 5 — Integrarea completă în Azure DevOps
+### Etapa 5 — Integrarea completă în Azure DevOps ⏳
 
 - Creare organizație și proiect Azure DevOps
 - Creare repository Git cu structura de directoare definită
@@ -306,9 +337,9 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~7�
 
 **Rezultat:** Flux DevOps complet automatizat (CI/CD).
 
-### Etapa 6 — Testare, validare și optimizare
+### Etapa 6 — Testare, validare și optimizare ⏳
 
-- Teste funcționale: verificare servicii (nginx, MySQL, WordPress, mail)
+- Teste funcționale: verificare servicii (nginx, MySQL, WordPress, mail, SMB)
 - Teste de securitate: NSG audit, port scanning, CIS compliance check
 - Teste de idempotență: re-deploy Bicep + Ansible fără modificări
 - Teste de performanță: response time website, throughput DB
@@ -322,69 +353,76 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~7�
 ```
 IT/
 ├── packer/
-│   ├── rocky-linux/
-│   │   ├── rocky-linux.pkr.hcl          # Template Packer Rocky Linux 10
-│   │   ├── variables.pkr.hcl            # Variabile
+│   ├── ubuntu-2204/
+│   │   ├── ubuntu.pkr.hcl              # Template Packer Ubuntu 22.04 LTS
+│   │   ├── variables.pkr.hcl           # Variabile
 │   │   └── scripts/
-│   │       ├── base-setup.sh            # Update, pachete de bază
-│   │       └── hardening.sh             # CIS hardening
+│   │       ├── base-setup.sh           # Update, pachete de bază
+│   │       └── hardening.sh            # CIS hardening
 │   └── windows-server/
-│       ├── windows-server.pkr.hcl       # Template Packer Windows Server 2022
-│       ├── variables.pkr.hcl            # Variabile
+│       ├── windows-server.pkr.hcl      # Template Packer Windows Server 2022
+│       ├── variables.pkr.hcl           # Variabile
 │       └── scripts/
-│           ├── base-setup.ps1           # Update, features
-│           └── hardening.ps1            # CIS hardening
+│           ├── base-setup.ps1          # Update, features
+│           └── hardening.ps1           # CIS hardening
 │
 ├── bicep/
-│   ├── main.bicep                       # Orchestrator principal
+│   ├── main.bicep                      # Orchestrator principal
 │   ├── modules/
-│   │   ├── resource-group.bicep
-│   │   ├── networking.bicep             # VNet, Subnets, Route Tables
-│   │   ├── nsg.bicep                    # NSG + reguli
-│   │   ├── compute.bicep                # VM-uri
-│   │   ├── keyvault.bicep               # Key Vault
-│   │   ├── monitoring.bicep             # Log Analytics, Diagnostic Settings
-│   │   └── policy.bicep                 # Azure Policy
+│   │   ├── resource-group.bicep        # Resource Group
+│   │   ├── networking.bicep            # VNet, Subnets, Route Tables
+│   │   ├── nsg.bicep                   # NSG + reguli
+│   │   ├── compute.bicep               # VM-uri + Custom Script Extension
+│   │   ├── keyvault.bicep              # Key Vault
+│   │   ├── monitoring.bicep            # Log Analytics
+│   │   ├── policy.bicep                # Azure Policy
+│   │   ├── persistent-ips.bicep        # IP-uri publice persistente
+│   │   └── backup.bicep                # Recovery Services Vault
 │   └── parameters/
-│       ├── prod.bicepparam              # Parametri producție
-│       └── dev.bicepparam               # Parametri dezvoltare
+│       └── prod.bicepparam             # Parametri producție
 │
 ├── ansible/
-│   ├── ansible.cfg                      # Configurare Ansible
+│   ├── ansible.cfg                     # Configurare Ansible
 │   ├── inventory/
-│   │   ├── production.yml               # Inventar producție
-│   │   └── development.yml              # Inventar dezvoltare
+│   │   ├── azure_rm.yml                # Inventar dinamic Azure (principal)
+│   │   └── hosts.ini                   # Inventar static (fallback)
+│   ├── group_vars/
+│   │   ├── linux.yml                   # Variabile grup Linux
+│   │   ├── windows.yml                 # Variabile grup Windows
+│   │   └── jumphost.yml                # Variabile jumphost
 │   ├── playbooks/
-│   │   ├── site.yml                     # Master playbook
-│   │   ├── common.yml                   # Update OS, firewall, securitate
-│   │   ├── webserver.yml                # nginx + site SC MEDIA SRL
-│   │   ├── appserver.yml                # Backend aplicație
-│   │   ├── cmsserver.yml                # WordPress + Postfix
-│   │   ├── dbserver.yml                 # MySQL pe Windows
-│   │   └── jumphost.yml                 # Configurare management
+│   │   ├── site.yml                    # Master playbook (7 faze)
+│   │   ├── setup-ssh-keys.yml          # Distribuire chei SSH
+│   │   ├── deploy-services.yml         # Deploy servicii
+│   │   ├── harden-all.yml              # Hardening CIS
+│   │   └── bootstrap-windows-winrm.yml # Bootstrap WinRM
 │   ├── roles/
-│   │   ├── common/                      # Rol comun (update, securitate)
-│   │   ├── nginx/                       # Rol nginx
-│   │   ├── mysql/                       # Rol MySQL
-│   │   ├── wordpress/                   # Rol WordPress
-│   │   ├── postfix/                     # Rol Postfix
-│   │   └── hardening/                   # Rol securitate
+│   │   ├── common/                     # Baseline (Linux + Windows)
+│   │   ├── nginx/                      # Reverse proxy + SSL
+│   │   ├── appserver/                  # Backend API (nginx:8080)
+│   │   ├── wordpress/                  # WordPress + PHP-FPM
+│   │   ├── postfix/                    # Server mail SMTP
+│   │   ├── mysql/                      # MySQL 8.0 (Windows)
+│   │   ├── sqlserver/                  # SQL Server Express (alternativă)
+│   │   ├── mssql/                      # SQL Server (variantă)
+│   │   ├── fileserver/                 # SMB File Server (Windows)
+│   │   ├── hardening/                  # CIS Benchmarks
+│   │   └── jumphost/                   # Ubuntu jumphost management
 │   └── files/
-│       └── website/                     # Fișiere site SC MEDIA SRL
+│       └── website/                    # Fișiere site SC MEDIA SRL
 │
-├── pipelines/
-│   ├── packer-build.yml                 # Pipeline build imagini
-│   ├── bicep-deploy.yml                 # Pipeline deploy infrastructură
-│   ├── ansible-configure.yml            # Pipeline configurare post-deploy
-│   └── templates/
-│       └── common-steps.yml             # Pași comuni reutilizabili
+├── scripts/
+│   ├── bootstrap-jumphost.sh           # Bootstrap jumphost (CSE la crearea VM)
+│   └── bootstrap-windows-winrm.ps1     # Bootstrap WinRM (CSE la crearea VM)
 │
 ├── docs/
-│   └── disertatie/                      # Documentația lucrării
+│   ├── PLAN_PROIECT.md                 # Planul complet al proiectului
+│   └── disertatie/                     # Documentația lucrării
 │       ├── capitole/
 │       └── figuri/
 │
 ├── .gitignore
+├── DEPLOYMENT_GUIDE.md
 └── README.md
 ```
 
@@ -428,20 +466,24 @@ IT/
 ### Capitolul 5 — Implementarea practică
 - 5.1 Configurarea mediului de dezvoltare
 - 5.2 Crearea imaginilor personalizate cu Packer
-  - 5.2.1 Imagine Rocky Linux 10
+  - 5.2.1 Imagine Ubuntu 22.04 LTS
   - 5.2.2 Imagine Windows Server 2022
   - 5.2.3 Publicarea în Azure Compute Gallery
 - 5.3 Definirea infrastructurii cu Bicep
   - 5.3.1 Modulul de rețea (VNet, Subnets, NSG)
-  - 5.3.2 Modulul de calcul (VM-uri)
+  - 5.3.2 Modulul de calcul (VM-uri, Custom Script Extension)
   - 5.3.3 Modulul de monitorizare și guvernanță
-  - 5.3.4 Orchestrarea și parametrizarea
+  - 5.3.4 IP-uri publice persistente
+  - 5.3.5 Orchestrarea și parametrizarea
 - 5.4 Automatizarea configurării cu Ansible
-  - 5.4.1 Configurări comune
-  - 5.4.2 Configurarea serverului web (nginx)
-  - 5.4.3 Configurarea serverului de bază de date (MySQL)
-  - 5.4.4 Configurarea serverului CMS/Mail
-  - 5.4.5 Configurarea jumphost-ului
+  - 5.4.1 Configurări comune (baseline Linux și Windows)
+  - 5.4.2 Configurarea serverului web (nginx reverse proxy + SSL)
+  - 5.4.3 Configurarea serverului de aplicații (nginx backend)
+  - 5.4.4 Configurarea serverului de bază de date (MySQL pe Windows)
+  - 5.4.5 Configurarea serverului CMS/Mail (WordPress + Postfix)
+  - 5.4.6 Configurarea serverului de fișiere (SMB pe Windows)
+  - 5.4.7 Configurarea jumphost-ului (Ubuntu + Ansible Control Node)
+  - 5.4.8 Hardening CIS Benchmarks
 - 5.5 Integrarea în Azure DevOps
   - 5.5.1 Structura repository-ului
   - 5.5.2 Pipeline-uri CI/CD
@@ -454,8 +496,9 @@ IT/
 - 6.4 Gestionarea secretelor cu Azure Key Vault
 - 6.5 Controlul accesului (RBAC, Least Privilege)
 - 6.6 Guvernanța cu Azure Policy
-- 6.7 Monitorizarea și alertele de securitate
-- 6.8 Audit și conformitate
+- 6.7 SSL/TLS cu Let's Encrypt (certificat automat, HSTS, OCSP)
+- 6.8 Monitorizarea și alertele de securitate
+- 6.9 Audit și conformitate
 
 ### Capitolul 7 — Testare și validare
 - 7.1 Metodologii de testare aplicate
@@ -489,26 +532,27 @@ IT/
 
 | Tip resursă | Pattern | Exemplu |
 |------------|---------|---------|
-| Resource Group | `rg-{proiect}-{mediu}-{regiune}` | `rg-media-prod-westeurope` |
-| Virtual Network | `vnet-{proiect}-{mediu}` | `vnet-media-prod` |
+| Resource Group | `rg-{proiect}-{mediu}-{regiune}` | `rg-mediasrl-productie-swedencentral` |
+| Persistent RG | `rg-{proiect}-persistent` | `rg-mediasrl-persistent` |
+| Virtual Network | `vnet-{proiect}-{mediu}` | `vnet-mediasrl-productie` |
 | Subnet | `snet-{rol}` | `snet-prod`, `snet-dev`, `snet-mgmt` |
 | NSG | `nsg-{subnet}` | `nsg-prod`, `nsg-dev`, `nsg-mgmt` |
 | Route Table | `rt-{subnet}` | `rt-prod`, `rt-dev`, `rt-mgmt` |
 | VM | `vm-{rol}-{nr}` | `vm-web-01`, `vm-db-01`, `vm-jmp-01` |
 | NIC | `nic-{vm}` | `nic-vm-web-01` |
 | OS Disk | `osdisk-{vm}` | `osdisk-vm-web-01` |
-| Public IP | `pip-{vm}` | `pip-vm-jmp-01` |
-| Key Vault | `kv-{proiect}-{mediu}` | `kv-media-prod` |
-| Log Analytics | `log-{proiect}-{mediu}` | `log-media-prod` |
-| Compute Gallery | `gal_{proiect}` | `gal_media` |
-| Image Definition | `imgdef-{os}` | `imgdef-rockylinux10`, `imgdef-winserver2022` |
+| Public IP | `pip-{vm}` | `pip-vm-jmp-01`, `pip-vm-web-01` |
+| Key Vault | `kv-{proiect}-{mediu}` | `kv-mediasrl-productie` |
+| Log Analytics | `log-{proiect}-{mediu}` | `log-mediasrl-productie` |
+| Compute Gallery | `gal_{proiect}` | `gal_mediasrl` |
+| Image Definition | `imgdef-{os}` | `imgdef-ubuntu2204`, `imgdef-winserver2022` |
 
 ### Taguri obligatorii
 
 | Tag | Valori | Scop |
 |-----|--------|------|
-| `environment` | `prod` / `dev` | Identificare mediu |
-| `project` | `media` | Identificare proiect |
+| `environment` | `productie` / `dezvoltare` | Identificare mediu |
+| `project` | `mediasrl` | Identificare proiect |
 | `owner` | `IT Security SRL` | Responsabil |
 | `managed-by` | `bicep` | Metodă de provisionare |
 
@@ -534,8 +578,9 @@ IT/
         │         │
         │         ▼
         │    Infrastructura Azure (VM-uri, rețea, securitate)
+        │    + Custom Script Extension (bootstrap automat)
         │
-        └──→ [Ansible] Configurare post-deploy
+        └──→ [Ansible] Configurare post-deploy (de pe jumphost)
                   │
                   ▼
              VM-uri configurate și funcționale
@@ -555,4 +600,4 @@ IT/
 ---
 
 *Plan generat: 5 februarie 2026*
-*Ultima actualizare: 5 februarie 2026*
+*Ultima actualizare: 15 februarie 2026*
