@@ -32,5 +32,10 @@ mysql_port: 3306
 mysql_bind_address: "0.0.0.0"
 mysql_max_connections: 200
 
+# Business database (CRM data for API)
+mysql_business_db: "mediasrl_business"
+mysql_api_user: "api_user"
+mysql_api_password: "Api_P@ssw0rd_2026!"
+
 # Backup settings
 mysql_backup_retention_days: 7

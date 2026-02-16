@@ -1,0 +1,320 @@
+---
+# ============================================================
+# Playbook: harden-nginx-ssl.yml
+# Applies TLS/SSL hardening best practices to nginx (vm-web-01)
+#
+# Based on:
+#   - Linode TLS Deployment Best Practices Guide
+#   - Mozilla SSL Configuration Generator (Modern profile)
+#   - OWASP Security Headers recommendations
+#
+# Usage:
+#   ansible-playbook playbooks/harden-nginx-ssl.yml
+#
+# Before/After testing:
+#   Use https://www.ssllabs.com/ssltest/ to compare grades
+#   Expected: Before = B/C, After = A/A+
+# ============================================================
+
+- name: Harden Nginx SSL/TLS Configuration
+  hosts: vm-web-01
+  become: true
+  gather_facts: true
+  tags: [hardening, nginx, ssl]
+
+  vars:
+    # SSL/TLS protocols - ONLY TLSv1.2 and TLSv1.3 (TLSv1.0/1.1 deprecated)
+    ssl_protocols: "TLSv1.2 TLSv1.3"
+
+    # Cipher suites - strong ciphers only, PFS (Perfect Forward Secrecy) required
+    # Order matters: most secure first
+    ssl_ciphers: "ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384"
+
+    # ECDH curve for key exchange
+    ssl_ecdh_curve: "secp384r1"
+
+    # DH parameters file path and key size
+    dhparam_path: "/etc/ssl/certs/dhparam.pem"
+    dhparam_size: 4096
+
+    # Session settings
+    ssl_session_cache: "shared:SSL:10m"
+    ssl_session_timeout: "10m"
+
+    # HSTS max-age in seconds (1 year = 31536000)
+    hsts_max_age: 31536000
+
+    # DNS resolvers for OCSP stapling
+    ssl_resolver: "8.8.8.8 8.8.4.4"
+    ssl_resolver_timeout: "5s"
+
+    # SSL params config file path
+    ssl_params_file: "/etc/nginx/snippets/ssl-params.conf"
+
+    # Security headers config file path
+    security_headers_file: "/etc/nginx/snippets/security-headers.conf"
+
+    # Website domain (used in CSP header)
+    website_domain: "mediasrl.swedencentral.cloudapp.azure.com"
+
+  tasks:
+
+    # ============================================================
+    # Phase 1: Generate DH Parameters (4096-bit)
+    # ============================================================
+
+    - name: Check if DH parameters file exists
+      stat:
+        path: "{{ dhparam_path }}"
+      register: dhparam_stat
+      tags: [ssl, dhparam]
+
+    - name: Generate DH parameters (4096-bit) - this takes 5-15 minutes
+      command: openssl dhparam -out {{ dhparam_path }} {{ dhparam_size }}
+      when: not dhparam_stat.stat.exists
+      register: dhparam_gen
+      tags: [ssl, dhparam]
+
+    - name: Set permissions on DH parameters file
+      file:
+        path: "{{ dhparam_path }}"
+        owner: root
+        group: root
+        mode: '0644'
+      tags: [ssl, dhparam]
+
+    # ============================================================
+    # Phase 2: Create SSL parameters snippet
+    # ============================================================
+
+    - name: Create nginx snippets directory
+      file:
+        path: /etc/nginx/snippets
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      tags: [ssl, config]
+
+    - name: Deploy SSL parameters configuration
+      copy:
+        dest: "{{ ssl_params_file }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # ============================================================
+          # SSL/TLS Hardening Parameters
+          # Managed by Ansible (harden-nginx-ssl.yml)
+          # DO NOT EDIT MANUALLY
+          #
+          # Based on:
+          #   - Linode TLS Deployment Best Practices
+          #   - Mozilla SSL Config Generator (Modern)
+          # ============================================================
+
+          # Protocols: only TLSv1.2 and TLSv1.3 (TLSv1.0/1.1 are deprecated)
+          ssl_protocols {{ ssl_protocols }};
+
+          # Server chooses cipher, not client
+          ssl_prefer_server_ciphers on;
+
+          # Strong cipher suites only (PFS required, AES-256-GCM preferred)
+          ssl_ciphers {{ ssl_ciphers }};
+
+          # Elliptic curve for ECDH key exchange
+          ssl_ecdh_curve {{ ssl_ecdh_curve }};
+
+          # Custom DH parameters (4096-bit, generated with openssl dhparam)
+          ssl_dhparam {{ dhparam_path }};
+
+          # Session settings
+          ssl_session_cache {{ ssl_session_cache }};
+          ssl_session_timeout {{ ssl_session_timeout }};
+          ssl_session_tickets off;
+
+          # OCSP Stapling (server fetches certificate status, not client)
+          ssl_stapling on;
+          ssl_stapling_verify on;
+          resolver {{ ssl_resolver }} valid=300s;
+          resolver_timeout {{ ssl_resolver_timeout }};
+
+          # Connection timeout
+          keepalive_timeout 75;
+      notify: reload nginx
+      tags: [ssl, config]
+
+    # ============================================================
+    # Phase 3: Create Security Headers snippet
+    # ============================================================
+
+    - name: Deploy security headers configuration
+      copy:
+        dest: "{{ security_headers_file }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # ============================================================
+          # Security Headers
+          # Managed by Ansible (harden-nginx-ssl.yml)
+          # DO NOT EDIT MANUALLY
+          #
+          # Test with: https://securityheaders.com
+          # ============================================================
+
+          # HSTS: force HTTPS for 1 year, including subdomains
+          add_header Strict-Transport-Security "max-age={{ hsts_max_age }}; includeSubDomains" always;
+
+          # Prevent clickjacking: deny iframe embedding
+          add_header X-Frame-Options "DENY" always;
+
+          # Prevent MIME type sniffing
+          add_header X-Content-Type-Options "nosniff" always;
+
+          # XSS Protection (legacy browsers)
+          add_header X-XSS-Protection "1; mode=block" always;
+
+          # Referrer policy: send origin only on cross-origin requests
+          add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+          # Content Security Policy: restrict resource loading
+          add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';" always;
+
+          # Permissions Policy: restrict browser features
+          add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+      notify: reload nginx
+      tags: [ssl, headers]
+
+    # ============================================================
+    # Phase 4: Update nginx.conf (global SSL settings)
+    # ============================================================
+
+    - name: Backup current nginx.conf
+      copy:
+        src: /etc/nginx/nginx.conf
+        dest: /etc/nginx/nginx.conf.pre-hardening
+        remote_src: yes
+      tags: [ssl, config, backup]
+
+    - name: Update nginx.conf - replace SSL block with include
+      replace:
+        path: /etc/nginx/nginx.conf
+        regexp: |
+          \s*# SSL/TLS settings.*?\n(?:\s+ssl_\w+[^;]*;\n)+\s*ssl_session_timeout[^;]*;
+        replace: |4
+
+              # SSL/TLS hardening (managed by harden-nginx-ssl.yml)
+              include /etc/nginx/snippets/ssl-params.conf;
+      notify: reload nginx
+      tags: [ssl, config]
+
+    # ============================================================
+    # Phase 5: Update site config (add security headers)
+    # ============================================================
+
+    - name: Backup current site configuration
+      copy:
+        src: /etc/nginx/sites-available/mediasrl.conf
+        dest: /etc/nginx/sites-available/mediasrl.conf.pre-hardening
+        remote_src: yes
+      failed_when: false
+      tags: [ssl, config, backup]
+
+    - name: Check if security headers are already included in site config
+      command: grep -c 'security-headers.conf' /etc/nginx/sites-available/mediasrl.conf
+      register: headers_included
+      changed_when: false
+      failed_when: false
+      tags: [ssl, config]
+
+    - name: Add security headers include to HTTPS server block
+      lineinfile:
+        path: /etc/nginx/sites-available/mediasrl.conf
+        insertafter: 'ssl_certificate_key'
+        line: '    include /etc/nginx/snippets/security-headers.conf;'
+        state: present
+      when: headers_included.stdout | int == 0
+      notify: reload nginx
+      tags: [ssl, config]
+
+    - name: Remove old HSTS header from site config (now in snippet)
+      lineinfile:
+        path: /etc/nginx/sites-available/mediasrl.conf
+        regexp: 'add_header Strict-Transport-Security'
+        state: absent
+      notify: reload nginx
+      tags: [ssl, config]
+
+    - name: Remove old security headers from nginx.conf (now in snippet)
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: 'add_header X-(Frame-Options|Content-Type-Options|XSS-Protection)'
+        state: absent
+      notify: reload nginx
+      tags: [ssl, config]
+
+    - name: Remove old Referrer-Policy from nginx.conf
+      lineinfile:
+        path: /etc/nginx/nginx.conf
+        regexp: 'add_header Referrer-Policy'
+        state: absent
+      notify: reload nginx
+      tags: [ssl, config]
+
+    # ============================================================
+    # Phase 6: Validate and apply
+    # ============================================================
+
+    - name: Validate nginx configuration
+      command: nginx -t
+      register: nginx_validate
+      changed_when: false
+      tags: [ssl, validate]
+
+    - name: Display validation result
+      debug:
+        msg: "{{ nginx_validate.stderr }}"
+      tags: [ssl, validate]
+
+  handlers:
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
+
+  post_tasks:
+    - name: Display hardening summary
+      debug:
+        msg: |
+          ============================================================
+          NGINX SSL/TLS HARDENING APPLIED
+          ============================================================
+
+          Changes applied:
+            1. DH Parameters: {{ dhparam_path }} ({{ dhparam_size }}-bit)
+            2. SSL Protocols: {{ ssl_protocols }}
+            3. Cipher Suites: {{ ssl_ciphers }}
+            4. ECDH Curve: {{ ssl_ecdh_curve }}
+            5. Session Tickets: OFF (Perfect Forward Secrecy)
+            6. OCSP Stapling: ON
+            7. HSTS: {{ hsts_max_age }}s (1 year) with includeSubDomains
+            8. Security Headers: X-Frame-Options DENY, CSP, Permissions-Policy
+            9. Backups saved: *.pre-hardening
+
+          Test your grade:
+            - SSL Labs: https://www.ssllabs.com/ssltest/analyze.html?d={{ website_domain }}
+            - Security Headers: https://securityheaders.com/?q={{ website_domain }}
+
+          Expected improvement:
+            Before hardening: Grade B or C
+            After hardening:  Grade A or A+
+
+          To rollback:
+            sudo cp /etc/nginx/nginx.conf.pre-hardening /etc/nginx/nginx.conf
+            sudo cp /etc/nginx/sites-available/mediasrl.conf.pre-hardening /etc/nginx/sites-available/mediasrl.conf
+            sudo rm /etc/nginx/snippets/ssl-params.conf /etc/nginx/snippets/security-headers.conf
+            sudo nginx -t && sudo systemctl reload nginx
+
+          ============================================================
+      tags: [ssl, summary]

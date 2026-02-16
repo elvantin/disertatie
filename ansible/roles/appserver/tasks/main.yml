@@ -14,22 +14,31 @@
 
 - name: Create application root directory
   ansible.builtin.file:
-    path: "{{ app_root }}"
+    path: "{{ item }}"
     state: directory
     owner: www-data
     group: www-data
     mode: '0755'
+  loop:
+    - "{{ app_root }}"
+    - "{{ app_root }}/api"
   tags: [appserver, config]
 
-- name: Deploy API index page
+- name: Deploy API JSON files
   ansible.builtin.copy:
-    dest: "{{ app_root }}/index.html"
-    content: |
-      {"service":"SC MEDIA SRL API","version":"1.0","status":"running"}
+    src: "api/{{ item }}"
+    dest: "{{ app_root }}/api/{{ item }}"
     owner: www-data
     group: www-data
     mode: '0644'
-  tags: [appserver, config]
+  loop:
+    - index.json
+    - services.json
+    - clients.json
+    - projects.json
+    - team.json
+    - stats.json
+  tags: [appserver, config, api]
 
 - name: Remove default nginx site
   ansible.builtin.file:

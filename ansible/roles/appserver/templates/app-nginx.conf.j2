@@ -6,24 +6,51 @@ server {
     server_name {{ app_server_name }};
 
     root {{ app_root }};
-    index index.html;
+    index index.json;
+
+    # Default content type for API
+    default_type application/json;
+
+    # CORS headers for cross-origin requests from WordPress
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Content-Type" always;
 
     # Health check endpoint
     location /health {
         access_log off;
-        default_type application/json;
-        return 200 '{"status":"ok","service":"mediasrl-api","host":"{{ inventory_hostname }}"}';
+        return 200 '{"status":"ok","service":"mediasrl-api","host":"{{ inventory_hostname }}","timestamp":"$time_iso8601"}';
     }
 
-    # API endpoints
-    location /api/ {
-        default_type application/json;
-        try_files $uri $uri/ /index.html;
+    # API root - serves index.json
+    location = /api/ {
+        try_files /api/index.json =404;
     }
 
-    # Default
+    # API endpoints - serve static JSON files
+    location /api/services {
+        try_files /api/services.json =404;
+    }
+
+    location /api/clients {
+        try_files /api/clients.json =404;
+    }
+
+    location /api/projects {
+        try_files /api/projects.json =404;
+    }
+
+    location /api/team {
+        try_files /api/team.json =404;
+    }
+
+    location /api/stats {
+        try_files /api/stats.json =404;
+    }
+
+    # Default - return 404 for unmapped routes
     location / {
-        try_files $uri $uri/ =404;
+        return 404 '{"error":"not_found","message":"Endpoint not found. See GET /api/ for available endpoints."}';
     }
 
     # Access and error logs

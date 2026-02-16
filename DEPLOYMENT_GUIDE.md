@@ -498,6 +498,108 @@ ansible-playbook playbooks/test-services.yml --tags connectivity
 1. Ruleaza mai intai `test-infrastructure.ps1` local (verifica ca Azure e OK)
 2. Apoi conecteaza-te la jumphost si ruleaza `test-services.yml` (verifica serviciile)
 
+### 5d. Hardening SSL/TLS Nginx (prezentare before/after)
+
+Playbook-ul `harden-nginx-ssl.yml` aplica best practices de securitate SSL/TLS pe vm-web-01. Ideal pentru demonstrarea in prezentare a imbunatatirii securitatii.
+
+**Pasul 1: Testeaza INAINTE de hardening**
+- Acceseaza: https://www.ssllabs.com/ssltest/analyze.html?d=mediasrl.swedencentral.cloudapp.azure.com
+- Noteaza calificativul (probabil B sau C)
+- Screenshot pentru prezentare
+
+**Pasul 2: Aplica hardening-ul** (de pe jumphost)
+```bash
+cd ~/ansible
+ansible-playbook playbooks/harden-nginx-ssl.yml
+```
+
+**Nota:** Generarea parametrilor DH (4096-bit) dureaza 5-15 minute la prima rulare.
+
+**Pasul 3: Testeaza DUPA hardening**
+- Acceseaza din nou SSL Labs (acelasi URL)
+- Calificativul ar trebui sa fie A sau A+
+- Screenshot pentru prezentare
+
+**Ce aplica playbook-ul:**
+
+| Setare | Inainte | Dupa |
+|--------|---------|------|
+| Protocoale | TLSv1.2 + TLSv1.3 | TLSv1.2 + TLSv1.3 (neschimbat) |
+| Cipher suites | Generice | Doar AES-256-GCM cu PFS |
+| DH Parameters | Lipsa | 4096-bit custom |
+| ECDH Curve | Default | secp384r1 |
+| Session Tickets | On | Off (PFS) |
+| OCSP Stapling | On | On (neschimbat) |
+| HSTS | 1 an, SAMEORIGIN | 1 an, DENY (mai strict) |
+| CSP Header | Lipsa | Restrictiv (self only) |
+| Permissions-Policy | Lipsa | Camera/micro/geo dezactivate |
+
+**Rollback** (daca ceva nu merge):
+```bash
+sudo cp /etc/nginx/nginx.conf.pre-hardening /etc/nginx/nginx.conf
+sudo cp /etc/nginx/sites-available/mediasrl.conf.pre-hardening /etc/nginx/sites-available/mediasrl.conf
+sudo rm /etc/nginx/snippets/ssl-params.conf /etc/nginx/snippets/security-headers.conf
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+---
+
+## Continut demo generat
+
+Proiectul include continut demo coerent pentru prezentarea proiectului de master. Toate datele sunt interconectate: site-ul WordPress afiseaza informatii despre companie, baza de date contine date business, API-ul serveste aceleasi date in format JSON, iar file server-ul contine documente ale companiei.
+
+### Continut WordPress (vm-cms-01)
+
+| Pagina | Continut |
+|--------|----------|
+| Acasa | Prezentare companie, servicii, call-to-action |
+| Despre Noi | Istoric, misiune, viziune, echipa (5 angajati) |
+| Servicii | 6 servicii cu descrieri si preturi orientative |
+| Portofoliu | 4 proiecte finalizate cu rezultate concrete |
+| Contact | Date contact, program, cum ne gasiti |
+
+**Blog:** 3 articole (strategie PR, tendinte social media, studiu de caz TechVision SRL)
+
+### Baza de date business (vm-db-01)
+
+Database `mediasrl_business` (pe langa `wordpress_db`):
+
+| Tabela | Inregistrari | Continut |
+|--------|-------------|----------|
+| angajati | 5 | Echipa SC MEDIA SRL |
+| servicii | 6 | Serviciile oferite (identice cu pagina Servicii) |
+| clienti | 8 | Companii fictive din diverse industrii |
+| proiecte | 10 | Proiecte legate de clienti + servicii |
+| facturi | 14 | Facturi legate de proiecte |
+
+**Views:** `v_sumar_clienti` (sumar financiar per client), `v_statistici` (statistici companie)
+**User API:** `api_user` (acces SELECT pe mediasrl_business)
+
+### API REST (vm-app-01)
+
+Disponibil la `https://mediasrl.swedencentral.cloudapp.azure.com/api/`:
+
+| Endpoint | Descriere |
+|----------|-----------|
+| `GET /api/` | Informatii API + lista endpoints |
+| `GET /api/services` | Lista serviciilor |
+| `GET /api/clients` | Lista clientilor (date publice) |
+| `GET /api/projects` | Portofoliu proiecte |
+| `GET /api/team` | Echipa |
+| `GET /api/stats` | Statistici companie |
+| `GET /health` | Health check |
+
+### Documente File Server (vm-fs-01)
+
+| Share | Fisier | Continut |
+|-------|--------|----------|
+| Public | Bine_ati_venit.txt | Mesaj bun venit + instructiuni acces |
+| Public | Regulament_Intern.txt | Regulament intern extras |
+| Marketing | Calendar_Campanii_2026.txt | Calendar campanii pe trimestre |
+| Marketing | Template_Propunere_Client.txt | Template oferta client |
+| IT | Proceduri_Backup.txt | Proceduri backup si recovery |
+| Backups | README.txt | Instructiuni director backup |
+
 ---
 
 SC MEDIA SRL - Deployment Guide

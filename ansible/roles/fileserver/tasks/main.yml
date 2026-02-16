@@ -84,29 +84,209 @@
     Set-SmbServerConfiguration -RequireSecuritySignature $true -Force
   tags: [fileserver, smb, security]
 
-- name: Create readme file in Public share
+- name: Create welcome document in Public share
   ansible.windows.win_copy:
     content: |
       ==========================================
-      SC MEDIA SRL - File Server
+      SC MEDIA SRL - Bine ati venit!
       ==========================================
 
-      Available Shares:
+      Bine ati venit in sistemul de fisiere al SC MEDIA SRL!
 
-      \\vm-fs-01\Public     - Public shared folder
-      \\vm-fs-01\Marketing  - Marketing department
-      \\vm-fs-01\IT         - IT department
-      \\vm-fs-01\Backups    - Backup storage
+      Acest server de fisiere (vm-fs-01) gazduieste documentele
+      companiei, organizate pe departamente:
 
-      Access from Linux:
-      sudo mount -t cifs //vm-fs-01/Public /mnt/public -o username=azureadmin,password=***
+      \\vm-fs-01\Public     - Documente publice (acces: toti angajatii)
+      \\vm-fs-01\Marketing  - Departamentul Marketing (acces: echipa MKT)
+      \\vm-fs-01\IT         - Departamentul IT (acces: administratori)
+      \\vm-fs-01\Backups    - Backup-uri centralizate (acces: administratori)
 
-      Access from Windows:
-      net use Z: \\vm-fs-01\Public
+      Acces din Linux:
+        sudo mount -t cifs //vm-fs-01/Public /mnt/public -o username=azureadmin,password=***
+      Acces din Windows:
+        net use Z: \\vm-fs-01\Public
+
+      Pentru probleme tehnice, contactati departamentul IT:
+      Email: it@media-srl.ro | Telefon intern: 200
 
       ==========================================
-    dest: C:\Shares\Public\README.txt
-  tags: [fileserver, documentation]
+      Ultima actualizare: Februarie 2026
+    dest: C:\Shares\Public\Bine_ati_venit.txt
+  tags: [fileserver, documents]
+
+- name: Create internal regulation document
+  ansible.windows.win_copy:
+    content: |
+      ==========================================
+      SC MEDIA SRL - Regulament Intern (extras)
+      ==========================================
+      Versiune: 2.0 | Data: Ianuarie 2026
+
+      1. PROGRAM DE LUCRU
+         - Luni-Vineri: 09:00 - 18:00
+         - Pauza de masa: 12:30 - 13:30
+         - Program flexibil: posibil cu acordul managerului direct
+
+      2. UTILIZAREA ECHIPAMENTELOR IT
+         - Echipamentele companiei se utilizeaza exclusiv in scop profesional
+         - Este interzisa instalarea de software neautorizat
+         - Parolele se schimba la fiecare 90 de zile (minim 12 caractere)
+         - Raportati imediat orice incident de securitate la it@media-srl.ro
+
+      3. POLITICA DE CONFIDENTIALITATE
+         - Datele clientilor sunt strict confidentiale
+         - Este interzisa partajarea informatiilor despre proiecte in curs
+         - Documentele confidentiale se stocheaza doar pe serverul companiei
+
+      4. COMUNICARE INTERNA
+         - Comunicarea oficiala: email corporativ (@media-srl.ro)
+         - Intalniri de echipa: Luni, 10:00 (saptamanal)
+
+      5. CONCEDII
+         - 21 zile lucratoare concediu de odihna/an
+         - Cererea se depune cu minim 5 zile inainte
+
+      ==========================================
+      Aprobat de: Elena Popescu, Director General
+    dest: C:\Shares\Public\Regulament_Intern.txt
+  tags: [fileserver, documents]
+
+- name: Create marketing campaigns calendar
+  ansible.windows.win_copy:
+    content: |
+      ==========================================
+      SC MEDIA SRL - Calendar Campanii 2026
+      ==========================================
+      Departament: Marketing | Responsabil: Maria Dumitrescu
+
+      T1 (Ianuarie - Martie):
+        - HealthPlus SRL: Campanie "Sanatate la inceput de an"
+          Canale: Google Ads + Facebook | Buget: 5.000 RON/luna
+        - EduSmart Academy: Campanie admitere sesiunea vara
+          Canale: LinkedIn + Facebook | Buget: 3.500 RON/luna
+
+      T2 (Aprilie - Iunie):
+        - AutoSpeed SRL: Campanie modele noi primavara
+          Canale: Google Ads Display + YouTube | Buget: 5.000 RON/luna
+        - Client nou (TBD): Campanie lansare
+          Buget estimat: 8.000 RON
+
+      T3 (Iulie - Septembrie):
+        - HealthPlus SRL: Campanie check-up de vara
+          Canale: Email + Social Media | Buget: 4.000 RON/luna
+        - GreenLeaf Bio (potential reinnoire): Campanie toamna
+
+      T4 (Octombrie - Decembrie):
+        - Toti clientii: Campanii Black Friday + Craciun
+        - Rapoarte anuale si planificare 2027
+
+      ==========================================
+      Nota: Calendar orientativ, se actualizeaza lunar
+    dest: C:\Shares\Marketing\Calendar_Campanii_2026.txt
+  tags: [fileserver, documents]
+
+- name: Create client proposal template
+  ansible.windows.win_copy:
+    content: |
+      ==========================================
+      SC MEDIA SRL - Template Propunere Client
+      ==========================================
+
+      PROPUNERE DE COLABORARE
+
+      Catre: [NUMELE COMPANIEI]
+      In atentia: [PERSOANA DE CONTACT]
+      Data: [DATA]
+      Referinta: [REF-AAAA-NNN]
+
+      1. DESPRE SC MEDIA SRL
+      Agentie de PR si marketing digital, fondata in 2018,
+      cu sediul in Bucuresti. Echipa de 5 specialisti.
+
+      2. INTELEGEREA NEVOILOR DVS.
+      [Descriere succinta a nevoilor clientului]
+
+      3. SOLUTIA PROPUSA
+      Serviciu: [DENUMIRE]
+      Durata: [X luni / proiect one-time]
+      Livrabile:
+        - [Livrabil 1]
+        - [Livrabil 2]
+        - [Livrabil 3]
+
+      4. INVESTITIE
+      Pret: [SUMA] RON + TVA
+      Plata: [lunar / 50% avans + 50% la livrare]
+
+      5. ECHIPA DEDICATA
+      Account Manager: Ana Vasilescu (ana.vasilescu@media-srl.ro)
+
+      ==========================================
+      SC MEDIA SRL | CUI: RO 41234567
+      Str. Victoriei 45, Sector 1, Bucuresti
+      Tel: +40 21 300 1234 | office@media-srl.ro
+    dest: C:\Shares\Marketing\Template_Propunere_Client.txt
+  tags: [fileserver, documents]
+
+- name: Create IT backup procedures document
+  ansible.windows.win_copy:
+    content: |
+      ==========================================
+      SC MEDIA SRL - Proceduri Backup si Recovery
+      ==========================================
+      Departament: IT | Versiune: 1.0 | Data: Februarie 2026
+
+      1. POLITICA DE BACKUP
+         - Backup-uri zilnice automate (incremental): 02:00
+         - Backup-uri saptamanale complete: Duminica 03:00
+         - Retentie: 7 zile (zilnic), 4 saptamani (saptamanal)
+
+      2. CE SE FACE BACKUP
+         - MySQL (vm-db-01): wordpress_db + mediasrl_business
+         - WordPress (vm-cms-01): /var/www/wordpress
+         - Ansible (vm-jmp-01): ~/ansible
+         - File server (vm-fs-01): C:\Shares
+
+      3. PROCEDURA DE RESTORE
+         a) Identificare punct de restore
+         b) Notificare echipa afectata
+         c) Oprire servicii dependente
+         d) Restore din backup
+         e) Verificare integritate
+         f) Repornire servicii
+
+      4. CONTACTE URGENTA
+         - Admin sistem: it@media-srl.ro
+         - Azure Support: support.microsoft.com
+         - Urgenta: +40 721 100 001 (Elena Popescu)
+
+      ==========================================
+      CONFIDENTIAL - Doar uz intern IT
+    dest: C:\Shares\IT\Proceduri_Backup.txt
+  tags: [fileserver, documents]
+
+- name: Create backups readme
+  ansible.windows.win_copy:
+    content: |
+      ==========================================
+      SC MEDIA SRL - Director Backup-uri
+      ==========================================
+
+      Acest director contine backup-urile centralizate.
+
+      Structura planificata:
+        \Backups\mysql\     - Backup-uri baze de date
+        \Backups\wordpress\ - Backup-uri fisiere WordPress
+        \Backups\configs\   - Backup-uri configuratii
+        \Backups\logs\      - Log-uri operatiuni backup
+
+      ATENTIE: Nu stergeti manual fisiere din acest director!
+      Backup-urile se gestioneaza automat conform politicii
+      de retentie (7 zile zilnic, 4 saptamani saptamanal).
+
+      ==========================================
+    dest: C:\Shares\Backups\README.txt
+  tags: [fileserver, documents]
 
 - name: Display file server information
   ansible.builtin.debug:

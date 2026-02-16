@@ -1,0 +1,70 @@
+{
+  "status": "ok",
+  "count": 8,
+  "data": [
+    {
+      "id": 1,
+      "nume_companie": "TechVision SRL",
+      "industrie": "Tehnologie",
+      "persoana_contact": "Mihai Stanescu",
+      "email": "mihai.stanescu@techvision.ro",
+      "status": "activ"
+    },
+    {
+      "id": 2,
+      "nume_companie": "GreenLeaf Bio SRL",
+      "industrie": "Cosmetice",
+      "persoana_contact": "Ioana Marinescu",
+      "email": "ioana@greenleafbio.ro",
+      "status": "activ"
+    },
+    {
+      "id": 3,
+      "nume_companie": "Cafe Central SRL",
+      "industrie": "HoReCa",
+      "persoana_contact": "Alexandru Radulescu",
+      "email": "alex@cafecentral.ro",
+      "status": "activ"
+    },
+    {
+      "id": 4,
+      "nume_companie": "HealthPlus SRL",
+      "industrie": "Sanatate",
+      "persoana_contact": "Dr. Carmen Moldovan",
+      "email": "carmen.moldovan@healthplus.ro",
+      "status": "activ"
+    },
+    {
+      "id": 5,
+      "nume_companie": "AutoSpeed SRL",
+      "industrie": "Auto",
+      "persoana_contact": "Bogdan Gheorghe",
+      "email": "bogdan@autospeed.ro",
+      "status": "activ"
+    },
+    {
+      "id": 6,
+      "nume_companie": "EduSmart Academy SRL",
+      "industrie": "Educatie",
+      "persoana_contact": "Prof. Laura Tanase",
+      "email": "laura@edusmart.ro",
+      "status": "activ"
+    },
+    {
+      "id": 7,
+      "nume_companie": "AgroFresh SRL",
+      "industrie": "Agricultura",
+      "persoana_contact": "Ion Munteanu",
+      "email": "ion@agrofresh.ro",
+      "status": "inactiv"
+    },
+    {
+      "id": 8,
+      "nume_companie": "FinConsult Partners SRL",
+      "industrie": "Financiar",
+      "persoana_contact": "Adriana Nistor",
+      "email": "adriana@finconsult.ro",
+      "status": "prospect"
+    }
+  ]
+}

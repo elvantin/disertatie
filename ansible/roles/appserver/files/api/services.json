@@ -1,0 +1,54 @@
+{
+  "status": "ok",
+  "count": 6,
+  "data": [
+    {
+      "id": 1,
+      "denumire": "PR si Comunicare Strategica",
+      "descriere": "Strategie de comunicare, comunicate de presa, relatii cu media, monitorizare media, gestionare crize",
+      "pret_lunar": 2500.00,
+      "pret_proiect": null,
+      "categorie": "PR"
+    },
+    {
+      "id": 2,
+      "denumire": "Social Media Management",
+      "descriere": "Strategie continut, creare postari, community management, campanii platite, rapoarte lunare",
+      "pret_lunar": 2000.00,
+      "pret_proiect": null,
+      "categorie": "Digital"
+    },
+    {
+      "id": 3,
+      "denumire": "Branding si Identitate Vizuala",
+      "descriere": "Design logo, manual de brand, materiale de prezentare, branding digital, rebranding complet",
+      "pret_lunar": null,
+      "pret_proiect": 5000.00,
+      "categorie": "Creatie"
+    },
+    {
+      "id": 4,
+      "denumire": "Organizare Evenimente",
+      "descriere": "Conferinte de presa, lansari produse, evenimente corporate, webinarii, logistica completa",
+      "pret_lunar": null,
+      "pret_proiect": 3000.00,
+      "categorie": "Evenimente"
+    },
+    {
+      "id": 5,
+      "denumire": "Marketing Digital",
+      "descriere": "Google Ads, SEO, email marketing, content marketing, analiza si optimizare continua",
+      "pret_lunar": 3500.00,
+      "pret_proiect": null,
+      "categorie": "Digital"
+    },
+    {
+      "id": 6,
+      "denumire": "Consultanta Strategica",
+      "descriere": "Audit comunicare, plan strategic, training echipe interne, mentoring departamente marketing",
+      "pret_lunar": null,
+      "pret_proiect": 1500.00,
+      "categorie": "Consultanta"
+    }
+  ]
+}

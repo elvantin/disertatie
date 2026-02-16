@@ -315,3 +315,11 @@
     state: absent
   when: wordpress_download.changed
   tags: [wordpress, cleanup]
+
+# ============================================================
+# Phase: Seed demo content (pages, posts, settings)
+# ============================================================
+
+- name: Include WordPress content seeding tasks
+  include_tasks: seed-content.yml
+  tags: [wordpress, seed]

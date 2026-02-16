@@ -1,0 +1,283 @@
+---
+# ============================================================
+# WordPress Content Seeding
+# Uses WP-CLI to install WordPress and populate with demo content
+# Target: vm-cms-01
+# ============================================================
+
+- name: Check if WordPress is already installed
+  command: wp core is-installed --path={{ wordpress_install_dir }}
+  register: wp_installed
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: "{{ wordpress_user }}"
+  tags: [wordpress, seed]
+
+- name: Install WordPress core via WP-CLI
+  command: >
+    wp core install
+    --path={{ wordpress_install_dir }}
+    --url="{{ wordpress_site_url }}"
+    --title="{{ wordpress_site_title }}"
+    --admin_user="{{ wordpress_admin_user }}"
+    --admin_password="{{ wordpress_admin_password }}"
+    --admin_email="{{ wordpress_admin_email }}"
+    --skip-email
+  become: true
+  become_user: "{{ wordpress_user }}"
+  when: wp_installed.rc != 0
+  tags: [wordpress, seed]
+
+# ============================================================
+# WordPress Settings
+# ============================================================
+
+- name: Configure WordPress settings
+  command: "wp option update {{ item.key }} '{{ item.value }}' --path={{ wordpress_install_dir }}"
+  become: true
+  become_user: "{{ wordpress_user }}"
+  loop:
+    - { key: 'blogname', value: 'SC MEDIA SRL' }
+    - { key: 'blogdescription', value: 'Agentie de PR, Marketing Digital si Comunicare Strategica' }
+    - { key: 'timezone_string', value: 'Europe/Bucharest' }
+    - { key: 'date_format', value: 'j F Y' }
+    - { key: 'time_format', value: 'H:i' }
+    - { key: 'WPLANG', value: 'ro_RO' }
+    - { key: 'permalink_structure', value: '/%postname%/' }
+    - { key: 'posts_per_page', value: '6' }
+    - { key: 'default_ping_status', value: 'closed' }
+    - { key: 'default_comment_status', value: 'closed' }
+  changed_when: false
+  tags: [wordpress, seed, settings]
+
+- name: Set permalink structure
+  command: wp rewrite structure '/%postname%/' --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  changed_when: false
+  tags: [wordpress, seed, settings]
+
+# ============================================================
+# Create Pages
+# ============================================================
+
+- name: Check if seed content already exists
+  command: wp post list --post_type=page --field=title --path={{ wordpress_install_dir }}
+  register: existing_pages
+  become: true
+  become_user: "{{ wordpress_user }}"
+  changed_when: false
+  tags: [wordpress, seed]
+
+- name: Create page - Acasa (Home)
+  command: >
+    wp post create
+    --post_type=page
+    --post_title='Acasa'
+    --post_status=publish
+    --post_content='{{ lookup("file", "pages/acasa.html") }}'
+    --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  register: page_home
+  when: "'Acasa' not in existing_pages.stdout"
+  tags: [wordpress, seed, pages]
+
+- name: Create page - Despre Noi
+  command: >
+    wp post create
+    --post_type=page
+    --post_title='Despre Noi'
+    --post_status=publish
+    --post_content='{{ lookup("file", "pages/despre-noi.html") }}'
+    --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  when: "'Despre Noi' not in existing_pages.stdout"
+  tags: [wordpress, seed, pages]
+
+- name: Create page - Servicii
+  command: >
+    wp post create
+    --post_type=page
+    --post_title='Servicii'
+    --post_status=publish
+    --post_content='{{ lookup("file", "pages/servicii.html") }}'
+    --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  when: "'Servicii' not in existing_pages.stdout"
+  tags: [wordpress, seed, pages]
+
+- name: Create page - Portofoliu
+  command: >
+    wp post create
+    --post_type=page
+    --post_title='Portofoliu'
+    --post_status=publish
+    --post_content='{{ lookup("file", "pages/portofoliu.html") }}'
+    --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  when: "'Portofoliu' not in existing_pages.stdout"
+  tags: [wordpress, seed, pages]
+
+- name: Create page - Contact
+  command: >
+    wp post create
+    --post_type=page
+    --post_title='Contact'
+    --post_status=publish
+    --post_content='{{ lookup("file", "pages/contact.html") }}'
+    --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  when: "'Contact' not in existing_pages.stdout"
+  tags: [wordpress, seed, pages]
+
+# ============================================================
+# Set Homepage
+# ============================================================
+
+- name: Get Acasa page ID
+  command: wp post list --post_type=page --title='Acasa' --field=ID --path={{ wordpress_install_dir }}
+  register: home_page_id
+  become: true
+  become_user: "{{ wordpress_user }}"
+  changed_when: false
+  tags: [wordpress, seed, settings]
+
+- name: Set static front page
+  command: "wp option update {{ item.key }} '{{ item.value }}' --path={{ wordpress_install_dir }}"
+  become: true
+  become_user: "{{ wordpress_user }}"
+  loop:
+    - { key: 'show_on_front', value: 'page' }
+    - { key: 'page_on_front', value: '{{ home_page_id.stdout | trim }}' }
+  when: home_page_id.stdout | trim | length > 0
+  changed_when: false
+  tags: [wordpress, seed, settings]
+
+# ============================================================
+# Create Blog Posts
+# ============================================================
+
+- name: Check existing blog posts
+  command: wp post list --post_type=post --field=title --path={{ wordpress_install_dir }}
+  register: existing_posts
+  become: true
+  become_user: "{{ wordpress_user }}"
+  changed_when: false
+  tags: [wordpress, seed]
+
+- name: Create blog post 1
+  command: >
+    wp post create
+    --post_type=post
+    --post_title='Cum sa-ti construiesti o strategie de PR eficienta in 2026'
+    --post_status=publish
+    --post_content='{{ lookup("file", "posts/strategie-pr.html") }}'
+    --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  when: "'strategie de PR' not in existing_posts.stdout"
+  tags: [wordpress, seed, posts]
+
+- name: Create blog post 2
+  command: >
+    wp post create
+    --post_type=post
+    --post_title='5 tendinte in Social Media Marketing pentru afaceri mici'
+    --post_status=publish
+    --post_content='{{ lookup("file", "posts/tendinte-social-media.html") }}'
+    --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  when: "'Social Media' not in existing_posts.stdout"
+  tags: [wordpress, seed, posts]
+
+- name: Create blog post 3
+  command: >
+    wp post create
+    --post_type=post
+    --post_title='Studiu de caz - Campania de rebranding TechVision SRL'
+    --post_status=publish
+    --post_content='{{ lookup("file", "posts/studiu-caz-techvision.html") }}'
+    --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  when: "'TechVision' not in existing_posts.stdout"
+  tags: [wordpress, seed, posts]
+
+# ============================================================
+# Create Navigation Menu
+# ============================================================
+
+- name: Check if main menu exists
+  command: wp menu list --fields=name --format=csv --path={{ wordpress_install_dir }}
+  register: existing_menus
+  become: true
+  become_user: "{{ wordpress_user }}"
+  changed_when: false
+  failed_when: false
+  tags: [wordpress, seed, menu]
+
+- name: Create main navigation menu
+  command: wp menu create "Meniu Principal" --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  when: "'Meniu Principal' not in existing_menus.stdout"
+  tags: [wordpress, seed, menu]
+
+- name: Add pages to navigation menu
+  command: >
+    wp menu item add-post "Meniu Principal" {{ item }}
+    --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  loop: "{{ menu_page_ids | default([]) }}"
+  when: "'Meniu Principal' not in existing_menus.stdout"
+  failed_when: false
+  tags: [wordpress, seed, menu]
+
+# ============================================================
+# Delete default content
+# ============================================================
+
+- name: Delete default Hello World post
+  command: wp post delete 1 --force --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  failed_when: false
+  changed_when: false
+  tags: [wordpress, seed, cleanup]
+
+- name: Delete default Sample Page
+  command: wp post delete 2 --force --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  failed_when: false
+  changed_when: false
+  tags: [wordpress, seed, cleanup]
+
+- name: Flush WordPress rewrite rules
+  command: wp rewrite flush --path={{ wordpress_install_dir }}
+  become: true
+  become_user: "{{ wordpress_user }}"
+  changed_when: false
+  tags: [wordpress, seed]
+
+- name: Display seed content status
+  debug:
+    msg: |
+      ============================================================
+      WordPress Content Seeded Successfully
+      ============================================================
+      Pages: Acasa, Despre Noi, Servicii, Portofoliu, Contact
+      Blog Posts: 3 articles
+      Homepage: Set to static page (Acasa)
+      Language: Romanian (ro_RO)
+      Timezone: Europe/Bucharest
+      ============================================================
+  tags: [wordpress, seed]

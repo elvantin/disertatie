@@ -374,7 +374,14 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
 - Teste de idempotență: Bicep what-if arată 0 modificări la re-deploy
 - Teste de performanță: response time, connect time
 
-**Rezultat:** Infrastructura complet validată prin teste automate (local + remote).
+- **Conținut demo generat (coerent și interconectat):**
+  - **WordPress** (vm-cms-01): 5 pagini (Acasă, Despre Noi, Servicii, Portofoliu, Contact) + 3 articole blog
+  - **MySQL** (vm-db-01): baza de date `mediasrl_business` cu 5 tabele (angajați, servicii, clienți, proiecte, facturi) + date seed + views
+  - **API REST** (vm-app-01): 6 endpoint-uri JSON (`/api/services`, `/api/clients`, `/api/projects`, `/api/team`, `/api/stats`)
+  - **File Server** (vm-fs-01): 6 documente demo (regulament intern, calendar campanii, template propunere, proceduri backup)
+  - Toate datele sunt coerente între ele (aceiași clienți, servicii, angajați peste tot)
+
+**Rezultat:** Infrastructura complet validată prin teste automate (local + remote), cu conținut demo funcțional pentru prezentare.
 
 ---
 
@@ -428,6 +435,7 @@ IT/
 │   │   ├── setup-ssh-keys.yml          # Distribuire chei SSH
 │   │   ├── deploy-services.yml         # Deploy servicii
 │   │   ├── harden-all.yml              # Hardening CIS
+│   │   ├── harden-nginx-ssl.yml        # Hardening SSL/TLS nginx (A+ grade)
 │   │   ├── bootstrap-windows-winrm.yml # Bootstrap WinRM
 │   │   └── test-services.yml           # Teste servicii (Etapa 6)
 │   ├── roles/

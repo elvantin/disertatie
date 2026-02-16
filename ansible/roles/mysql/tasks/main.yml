@@ -399,7 +399,55 @@
   tags: [mysql, database, monitoring]
 
 # ============================================================
-# Phase 8: Verification
+# Phase 8: Business database (CRM data for API)
+# ============================================================
+
+- name: Copy business seed data SQL file
+  ansible.windows.win_copy:
+    src: seed-business-data.sql
+    dest: C:\Temp\seed-business-data.sql
+  tags: [mysql, business, seed]
+
+- name: Check if business database exists
+  ansible.windows.win_shell: >-
+    & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
+    -p'{{ mysql_root_password }}'
+    -e "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='{{ mysql_business_db }}';" 2>$null
+  register: business_db_check
+  changed_when: false
+  no_log: true
+  tags: [mysql, business, seed]
+
+- name: Import business seed data
+  ansible.windows.win_shell: >-
+    & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
+    -p'{{ mysql_root_password }}'
+    --default-character-set=utf8mb4
+    < C:\Temp\seed-business-data.sql 2>&1
+  when: "'mediasrl_business' not in business_db_check.stdout"
+  no_log: true
+  tags: [mysql, business, seed]
+
+- name: Create API database user
+  ansible.windows.win_shell: >-
+    & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
+    -p'{{ mysql_root_password }}'
+    -e "CREATE USER IF NOT EXISTS '{{ mysql_api_user }}'@'%%'
+    IDENTIFIED BY '{{ mysql_api_password }}';
+    GRANT SELECT ON {{ mysql_business_db }}.* TO '{{ mysql_api_user }}'@'%%';
+    FLUSH PRIVILEGES;"
+  changed_when: false
+  no_log: true
+  tags: [mysql, business, user]
+
+- name: Cleanup seed SQL file
+  ansible.windows.win_file:
+    path: C:\Temp\seed-business-data.sql
+    state: absent
+  tags: [mysql, business, cleanup]
+
+# ============================================================
+# Phase 9: Verification
 # ============================================================
 
 - name: Verify MySQL installation
@@ -429,6 +477,11 @@
         User: {{ mysql_wordpress_user }}
         Host: {{ mysql_bind_address }}:{{ mysql_port }}
 
+      Business Database (API):
+        Database: {{ mysql_business_db }}
+        User: {{ mysql_api_user }}
+        Tables: angajati, servicii, clienti, proiecte, facturi
+
       Connection from vm-cms-01:
         mysql -h {{ mysql_bind_address }} -P {{ mysql_port }} -u {{ mysql_wordpress_user }} -p
 
@@ -436,7 +489,7 @@
   tags: [mysql, verify]
 
 # ============================================================
-# Phase 9: Cleanup
+# Phase 10: Cleanup
 # ============================================================
 
 - name: Cleanup installation files

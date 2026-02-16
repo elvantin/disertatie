@@ -1,0 +1,46 @@
+{
+  "status": "ok",
+  "count": 5,
+  "data": [
+    {
+      "id": 1,
+      "nume": "Elena Popescu",
+      "functie": "Director General si Fondator",
+      "departament": "Management",
+      "email": "elena.popescu@media-srl.ro",
+      "data_angajare": "2018-03-15"
+    },
+    {
+      "id": 2,
+      "nume": "Andrei Ionescu",
+      "functie": "Director Creativ",
+      "departament": "Creatie",
+      "email": "andrei.ionescu@media-srl.ro",
+      "data_angajare": "2019-06-01"
+    },
+    {
+      "id": 3,
+      "nume": "Maria Dumitrescu",
+      "functie": "Social Media Manager",
+      "departament": "Digital",
+      "email": "maria.dumitrescu@media-srl.ro",
+      "data_angajare": "2020-09-15"
+    },
+    {
+      "id": 4,
+      "nume": "Cristian Popa",
+      "functie": "Specialist PR si Comunicare",
+      "departament": "PR",
+      "email": "cristian.popa@media-srl.ro",
+      "data_angajare": "2021-02-01"
+    },
+    {
+      "id": 5,
+      "nume": "Ana Vasilescu",
+      "functie": "Account Manager",
+      "departament": "Client Service",
+      "email": "ana.vasilescu@media-srl.ro",
+      "data_angajare": "2022-01-10"
+    }
+  ]
+}

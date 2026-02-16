@@ -1,0 +1,20 @@
+{
+  "service": "SC MEDIA SRL - Business API",
+  "version": "1.0",
+  "status": "running",
+  "description": "API REST pentru datele de business ale SC MEDIA SRL",
+  "endpoints": {
+    "GET /api/": "Informatii API (aceasta pagina)",
+    "GET /api/services": "Lista serviciilor oferite",
+    "GET /api/clients": "Lista clientilor (date publice)",
+    "GET /api/projects": "Portofoliu proiecte",
+    "GET /api/team": "Echipa SC MEDIA SRL",
+    "GET /api/stats": "Statistici companie",
+    "GET /health": "Health check"
+  },
+  "contact": {
+    "company": "SC MEDIA SRL",
+    "email": "office@media-srl.ro",
+    "website": "https://mediasrl.swedencentral.cloudapp.azure.com"
+  }
+}

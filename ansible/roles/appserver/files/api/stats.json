@@ -1,0 +1,28 @@
+{
+  "status": "ok",
+  "data": {
+    "companie": "SC MEDIA SRL",
+    "anul_infiintarii": 2018,
+    "clienti_activi": 6,
+    "total_clienti": 8,
+    "proiecte_finalizate": 6,
+    "proiecte_active": 4,
+    "total_proiecte": 10,
+    "angajati_activi": 5,
+    "servicii_active": 6,
+    "venit_total_incasat": 109635.00,
+    "facturi_neincasate": 11900.00,
+    "rata_retentie_clienti": 85,
+    "industrii_acoperite": [
+      "Tehnologie",
+      "Cosmetice",
+      "HoReCa",
+      "Sanatate",
+      "Auto",
+      "Educatie",
+      "Agricultura",
+      "Financiar"
+    ],
+    "generatedAt": "2026-02-16T00:00:00Z"
+  }
+}

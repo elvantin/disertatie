@@ -138,11 +138,11 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-HTTP-To-Web'
         properties: {
-          description: 'Allow HTTP for ACME cert renewal + HTTPS redirect (nginx returns 301)'
+          description: 'Allow HTTP only from VNet (internal reverse proxy traffic, no external HTTP)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRange: '80'
-          sourceAddressPrefix: '*'
+          sourceAddressPrefix: 'VirtualNetwork'
           destinationAddressPrefix: '10.10.10.0/24'
           access: 'Allow'
           priority: 121

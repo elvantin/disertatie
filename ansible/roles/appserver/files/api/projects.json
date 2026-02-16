@@ -1,0 +1,116 @@
+{
+  "status": "ok",
+  "count": 10,
+  "data": [
+    {
+      "id": 1,
+      "client": "TechVision SRL",
+      "serviciu": "Branding si Identitate Vizuala",
+      "denumire": "Rebranding complet TechVision",
+      "descriere": "Identitate vizuala noua, website, materiale de prezentare, campanie de lansare",
+      "data_start": "2025-01-15",
+      "data_finalizare": "2025-06-30",
+      "status": "finalizat",
+      "buget": 25000.00
+    },
+    {
+      "id": 2,
+      "client": "TechVision SRL",
+      "serviciu": "PR si Comunicare Strategica",
+      "denumire": "PR pentru lansare brand nou TechVision",
+      "descriere": "Comunicate de presa, media outreach, articole sponsorizate",
+      "data_start": "2025-04-01",
+      "data_finalizare": "2025-06-30",
+      "status": "finalizat",
+      "buget": 8000.00
+    },
+    {
+      "id": 3,
+      "client": "GreenLeaf Bio SRL",
+      "serviciu": "Social Media Management",
+      "denumire": "Social Media GreenLeaf Bio",
+      "descriere": "Gestionare Instagram + Facebook, campanii platite, continut educativ",
+      "data_start": "2025-03-01",
+      "data_finalizare": "2025-08-31",
+      "status": "finalizat",
+      "buget": 12000.00
+    },
+    {
+      "id": 4,
+      "client": "Cafe Central SRL",
+      "serviciu": "Organizare Evenimente",
+      "denumire": "Lansare linie cafea specialty Cafe Central",
+      "descriere": "Eveniment lansare, colaborari influenceri, campanie Instagram",
+      "data_start": "2025-05-01",
+      "data_finalizare": "2025-07-15",
+      "status": "finalizat",
+      "buget": 8000.00
+    },
+    {
+      "id": 5,
+      "client": "HealthPlus SRL",
+      "serviciu": "PR si Comunicare Strategica",
+      "denumire": "Strategie comunicare HealthPlus",
+      "descriere": "PR medical, articole specialitate, gestionare recenzii, Google Ads",
+      "data_start": "2025-09-01",
+      "data_finalizare": null,
+      "status": "in_derulare",
+      "buget": 18000.00
+    },
+    {
+      "id": 6,
+      "client": "HealthPlus SRL",
+      "serviciu": "Marketing Digital",
+      "denumire": "Marketing Digital HealthPlus",
+      "descriere": "Campanii Google Ads, SEO medical, email marketing pacienti",
+      "data_start": "2025-09-15",
+      "data_finalizare": null,
+      "status": "in_derulare",
+      "buget": 21000.00
+    },
+    {
+      "id": 7,
+      "client": "AutoSpeed SRL",
+      "serviciu": "Marketing Digital",
+      "denumire": "Google Ads AutoSpeed",
+      "descriere": "Campanii Search si Display pentru modele premium",
+      "data_start": "2025-06-15",
+      "data_finalizare": null,
+      "status": "in_derulare",
+      "buget": 15000.00
+    },
+    {
+      "id": 8,
+      "client": "EduSmart Academy SRL",
+      "serviciu": "Consultanta Strategica",
+      "denumire": "Consultanta strategie EduSmart",
+      "descriere": "Audit comunicare, plan strategic 12 luni, training echipa interna",
+      "data_start": "2025-11-01",
+      "data_finalizare": "2025-12-15",
+      "status": "finalizat",
+      "buget": 4500.00
+    },
+    {
+      "id": 9,
+      "client": "EduSmart Academy SRL",
+      "serviciu": "Social Media Management",
+      "denumire": "Social Media EduSmart Academy",
+      "descriere": "Gestionare LinkedIn + Facebook, continut educational, campanii admitere",
+      "data_start": "2026-01-15",
+      "data_finalizare": null,
+      "status": "in_derulare",
+      "buget": 10000.00
+    },
+    {
+      "id": 10,
+      "client": "AgroFresh SRL",
+      "serviciu": "Social Media Management",
+      "denumire": "Campanie sezon AgroFresh",
+      "descriere": "Social media + PR pentru sezonul de legume bio",
+      "data_start": "2025-05-20",
+      "data_finalizare": "2025-09-30",
+      "status": "finalizat",
+      "buget": 6000.00
+    }
+  ]
+}
