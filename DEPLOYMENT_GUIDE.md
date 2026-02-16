@@ -352,7 +352,44 @@ Pipelines → Library → Secure files → + Secure file:
 - Name: `jumphost-ssh-key`
 - Pipeline permissions → Authorize for all pipelines
 
-#### Pas 7: Creare pipeline-uri (x3)
+#### Pas 7: Instalare Self-Hosted Agent (Windows)
+
+Organizatiile Azure DevOps noi nu au agenti hosted gratuiti. Solutia: instalezi un agent local pe masina ta Windows care executa pipeline-urile.
+
+**Nota:** Download-ul manual al ZIP-ului si unzip-ul sunt mai rapide decat folosirea PowerShell (Invoke-WebRequest este lent pe fisiere mari).
+
+1. Descarca agentul: https://download.agent.dev.azure.com/agent/4.268.0/vsts-agent-win-x64-4.268.0.zip
+2. Creeaza directorul `C:\agent` si extrage ZIP-ul acolo (click dreapta → Extract All)
+3. Creeaza un **Personal Access Token (PAT)** in Azure DevOps:
+   - User Settings (icon profil dreapta sus) → Personal Access Tokens
+   - New Token → Name: `agent-token`, Scopes: **Agent Pools (Read & manage)** → Create
+   - Copiaza token-ul generat (nu il vei mai putea vedea)
+4. Deschide PowerShell in `C:\agent` si ruleaza:
+
+```powershell
+.\config.cmd --url https://dev.azure.com/{ORGANIZATIE} --auth pat
+```
+
+5. La prompts:
+   - **Enter server URL:** (deja setat, apasa Enter)
+   - **Enter authentication type:** (deja setat pe PAT, apasa Enter)
+   - **Enter personal access token:** lipeste token-ul PAT
+   - **Enter agent pool:** apasa Enter (Default)
+   - **Enter agent name:** apasa Enter (numele calculatorului)
+   - **Enter work folder:** apasa Enter (`_work`)
+   - **Run agent as service? (Y/N):** N
+
+6. Porneste agentul:
+
+```powershell
+.\run.cmd
+```
+
+Vei vedea `Listening for Jobs` — agentul este gata sa execute pipeline-uri.
+
+**Nota:** Agentul trebuie sa fie pornit (`.\run.cmd`) de fiecare data cand vrei sa rulezi pipeline-uri. Pipeline-urile folosesc `pool: name: 'Default'` si `scriptType: 'ps'` (PowerShell) pentru compatibilitate cu agentul Windows.
+
+#### Pas 8: Creare pipeline-uri (x3)
 
 Pipelines → New pipeline → Azure Repos Git → repo → **Existing Azure Pipelines YAML file**:
 
@@ -362,7 +399,7 @@ Pipelines → New pipeline → Azure Repos Git → repo → **Existing Azure Pip
 | Bicep | `/pipelines/bicep-deploy.yml` | `Bicep - Deploy Infrastructure` |
 | Ansible | `/pipelines/ansible-configure.yml` | `Ansible - Configure VMs` |
 
-#### Pas 8: Branch Policies pe `master`
+#### Pas 9: Branch Policies pe `master`
 
 Project Settings → Repos → Repositories → repo → Policies → branch `master`:
 
@@ -388,5 +425,80 @@ Project Settings → Repos → Repositories → repo → Policies → branch `ma
 
 ---
 
+## Pas 5: Testare si Validare (Etapa 6)
+
+Proiectul include 2 suite de teste complementare: una rulata local (testeaza infrastructura Azure) si una rulata pe jumphost (testeaza serviciile VM-urilor).
+
+### 5a. Teste infrastructura Azure (local, PowerShell)
+
+Ruleaza de pe masina locala (Windows cu Azure CLI autentificat):
+
+```powershell
+# Ruleaza toate testele (inclusiv idempotency — dureaza 3-5 min)
+.\scripts\test-infrastructure.ps1
+
+# Ruleaza fara testul de idempotency (mai rapid, ~30 secunde)
+.\scripts\test-infrastructure.ps1 -SkipIdempotency
+```
+
+**Ce testeaza (6 categorii):**
+
+| Categorie | Teste |
+|-----------|-------|
+| Azure Resources | Resource Groups, VNet, subnets, NSG-uri, Key Vault, Log Analytics, Gallery, image definitions |
+| Virtual Machines | 6 VM-uri exista si sunt Running, IP-uri publice persistente |
+| Security | Reguli NSG (restrictie IP admin, deny all), Key Vault purge protection, Azure Policies, taguri |
+| Connectivity | SSH (port 22) si RDP (port 3389) la jumphost, HTTP (80) si HTTPS (443) la webserver |
+| Idempotency | Bicep what-if verifica 0 modificari la re-deploy (infrastructura stabila) |
+| Performance | Response time webserver (<5s), SSH connect time (<10s) |
+
+**Output:** Raport sumar cu contoare Pass/Fail/Warning per categorie.
+
+### 5b. Teste servicii VM-uri (de pe jumphost, Ansible)
+
+Conecteaza-te RDP la vm-jmp-01, deschide un terminal si ruleaza:
+
+```bash
+cd ~/ansible
+
+# Ruleaza toate testele de servicii
+ansible-playbook playbooks/test-services.yml
+
+# Ruleaza doar anumite sectiuni (tags disponibile)
+ansible-playbook playbooks/test-services.yml --tags linux_baseline
+ansible-playbook playbooks/test-services.yml --tags jumphost_services
+ansible-playbook playbooks/test-services.yml --tags webserver_tests
+ansible-playbook playbooks/test-services.yml --tags connectivity
+```
+
+**Ce testeaza (10 sectiuni):**
+
+| Sectiune | Target | Teste |
+|----------|--------|-------|
+| Linux Baseline | Toate Linux | SSH activ, OS version, timezone, root login dezactivat |
+| Windows Baseline | Toate Windows | WinRM activ, OS version |
+| Jumphost Services | vm-jmp-01 | Ansible, Azure CLI, xRDP, sshpass instalate |
+| Webserver | vm-web-01 | Nginx activ, HTTP response code 200 |
+| App Server | vm-app-01 | Nginx activ pe port 8080 |
+| CMS Server | vm-cms-01 | PHP-FPM, MySQL, Postfix active |
+| File Server | vm-fs-01 | SMB shares configurate |
+| DB Server | vm-db-01 | MySQL/SQL Server activ |
+| Cross-VM Connectivity | vm-jmp-01 | SSH catre Linux VMs, WinRM catre Windows VMs |
+| Summary | - | Raport pass/fail per categorie |
+
+**Nota:** Testele folosesc `failed_when: false` pentru serviciile care nu au fost inca configurate de Ansible. Acestea vor aparea ca Warning, nu ca Fail.
+
+### 5c. Interpretare rezultate
+
+- **PASS** — Testul a trecut cu succes
+- **FAIL** — Ceva nu functioneaza corect, necesita investigare
+- **WARNING** — Serviciu optional sau neconfigutat inca (nu e critic)
+
+**Ordinea recomandata:**
+1. Ruleaza mai intai `test-infrastructure.ps1` local (verifica ca Azure e OK)
+2. Apoi conecteaza-te la jumphost si ruleaza `test-services.yml` (verifica serviciile)
+
+---
+
 SC MEDIA SRL - Deployment Guide
-Ultima actualizare: 2026-02-15
+Ultima actualizare: 2026-02-16

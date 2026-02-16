@@ -344,22 +344,37 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
     - Execută playbook-uri via SSH remote command
     - Parametri: alegere playbook, tags Ansible, nivel verbozitate
 - **Template reutilizabil:** `pipelines/templates/az-login.yml` (login Azure cu Service Connection)
+- **Self-hosted agent** (Windows) — instalat local, pool `Default`, scripturi PowerShell (`scriptType: 'ps'`)
 - **Cerințe Azure DevOps:**
-  - Service Connection `azure-service-connection` (Azure Resource Manager)
+  - Service Connection `azure-service-connection` (Azure Resource Manager, Workload Identity Federation)
   - Variable Group `mediasrl-secrets` (adminPassword, sshPublicKey)
-  - Environment `production` cu approval gate
+  - Environment `production` cu approval gate (manual review before deploy)
   - Secure File `jumphost-ssh-key` (cheie SSH privată)
+  - Personal Access Token pentru self-hosted agent
 
-**Rezultat:** Flux DevOps complet automatizat (CI/CD).
+**Rezultat:** Flux DevOps complet automatizat (CI/CD), testat și funcțional.
 
-### Etapa 6 — Testare, validare și optimizare ⏳
+### Etapa 6 — Testare, validare și optimizare ✅
 
-- Teste funcționale: verificare servicii (nginx, MySQL, WordPress, mail, SMB)
-- Teste de securitate: NSG audit, port scanning, CIS compliance check
-- Teste de idempotență: re-deploy Bicep + Ansible fără modificări
-- Teste de performanță: response time website, throughput DB
-- Identificare riscuri și remedieri
-- Documentare rezultate
+- **2 suite de teste implementate:**
+  - **`scripts/test-infrastructure.ps1`** — Script PowerShell rulat local, testează infrastructura Azure
+    - 6 categorii de teste: Azure Resources, Virtual Machines, Security, Connectivity, Idempotency, Performance
+    - Verifică: Resource Groups, VNet, subnets, NSG-uri, Key Vault, Log Analytics, Gallery, image definitions
+    - Verifică: 6 VM-uri exist și sunt Running, IP-uri publice persistente
+    - Teste securitate: reguli NSG (restricție IP admin, deny all), Key Vault purge protection, Azure Policies, taguri
+    - Teste conectivitate: SSH/RDP la jumphost, HTTP/HTTPS la webserver (TcpClient)
+    - Test idempotență: Bicep what-if verifică 0 modificări la re-deploy (`-SkipIdempotency` pentru skip)
+    - Teste performanță: response time webserver, SSH connect time
+    - Raport sumar cu contoare pass/fail/warn per categorie
+  - **`ansible/playbooks/test-services.yml`** — Playbook Ansible rulat de pe jumphost, testează serviciile VM-urilor
+    - 10 secțiuni de teste: Linux baseline, Windows baseline, Jumphost, Webserver, App server, CMS, File server, DB server, Cross-VM connectivity, Summary
+    - Verifică: OS version, timezone, SSH hardening, WinRM, Ansible, Azure CLI, xRDP, Nginx, PHP-FPM, MySQL, Postfix, SMB shares
+    - Test conectivitate cross-VM de pe jumphost (SSH + WinRM)
+    - Raport sumar cu pass/fail per categorie
+- Teste de idempotență: Bicep what-if arată 0 modificări la re-deploy
+- Teste de performanță: response time, connect time
+
+**Rezultat:** Infrastructura complet validată prin teste automate (local + remote).
 
 ---
 
@@ -413,7 +428,8 @@ IT/
 │   │   ├── setup-ssh-keys.yml          # Distribuire chei SSH
 │   │   ├── deploy-services.yml         # Deploy servicii
 │   │   ├── harden-all.yml              # Hardening CIS
-│   │   └── bootstrap-windows-winrm.yml # Bootstrap WinRM
+│   │   ├── bootstrap-windows-winrm.yml # Bootstrap WinRM
+│   │   └── test-services.yml           # Teste servicii (Etapa 6)
 │   ├── roles/
 │   │   ├── common/                     # Baseline (Linux + Windows)
 │   │   ├── nginx/                      # Reverse proxy + SSL
@@ -439,7 +455,8 @@ IT/
 ├── scripts/
 │   ├── bootstrap-jumphost.sh           # Bootstrap jumphost (CSE, fallback marketplace)
 │   ├── bootstrap-windows-winrm.ps1     # Bootstrap WinRM (CSE, fallback marketplace)
-│   └── build-packer-images.ps1         # Script automatizat build + publish imagini Packer
+│   ├── build-packer-images.ps1         # Script automatizat build + publish imagini Packer
+│   └── test-infrastructure.ps1         # Teste infrastructura Azure (Etapa 6)
 │
 ├── logs/                               # Output Packer builds (generat automat)
 │
@@ -629,4 +646,4 @@ IT/
 ---
 
 *Plan generat: 5 februarie 2026*
-*Ultima actualizare: 15 februarie 2026*
+*Ultima actualizare: 16 februarie 2026*

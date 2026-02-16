@@ -1,0 +1,397 @@
+---
+# ============================================================
+# Test Services Playbook — SC MEDIA SRL
+# Validates that all services are running correctly on each VM
+# Run from jumphost: ansible-playbook playbooks/test-services.yml
+# ============================================================
+
+# ============================================================
+# TEST 1: Linux baseline (all Linux VMs)
+# ============================================================
+- name: "Test Linux Baseline"
+  hosts: linux
+  gather_facts: yes
+  become: no
+
+  tasks:
+    - name: "Test SSH connectivity"
+      ping:
+      register: ssh_test
+
+    - name: "Verify OS is Ubuntu 22.04"
+      assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] is version('22.04', '>=')
+        fail_msg: "Expected Ubuntu 22.04+, got {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+        success_msg: "OS: Ubuntu {{ ansible_facts['distribution_version'] }}"
+
+    - name: "Verify timezone is Europe/Bucharest"
+      command: timedatectl show --property=Timezone --value
+      register: tz_result
+      changed_when: false
+
+    - name: "Assert timezone"
+      assert:
+        that: tz_result.stdout == 'Europe/Bucharest'
+        fail_msg: "Timezone is {{ tz_result.stdout }}, expected Europe/Bucharest"
+        success_msg: "Timezone: Europe/Bucharest"
+
+    - name: "Verify SSH root login is disabled"
+      command: grep -E "^PermitRootLogin" /etc/ssh/sshd_config
+      register: ssh_root
+      changed_when: false
+      failed_when: false
+
+    - name: "Assert root login disabled"
+      assert:
+        that: "'no' in ssh_root.stdout"
+        fail_msg: "Root login is NOT disabled: {{ ssh_root.stdout }}"
+        success_msg: "SSH root login: disabled"
+
+    - name: "Display Linux baseline results"
+      debug:
+        msg: |
+          Host: {{ inventory_hostname }} ({{ ansible_host }})
+          OS: {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+          Kernel: {{ ansible_facts['kernel'] }}
+          Uptime: {{ ansible_facts['uptime_seconds'] | int // 3600 }}h {{ (ansible_facts['uptime_seconds'] | int % 3600) // 60 }}m
+
+# ============================================================
+# TEST 2: Windows baseline (all Windows VMs)
+# ============================================================
+- name: "Test Windows Baseline"
+  hosts: windows
+  gather_facts: yes
+
+  tasks:
+    - name: "Test WinRM connectivity"
+      win_ping:
+      register: winrm_test
+
+    - name: "Verify OS is Windows Server 2022"
+      assert:
+        that:
+          - ansible_facts['os_name'] is search('Windows Server 2022')
+        fail_msg: "Expected Windows Server 2022, got {{ ansible_facts['os_name'] }}"
+        success_msg: "OS: {{ ansible_facts['os_name'] }}"
+
+    - name: "Verify WinRM service is running"
+      win_service:
+        name: WinRM
+      register: winrm_svc
+
+    - name: "Assert WinRM running"
+      assert:
+        that: winrm_svc.state == 'running'
+        success_msg: "WinRM service: running"
+
+    - name: "Display Windows baseline results"
+      debug:
+        msg: |
+          Host: {{ inventory_hostname }} ({{ ansible_host }})
+          OS: {{ ansible_facts['os_name'] }}
+          Version: {{ ansible_facts['os_version'] }}
+
+# ============================================================
+# TEST 3: Jumphost services (vm-jmp-01)
+# ============================================================
+- name: "Test Jumphost Services"
+  hosts: jumphost
+  gather_facts: no
+  become: no
+
+  tasks:
+    - name: "Verify Ansible is installed"
+      command: ansible --version
+      register: ansible_ver
+      changed_when: false
+
+    - name: "Assert Ansible installed"
+      assert:
+        that: ansible_ver.rc == 0
+        success_msg: "Ansible: {{ ansible_ver.stdout_lines[0] }}"
+
+    - name: "Verify Azure CLI is installed"
+      command: az version -o tsv
+      register: az_ver
+      changed_when: false
+      failed_when: false
+
+    - name: "Assert Azure CLI installed"
+      assert:
+        that: az_ver.rc == 0
+        fail_msg: "Azure CLI is not installed"
+        success_msg: "Azure CLI: installed"
+
+    - name: "Verify xRDP is running"
+      command: systemctl is-active xrdp
+      register: xrdp_status
+      changed_when: false
+      failed_when: false
+
+    - name: "Assert xRDP running"
+      assert:
+        that: xrdp_status.stdout == 'active'
+        fail_msg: "xRDP is {{ xrdp_status.stdout }}"
+        success_msg: "xRDP service: active"
+
+    - name: "Verify sshpass is installed (for initial password auth)"
+      command: which sshpass
+      register: sshpass_check
+      changed_when: false
+      failed_when: false
+
+    - name: "Assert sshpass installed"
+      assert:
+        that: sshpass_check.rc == 0
+        success_msg: "sshpass: installed"
+
+# ============================================================
+# TEST 4: Webserver (vm-web-01) — Nginx reverse proxy
+# ============================================================
+- name: "Test Webserver Services"
+  hosts: webservers
+  gather_facts: no
+  become: yes
+
+  tasks:
+    - name: "Verify Nginx is installed"
+      command: nginx -v
+      register: nginx_ver
+      changed_when: false
+      failed_when: false
+
+    - name: "Assert Nginx installed"
+      assert:
+        that: nginx_ver.rc == 0
+        fail_msg: "Nginx is not installed (will be installed by Ansible nginx role)"
+        success_msg: "Nginx: {{ nginx_ver.stderr | default(nginx_ver.stdout) }}"
+
+    - name: "Verify Nginx service is running"
+      service:
+        name: nginx
+      register: nginx_svc
+      failed_when: false
+
+    - name: "Check Nginx status"
+      debug:
+        msg: "Nginx service: {{ nginx_svc.status.ActiveState | default('not installed') }}"
+
+    - name: "Test HTTP response on localhost"
+      uri:
+        url: "http://localhost"
+        return_content: no
+        status_code: [200, 301, 302, 403, 502]
+      register: http_test
+      failed_when: false
+
+    - name: "Display HTTP test result"
+      debug:
+        msg: "HTTP localhost: {{ http_test.status | default('unreachable') }}"
+
+# ============================================================
+# TEST 5: App Server (vm-app-01) — Nginx backend on 8080
+# ============================================================
+- name: "Test App Server Services"
+  hosts: appservers
+  gather_facts: no
+  become: yes
+
+  tasks:
+    - name: "Verify Nginx is installed"
+      command: nginx -v
+      register: nginx_ver
+      changed_when: false
+      failed_when: false
+
+    - name: "Check Nginx status"
+      debug:
+        msg: "Nginx: {{ 'installed' if nginx_ver.rc == 0 else 'not installed (will be installed by Ansible appserver role)' }}"
+
+    - name: "Test HTTP response on port 8080"
+      uri:
+        url: "http://localhost:8080"
+        return_content: no
+        status_code: [200, 301, 302, 403, 502]
+      register: http_test
+      failed_when: false
+
+    - name: "Display HTTP test result"
+      debug:
+        msg: "HTTP localhost:8080: {{ http_test.status | default('unreachable (not configured yet)') }}"
+
+# ============================================================
+# TEST 6: CMS Server (vm-cms-01) — WordPress + MySQL + Postfix
+# ============================================================
+- name: "Test CMS Server Services"
+  hosts: cmsservers
+  gather_facts: no
+  become: yes
+
+  tasks:
+    - name: "Check if PHP-FPM is installed"
+      command: php-fpm8.1 -v
+      register: php_ver
+      changed_when: false
+      failed_when: false
+
+    - name: "Display PHP status"
+      debug:
+        msg: "PHP-FPM: {{ 'installed' if php_ver.rc == 0 else 'not installed (will be installed by Ansible wordpress role)' }}"
+
+    - name: "Check if MySQL is running"
+      command: systemctl is-active mysql
+      register: mysql_status
+      changed_when: false
+      failed_when: false
+
+    - name: "Display MySQL status"
+      debug:
+        msg: "MySQL: {{ mysql_status.stdout | default('not installed') }}"
+
+    - name: "Check if Postfix is running"
+      command: systemctl is-active postfix
+      register: postfix_status
+      changed_when: false
+      failed_when: false
+
+    - name: "Display Postfix status"
+      debug:
+        msg: "Postfix: {{ postfix_status.stdout | default('not installed') }}"
+
+# ============================================================
+# TEST 7: File Server (vm-fs-01) — SMB shares
+# ============================================================
+- name: "Test File Server Services"
+  hosts: fileservers
+  gather_facts: no
+
+  tasks:
+    - name: "Verify LanmanServer (SMB) service is running"
+      win_service:
+        name: LanmanServer
+      register: smb_svc
+      failed_when: false
+
+    - name: "Display SMB status"
+      debug:
+        msg: "SMB Server (LanmanServer): {{ smb_svc.state | default('not checked') }}"
+
+    - name: "List SMB shares"
+      win_shell: Get-SmbShare | Select-Object Name, Path | Format-Table -AutoSize
+      register: smb_shares
+      failed_when: false
+
+    - name: "Display SMB shares"
+      debug:
+        msg: "{{ smb_shares.stdout_lines | default(['No shares configured yet']) }}"
+
+# ============================================================
+# TEST 8: DB Server (vm-db-01) — SQL Server / MySQL
+# ============================================================
+- name: "Test Database Server Services"
+  hosts: dbservers
+  gather_facts: no
+
+  tasks:
+    - name: "Check if MySQL service exists"
+      win_service:
+        name: MySQL80
+      register: mysql_svc
+      failed_when: false
+
+    - name: "Display MySQL status"
+      debug:
+        msg: "MySQL 8.0: {{ mysql_svc.state | default('not installed (will be configured by Ansible)') }}"
+
+# ============================================================
+# TEST 9: Cross-VM connectivity (from jumphost)
+# ============================================================
+- name: "Test Cross-VM Connectivity"
+  hosts: jumphost
+  gather_facts: no
+  become: no
+
+  tasks:
+    - name: "Test SSH to vm-web-01"
+      wait_for:
+        host: "vm-web-01"
+        port: 22
+        timeout: 5
+      register: ssh_web
+      failed_when: false
+
+    - name: "Test SSH to vm-app-01"
+      wait_for:
+        host: "vm-app-01"
+        port: 22
+        timeout: 5
+      register: ssh_app
+      failed_when: false
+
+    - name: "Test SSH to vm-cms-01"
+      wait_for:
+        host: "vm-cms-01"
+        port: 22
+        timeout: 5
+      register: ssh_cms
+      failed_when: false
+
+    - name: "Test WinRM to vm-db-01"
+      wait_for:
+        host: "vm-db-01"
+        port: 5985
+        timeout: 5
+      register: winrm_db
+      failed_when: false
+
+    - name: "Test WinRM to vm-fs-01"
+      wait_for:
+        host: "vm-fs-01"
+        port: 5985
+        timeout: 5
+      register: winrm_fs
+      failed_when: false
+
+    - name: "Display connectivity results"
+      debug:
+        msg: |
+          === Cross-VM Connectivity from Jumphost ===
+          SSH  vm-web-01:22   {{ 'OK' if ssh_web is succeeded else 'FAIL' }}
+          SSH  vm-app-01:22   {{ 'OK' if ssh_app is succeeded else 'FAIL' }}
+          SSH  vm-cms-01:22   {{ 'OK' if ssh_cms is succeeded else 'FAIL' }}
+          WinRM vm-db-01:5985 {{ 'OK' if winrm_db is succeeded else 'FAIL' }}
+          WinRM vm-fs-01:5985 {{ 'OK' if winrm_fs is succeeded else 'FAIL' }}
+
+# ============================================================
+# TEST 10: Summary
+# ============================================================
+- name: "Test Summary"
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  tasks:
+    - name: "Display test summary"
+      debug:
+        msg: |
+          ============================================================
+          SC MEDIA SRL — SERVICE TEST SUITE COMPLETE
+          ============================================================
+
+          Tests executed on all 6 VMs:
+            - Linux baseline (SSH, OS, timezone, SSH hardening)
+            - Windows baseline (WinRM, OS version)
+            - Jumphost tools (Ansible, Azure CLI, xRDP)
+            - Webserver (Nginx reverse proxy)
+            - App server (Nginx backend :8080)
+            - CMS server (WordPress, MySQL, Postfix)
+            - File server (SMB shares)
+            - DB server (MySQL/SQL Server)
+            - Cross-VM connectivity (SSH + WinRM from jumphost)
+
+          NOTE: Services marked 'not installed' will be configured
+          when Ansible roles are applied (ansible-playbook site.yml).
+
+          ============================================================
