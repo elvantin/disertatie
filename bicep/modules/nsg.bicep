@@ -181,6 +181,20 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
         }
       }
       {
+        name: 'Allow-AppServer-Internal'
+        properties: {
+          description: 'Allow port 8080 within production subnet (nginx reverse proxy -> vm-app-01 API)'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '8080'
+          sourceAddressPrefix: '10.10.10.0/24'
+          destinationAddressPrefix: '10.10.10.0/24'
+          access: 'Allow'
+          priority: 220
+          direction: 'Inbound'
+        }
+      }
+      {
         name: 'Deny-All-Inbound'
         properties: {
           description: 'Deny all other inbound traffic'

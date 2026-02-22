@@ -27,14 +27,13 @@ param adminObjectId = '9f286d78-d412-436b-9f1d-cdd24b456a0c' // TODO: az ad sign
 
 // ----- Compute Gallery -----
 
-// TEMPORARY: Use marketplace images until Packer images are built
 param useMarketplaceImages = false
 
 param computeGalleryName = 'gal_mediasrl'
 param ubuntuImageDefinition = 'imgdef-ubuntu2204'
 param jumphostImageDefinition = 'imgdef-ubuntu2204-jumphost'
 param windowsImageDefinition = 'imgdef-winserver2022'
-param imageVersion = '1.0.0'
+param imageVersion = 'latest'  // Auto-selecteaza ultima versiune Packer din gallery
 
 // ----- Azure Backup -----
 
@@ -48,7 +47,9 @@ param adminUsername = 'azureadmin'
 param adminPassword = 'Str0ng_P@ssw0rd_2026!' // TODO: Use secure parameter or Key Vault
 param sshPublicKey = 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDKT342/08MOWn46brpiWZWmFYYI01UwtgnY0WJ24kodPLdHPAK54EnlYgVLQNQ+NxS/68/3voNxc2J7lUCJhRuEVIDM5gu4l8BNaeoPB2n9ANDqKx/p813ssVWeD+OR/ee9HUZdZ/teo09z4HbFFZQ8BG9tAM7xsO5a9nrrLDAxEIaaJZztoRVOO7L/nr1jJMl4TIldrRuUw4pFKZ2PbJYKbEV02P+6l870QH1Z09A10Tjpt4Bf3UxWeeqjbdmjgQoM3ugVMsW1E8y74dvu5kA8ChImJITEL5bUTzoGlTwy/VwWXctNK3fGLNnFPyI18y/CqDstV5RhcgsECydpDhKiRfaM7CZhjSroUqVybmMIHvyZwqMvXOaob0aPXEzRA+Q19GGIHmwAnGEazjZQ4hvFdQO1UK3oCLGLGlbOq9LNRxFR/U+jB3bs13z0Bo9Eobgdlj3cs1b9kzGVhyU6HYt58F2+HXBXiaZFxcktj8A2CwyK3z595A3oRX9hyKFIxYo6ZnCVzoLPruSQAs+pu7ixeWXYxCG7aZ3TbBXYdwWz/idZNiaUD1HvgfE+nnrKCVFU7o+79FGag5v1udpzWECHCDnWwLgKFOPiz92ayyH49F3KKFYOtgIarJB0FHNCpeUTJ0pADPmu1c0GosfcXsOz89DQSO7PD5PFBNsNdma7Q== mediasrl-azure' // TODO: Replace with actual SSH public key
 
-// ----- Persistent Public IPs (in rg-mediasrl-persistent, survive environment teardowns) -----
+// ----- Persistent Resource Group (IP-uri statice care supravietuiesc teardown-ului) -----
+
+param persistentResourceGroupName = 'rg-mediasrl-persistent'
 
 param persistentPublicIps = [
   {

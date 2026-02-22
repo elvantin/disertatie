@@ -64,8 +64,8 @@ param jumphostImageDefinition string = 'imgdef-ubuntu2204-jumphost'
 @description('Windows Server 2022 image definition name in gallery')
 param windowsImageDefinition string = 'imgdef-winserver2022'
 
-@description('Image version to use from gallery')
-param imageVersion string = '1.0.0'
+@description('Image version to use from gallery. Use "latest" to automatically pick the newest Packer build.')
+param imageVersion string = 'latest'
 
 @description('Admin username for VMs')
 param adminUsername string = 'azureadmin'
@@ -175,9 +175,13 @@ var jumphostBootstrapScript = loadTextContent('../scripts/bootstrap-jumphost.sh'
 var windowsWinrmBootstrapScript = loadTextContent('../scripts/bootstrap-windows-winrm.ps1')
 
 var galleryResourceGroupName = 'rg-mediasrl-packer-${location}'
-var galleryImageIdUbuntu = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${ubuntuImageDefinition}/versions/${imageVersion}'
-var galleryImageIdJumphost = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${jumphostImageDefinition}/versions/${imageVersion}'
-var galleryImageIdWindows = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images/${windowsImageDefinition}/versions/${imageVersion}'
+var galleryImageBase = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images'
+
+// When imageVersion == 'latest', reference just the image definition — Azure auto-selects the newest published version.
+// When a specific version is given (e.g. '1.0.2'), the exact version is pinned.
+var galleryImageIdUbuntu   = imageVersion == 'latest' ? '${galleryImageBase}/${ubuntuImageDefinition}'   : '${galleryImageBase}/${ubuntuImageDefinition}/versions/${imageVersion}'
+var galleryImageIdJumphost = imageVersion == 'latest' ? '${galleryImageBase}/${jumphostImageDefinition}' : '${galleryImageBase}/${jumphostImageDefinition}/versions/${imageVersion}'
+var galleryImageIdWindows  = imageVersion == 'latest' ? '${galleryImageBase}/${windowsImageDefinition}'  : '${galleryImageBase}/${windowsImageDefinition}/versions/${imageVersion}'
 
 // ----- Module: Resource Group -----
 

@@ -29,15 +29,14 @@ param adminObjectId = '9f286d78-d412-436b-9f1d-cdd24b456a0c'
 
 // ----- Compute Gallery -----
 
-// DEV: Marketplace images (faster rebuild, no dependency on Packer gallery)
-// Switch to false + gallery images when ready to test Packer images in dev
-param useMarketplaceImages = true
+// DEV: Foloseste imagini din gallery (useMarketplaceImages = false)
+param useMarketplaceImages = false
 
 param computeGalleryName = 'gal_mediasrl'
 param ubuntuImageDefinition = 'imgdef-ubuntu2204'
 param jumphostImageDefinition = 'imgdef-ubuntu2204-jumphost'
 param windowsImageDefinition = 'imgdef-winserver2022'
-param imageVersion = '1.0.0'
+param imageVersion = 'latest'  // Auto-selecteaza ultima versiune Packer din gallery
 
 // ----- Azure Backup -----
 // Disabled in main.bicep (commented out) — vault name kept for reference only

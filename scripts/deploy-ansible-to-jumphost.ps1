@@ -6,7 +6,8 @@
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$JumphostIP = "4.223.123.150",
+    #[string]$JumphostIP = "4.223.123.150",
+    [string]$JumphostIP = "51.12.82.4",
 
     [Parameter(Mandatory=$false)]
     [string]$User = "azureadmin",

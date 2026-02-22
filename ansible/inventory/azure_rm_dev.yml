@@ -1,26 +1,26 @@
 # ============================================================
-# Dynamic Azure Inventory Plugin Configuration
-# Automatically discovers VMs from Azure subscription
+# Dynamic Azure Inventory Plugin — Development Environment
+# Discovers VMs only from rg-mediasrl-dezvoltare-swedencentral
+# Usage: ansible-playbook playbooks/site.yml -i inventory/azure_rm_dev.yml
 # ============================================================
 
 plugin: azure_rm
 
-# Azure authentication (uses az login credentials)
 auth_source: cli
 
-# Filter VMs by resource group — PRODUCTIE only
-# For DEV environment use: ansible-playbook ... -i inventory/azure_rm_dev.yml
+# Filter VMs by resource group — DEZVOLTARE only
+# For PROD environment use: ansible-playbook ... -i inventory/azure_rm.yml
 include_vm_resource_groups:
-  - rg-mediasrl-productie-swedencentral
+  - rg-mediasrl-dezvoltare-swedencentral
+
 # Only running VMs
 exclude_host_filters:
   - powerstate != 'running'
 
-# Use VM name as hostname (not FQDN)
+# Use VM name as hostname (no conflict since dev and prod use separate inventory files)
 plain_host_names: true
 
 # Conditional groups based on VM name patterns
-# Connection settings are in group_vars/windows.yml and group_vars/linux.yml
 conditional_groups:
   windows: "'db' in name or 'fs' in name"
   linux: "'jmp' in name or 'web' in name or 'app' in name or 'cms' in name"
@@ -37,8 +37,7 @@ keyed_groups:
     key: tags
     separator: "_"
 
-# Compose variables - only guaranteed variables
-# OS-specific connection settings are in group_vars/
+# Compose variables
 compose:
   ansible_host: private_ipv4_addresses[0] | default(public_ipv4_addresses[0] | default(''))
   ansible_user: "'azureadmin'"
