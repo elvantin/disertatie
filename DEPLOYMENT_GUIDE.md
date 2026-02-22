@@ -14,11 +14,11 @@ Infrastructura SC MEDIA SRL este deployata in Azure folosind 3 instrumente, in a
 
 | VM | OS | Rol | Subnet | IP |
 |----|-----|-----|--------|----|
-| vm-jmp-01 | Ubuntu 22.04 (jumphost image) | Jumphost: XFCE + xRDP + Ansible control node | snet-mgmt | Public (persistent) |
-| vm-web-01 | Ubuntu 22.04 (base image) | Nginx reverse proxy + SSL/Let's Encrypt | snet-prod | Public (persistent) |
+| vm-jmp-01 | Ubuntu 22.04 (jumphost image) | Jumphost: XFCE + xRDP + Ansible control node | snet-mgmt | Public ip (persistent) |
+| vm-web-01 | Ubuntu 22.04 (base image) | Nginx reverse proxy + SSL/Let's Encrypt | snet-prod | Public ip (persistent) |
 | vm-app-01 | Ubuntu 22.04 (base image) | Application server (Nginx port 8080) | snet-prod | Privat |
-| vm-cms-01 | Ubuntu 22.04 (base image) | WordPress + MySQL local + Postfix | snet-prod | Privat |
-| vm-db-01 | Windows Server 2022 | SQL Server (rezervat) | snet-prod | Privat |
+| vm-cms-01 | Ubuntu 22.04 (base image) | WordPress + PHP-FPM + Postfix (MySQL remote pe vm-db-01) | snet-prod | Privat |
+| vm-db-01 | Windows Server 2022 | MySQL Community Server 8.0 | snet-prod | Privat |
 | vm-fs-01 | Windows Server 2022 | File Server (SMB shares) | snet-prod | Privat |
 
 ```
@@ -43,6 +43,8 @@ Pe masina locala (Windows):
 - **Azure CLI** - `winget install Microsoft.AzureCLI`
 - **Packer** - `winget install HashiCorp.Packer`
 - **Bicep** - inclus in Azure CLI (`az bicep install`)
+- **Azure DevOps Agent** - descarca de la https://github.com/microsoft/azure-pipelines-agent/releases
+- **Azure DevOps PAT Token** - se genereaza din User Settings → Personal Access Tokens (nerecomandata stocarea ei in clar!)
 - Autentificare: `az login`
 
 ---
@@ -70,18 +72,18 @@ Scriptul:
 - Creeaza `rg-mediasrl-packer-swedencentral` (daca nu exista)
 - Creeaza gallery `gal_mediasrl` cu 3 image definitions
 - Detecteaza automat versiunea urmatoare per imagine (auto-increment patch)
-- Intreaba interactiv care imagini doresti sa le construiesti
+- Intreaba interactiv pe care imagini doresti sa le construiesti
 - Salveaza output-ul complet in `logs/packer-*.log`
 
 **Durata estimata:** 10-30 minute per imagine
 
 **Imagini create:**
 
-| Image Definition | Continut |
-|------------------|----------|
-| imgdef-ubuntu2204 | Ubuntu 22.04 base: update, pachete comune, SSH hardening, timezone |
-| imgdef-ubuntu2204-jumphost | Ubuntu 22.04 jumphost: XFCE, xRDP, Ansible, Azure CLI, VS Code, Firefox |
-| imgdef-winserver2022 | Windows Server 2022: WinRM configurat pentru Ansible, firewall port 5985 |
+| Image Definition           | Continut                                                                 |
+|----------------------------|--------------------------------------------------------------------------|
+| imgdef-ubuntu2204          | Ubuntu 22.04 base: update, pachete comune, SSH hardening, timezone       |
+| imgdef-ubuntu2204-jumphost | Ubuntu 22.04 jumphost: XFCE, xRDP, Ansible, Azure CLI, VS Code, Firefox  |
+| imgdef-winserver2022       | Windows Server 2022: WinRM configurat pentru Ansible, firewall port 5985 |
 
 ---
 
@@ -113,7 +115,7 @@ az deployment sub create --location swedencentral --template-file bicep/main.bic
 - 6 VM-uri (din imagini gallery sau marketplace)
 - 2 IP-uri publice persistente (jumphost + webserver)
 
-**Nota:** Cand `useMarketplaceImages = true`, VM-urile sunt create din marketplace si se ruleaza Custom Script Extension la boot (bootstrap jumphost + WinRM). Cand `false`, imaginile gallery au deja bootstrap-ul baked in.
+**Atentie:** Cand `useMarketplaceImages = true`, VM-urile sunt create din marketplace si se ruleaza Custom Script Extension la boot (bootstrap jumphost + WinRM). Cand `false`, imaginile gallery au deja bootstrap-ul integrat.
 
 ### 2c. Verificare
 
@@ -139,6 +141,7 @@ az network public-ip show -g rg-mediasrl-persistent -n pip-vm-jmp-01 --query ipA
 
 ```powershell
 mstsc /v:<IP_JUMPHOST>
+...sau direct utilitarul Remote Desktop Connection
 ```
 
 Credentiale:
@@ -152,7 +155,7 @@ Credentiale:
 Dupa conectare RDP la vm-jmp-01 (Ubuntu cu desktop XFCE):
 
 ```bash
-# Navigheaza la workspace
+# Se navigheaza la directorul de workspace ansible
 cd ~/ansible
 
 # Verifica conectivitate
@@ -173,18 +176,17 @@ ansible-playbook playbooks/site.yml --tags hardening        # CIS hardening
 
 **Roluri Ansible disponibile:**
 
-| Rol | Target | Descriere |
-|-----|--------|-----------|
-| common | Toate Linux | Pachete de baza, NTP, hardening SSH |
-| jumphost | vm-jmp-01 | XFCE, xRDP, tools |
-| nginx | vm-web-01 | Reverse proxy, SSL/Let's Encrypt |
-| appserver | vm-app-01 | Nginx pe port 8080 |
-| wordpress | vm-cms-01 | WordPress + PHP-FPM + config |
-| mysql | vm-cms-01 | MySQL Server + databases |
-| postfix | vm-cms-01 | Mail server local |
-| sqlserver | vm-db-01 | SQL Server (Windows) |
-| fileserver | vm-fs-01 | Windows File Server + SMB shares |
-| hardening | Toate | CIS Benchmark hardening |
+| Rol         | Target      | Descriere                                   |
+|-------------|-------------|---------------------------------------------|
+| common      | Toate Linux | Pachete de baza, NTP, hardening SSH         |
+| jumphost    | vm-jmp-01   | XFCE, xRDP, tools                           |
+| nginx       | vm-web-01   | Reverse proxy, SSL/Let's Encrypt            |
+| appserver   | vm-app-01   | Nginx pe port 8080                          |
+| wordpress   | vm-cms-01   | WordPress + PHP-FPM + config                |
+| mysql       | vm-db-01    | MySQL Server 8.0 + databases (Windows)      |
+| postfix     | vm-cms-01   | Mail server local                           |
+| fileserver  | vm-fs-01    | Windows File Server + SMB shares            |
+| hardening   | Toate       | CIS Benchmark hardening                     |
 
 ---
 
@@ -214,7 +216,7 @@ Subscription (7a0255bf-...)
 |   +-- vm-web-01 (Ubuntu Nginx)
 |   +-- vm-app-01 (Ubuntu App)
 |   +-- vm-cms-01 (Ubuntu WordPress)
-|   +-- vm-db-01 (Windows SQL)
+|   +-- vm-db-01 (Windows MySQL 8.0)
 |   +-- vm-fs-01 (Windows File Server)
 |
 +-- Azure Policies (subscription scope)
@@ -448,7 +450,7 @@ Ruleaza de pe masina locala (Windows cu Azure CLI autentificat):
 | Azure Resources | Resource Groups, VNet, subnets, NSG-uri, Key Vault, Log Analytics, Gallery, image definitions |
 | Virtual Machines | 6 VM-uri exista si sunt Running, IP-uri publice persistente |
 | Security | Reguli NSG (restrictie IP admin, deny all), Key Vault purge protection, Azure Policies, taguri |
-| Connectivity | SSH (port 22) si RDP (port 3389) la jumphost, HTTP (80) si HTTPS (443) la webserver |
+| Connectivity | SSH (port 22) si RDP (port 3389) la jumphost, HTTPS (443) la webserver (HTTP 80 doar intern VNet) |
 | Idempotency | Bicep what-if verifica 0 modificari la re-deploy (infrastructura stabila) |
 | Performance | Response time webserver (<5s), SSH connect time (<10s) |
 
@@ -482,7 +484,7 @@ ansible-playbook playbooks/test-services.yml --tags connectivity
 | App Server | vm-app-01 | Nginx activ pe port 8080 |
 | CMS Server | vm-cms-01 | PHP-FPM, MySQL, Postfix active |
 | File Server | vm-fs-01 | SMB shares configurate |
-| DB Server | vm-db-01 | MySQL/SQL Server activ |
+| DB Server | vm-db-01 | MySQL 8.0 activ, baza de date wordpress_db + mediasrl_business |
 | Cross-VM Connectivity | vm-jmp-01 | SSH catre Linux VMs, WinRM catre Windows VMs |
 | Summary | - | Raport pass/fail per categorie |
 
@@ -603,4 +605,4 @@ Disponibil la `https://mediasrl.swedencentral.cloudapp.azure.com/api/`:
 ---
 
 SC MEDIA SRL - Deployment Guide
-Ultima actualizare: 2026-02-16
+Ultima actualizare: 2026-02-18
