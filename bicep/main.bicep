@@ -166,6 +166,7 @@ var tags = {
 // ----- Bootstrap Scripts (loaded at compile time, passed to Custom Script Extension) -----
 
 var jumphostBootstrapScript = loadTextContent('../scripts/bootstrap-jumphost.sh')
+var jumphostFinalizeScript = loadTextContent('../scripts/finalize-jumphost.sh')
 var windowsWinrmBootstrapScript = loadTextContent('../scripts/bootstrap-windows-winrm.ps1')
 
 var galleryResourceGroupName = 'rg-mediasrl-packer-${location}'
@@ -359,8 +360,12 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     osDiskStorageType: 'StandardSSD_LRS'
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     deployMonitoringAgent: false // Disable to avoid package manager lock issues during deployment
-    // CSE only needed with marketplace images; gallery images have bootstrap baked in by Packer
-    customScriptContent: useMarketplaceImages ? (vm.name == 'vm-jmp-01' ? jumphostBootstrapScript : (vm.osType == 'Windows' ? windowsWinrmBootstrapScript : '')) : ''
+    // vm-jmp-01: marketplace -> bootstrap complet; gallery -> finalizare minima (auth fix)
+    // Alte VM-uri Linux: fara CSE (configurate de Ansible)
+    // VM-uri Windows: WinRM bootstrap (doar marketplace)
+    customScriptContent: vm.name == 'vm-jmp-01'
+      ? (useMarketplaceImages ? jumphostBootstrapScript : jumphostFinalizeScript)
+      : (useMarketplaceImages && vm.osType == 'Windows' ? windowsWinrmBootstrapScript : '')
     tags: tags
   }
 }]
@@ -385,12 +390,12 @@ module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
 }]
 */
 
-// NOTE: Bootstrap strategy depends on useMarketplaceImages parameter:
-// - Gallery images (useMarketplaceImages = false): bootstrap baked in by Packer, no CSE needed
-// - Marketplace images (useMarketplaceImages = true): CSE runs bootstrap at first boot:
-//   - vm-jmp-01: scripts/bootstrap-jumphost.sh (xRDP, Ansible, Azure CLI, etc.)
-//   - Windows VMs: scripts/bootstrap-windows-winrm.ps1 (WinRM for Ansible)
-//   - Other Linux VMs: no bootstrap (configured by Ansible from jumphost)
+// NOTE: Bootstrap/CSE strategy:
+// - vm-jmp-01 + marketplace: scripts/bootstrap-jumphost.sh (install complet: xRDP, Ansible, etc.)
+// - vm-jmp-01 + gallery:     scripts/finalize-jumphost.sh  (auth fix: chpasswd, SSH, .xsession)
+// - Windows   + marketplace: scripts/bootstrap-windows-winrm.ps1 (WinRM pentru Ansible)
+// - Linux     + gallery:     fara CSE (Packer a baked totul, Ansible configureaza roluri)
+// - Linux     + marketplace: fara CSE (configurate de Ansible de pe jumphost)
 
 // ----- Outputs -----
 

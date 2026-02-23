@@ -75,11 +75,17 @@ PermitRootLogin no
 SSHDCONF
 chmod 644 /etc/ssh/sshd_config.d/10-mediasrl.conf
 
-# Fallback: editeaza si sshd_config principal
-sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/'   /etc/ssh/sshd_config
-sed -i 's/^#PermitRootLogin yes/PermitRootLogin no/'               /etc/ssh/sshd_config
-sed -i 's/^PermitRootLogin yes/PermitRootLogin no/'                /etc/ssh/sshd_config
+# Forteaza PasswordAuthentication yes INAINTE de Include in sshd_config principal.
+# Prima aparitie a unui parametru castiga in sshd(8) — deci aceasta setare bate
+# orice fisier din sshd_config.d/ (inclusiv 60-cloudimg-settings.conf de cloud-init).
+sed -i '/^PasswordAuthentication /d' /etc/ssh/sshd_config
+if grep -q '^Include /etc/ssh/sshd_config.d' /etc/ssh/sshd_config; then
+    sed -i '/^Include \/etc\/ssh\/sshd_config\.d/i PasswordAuthentication yes' /etc/ssh/sshd_config
+else
+    sed -i '1i PasswordAuthentication yes' /etc/ssh/sshd_config
+fi
+sed -i 's/^#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
+sed -i 's/^PermitRootLogin yes/PermitRootLogin no/'  /etc/ssh/sshd_config
 
 # =============================================================================
 # STEP 4: Configure Timezone
@@ -92,34 +98,7 @@ timedatectl set-timezone Europe/Bucharest
 # STEP 5: Cleanup
 # =============================================================================
 
-
-# =============================================================================
-# STEP 5: Dezactiveaza cloud-init, configureaza waagent pentru provisioning
-# =============================================================================
-# cloud-init nu poate fi dezinstalat pe Ubuntu 22.04 (walinuxagent depinde de el).
-# In schimb, il dezactivam prin fisierul flag /etc/cloud/cloud-init.disabled.
-# waagent preia provisioningul: SSH key injection, hostname, disk resize.
-
-echo "[5/6] Disabling cloud-init, configuring waagent..."
-
-# Dezactiveaza cloud-init — prezenta acestui fisier opreste cloud-init la boot
-touch /etc/cloud/cloud-init.disabled
-echo "  cloud-init disabled via /etc/cloud/cloud-init.disabled"
-
-# Configureaza waagent sa preia provisioningul (nu cloud-init)
-if [ -f /etc/waagent.conf ]; then
-    sed -i 's/^Provisioning.Agent=auto/Provisioning.Agent=waagent/'       /etc/waagent.conf
-    sed -i 's/^Provisioning.Enabled=n/Provisioning.Enabled=y/'            /etc/waagent.conf
-    sed -i 's/^Provisioning.UseCloudInit=y/Provisioning.UseCloudInit=n/'  /etc/waagent.conf
-    sed -i 's/^Provisioning.MonitorHostName=n/Provisioning.MonitorHostName=y/' /etc/waagent.conf
-    grep -q '^Provisioning.Agent'        /etc/waagent.conf || echo 'Provisioning.Agent=waagent'    >> /etc/waagent.conf
-    grep -q '^Provisioning.Enabled'      /etc/waagent.conf || echo 'Provisioning.Enabled=y'        >> /etc/waagent.conf
-    grep -q '^Provisioning.UseCloudInit' /etc/waagent.conf || echo 'Provisioning.UseCloudInit=n'   >> /etc/waagent.conf
-    grep -q '^Provisioning.MonitorHostName' /etc/waagent.conf || echo 'Provisioning.MonitorHostName=y' >> /etc/waagent.conf
-    echo "  waagent.conf: Provisioning.Agent=waagent, Enabled=y, UseCloudInit=n, MonitorHostName=y"
-fi
-
-echo "[6/6] Cleaning up..."
+echo "[5/5] Cleaning up..."
 apt autoremove -y
 apt clean
 rm -rf /var/lib/apt/lists/*

@@ -171,16 +171,16 @@ apt install -y \
 # =============================================================================
 # STEP 12: Configurare SSH hardening
 # =============================================================================
-# PROBLEMA: cloud-init creeaza /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
-# la primul boot cu PasswordAuthentication no (cand detecteaza cheie SSH in osProfile).
-# Pe Ubuntu 22.04, walinuxagent depinde de cloud-init — nu putem elimina cloud-init.
+# cloud-init ruleaza normal (necesar pentru Azure provisioning — hostname, SSH key
+# injection, disk resize). Controlam SSH prin doua straturi de prioritate:
 #
-# SOLUTIE: Folosim prefixul "10-" pentru fisierul nostru.
-# sshd_config.d se citeste ALFABETIC, prima aparitie castiga.
-# "10-mediasrl.conf" se citeste INAINTE de "60-cloudimg-settings.conf" → castigam.
+# Strat 1: cloud-init override (ssh_pwauth: true) — cloud-init scrie
+#          PasswordAuthentication yes in 60-cloudimg-settings.conf (nu no).
 #
-# Strat suplimentar: cloud-init override (ssh_pwauth: true) ii spune cloud-init
-# sa scrie PasswordAuthentication yes in 60-cloudimg-settings.conf.
+# Strat 2: sshd_config.d/10-mediasrl.conf — prefix "10" < "60", deci se citeste
+#          INAINTE de 60-cloudimg-settings.conf. Prima aparitie castiga in sshd.
+#          Chiar daca cloud-init ignora override-ul, al nostru castiga oricum.
+#
 # Accesul SSH ramane sigur prin NSG (portul 22 whitelist pe IP-ul admin).
 
 echo "[12/13] Configuring SSH hardening..."
@@ -202,29 +202,17 @@ PermitRootLogin no
 SSHDCONF
 chmod 644 /etc/ssh/sshd_config.d/10-mediasrl.conf
 
-# --- Strat 3: sshd_config principal (fallback clasic) ---
-sed -i 's/^#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/'   /etc/ssh/sshd_config
-sed -i 's/^#PermitRootLogin yes/PermitRootLogin no/'               /etc/ssh/sshd_config
-sed -i 's/^PermitRootLogin yes/PermitRootLogin no/'                /etc/ssh/sshd_config
-
-# --- Dezactiveaza cloud-init, configureaza waagent pentru provisioning ---
-# cloud-init nu poate fi dezinstalat (walinuxagent depinde de el), dar il oprim
-# prin fisierul flag /etc/cloud/cloud-init.disabled. waagent preia provisioningul.
-touch /etc/cloud/cloud-init.disabled
-echo "  cloud-init disabled via /etc/cloud/cloud-init.disabled"
-
-if [ -f /etc/waagent.conf ]; then
-    sed -i 's/^Provisioning.Agent=auto/Provisioning.Agent=waagent/'            /etc/waagent.conf
-    sed -i 's/^Provisioning.Enabled=n/Provisioning.Enabled=y/'                 /etc/waagent.conf
-    sed -i 's/^Provisioning.UseCloudInit=y/Provisioning.UseCloudInit=n/'       /etc/waagent.conf
-    sed -i 's/^Provisioning.MonitorHostName=n/Provisioning.MonitorHostName=y/' /etc/waagent.conf
-    grep -q '^Provisioning.Agent'           /etc/waagent.conf || echo 'Provisioning.Agent=waagent'        >> /etc/waagent.conf
-    grep -q '^Provisioning.Enabled'         /etc/waagent.conf || echo 'Provisioning.Enabled=y'            >> /etc/waagent.conf
-    grep -q '^Provisioning.UseCloudInit'    /etc/waagent.conf || echo 'Provisioning.UseCloudInit=n'       >> /etc/waagent.conf
-    grep -q '^Provisioning.MonitorHostName' /etc/waagent.conf || echo 'Provisioning.MonitorHostName=y'    >> /etc/waagent.conf
-    echo "  waagent.conf: Provisioning.Agent=waagent, Enabled=y, UseCloudInit=n, MonitorHostName=y"
+# --- Strat 3: sshd_config principal (insert before Include — prima aparitie castiga) ---
+# Aceasta setare e procesata INAINTE de orice fisier din sshd_config.d/,
+# inclusiv 60-cloudimg-settings.conf scris de cloud-init la primul boot.
+sed -i '/^PasswordAuthentication /d' /etc/ssh/sshd_config
+if grep -q '^Include /etc/ssh/sshd_config.d' /etc/ssh/sshd_config; then
+    sed -i '/^Include \/etc\/ssh\/sshd_config\.d/i PasswordAuthentication yes' /etc/ssh/sshd_config
+else
+    sed -i '1i PasswordAuthentication yes' /etc/ssh/sshd_config
 fi
+sed -i 's/^#PermitRootLogin yes/PermitRootLogin no/' /etc/ssh/sshd_config
+sed -i 's/^PermitRootLogin yes/PermitRootLogin no/'  /etc/ssh/sshd_config
 
 # =============================================================================
 # STEP 13: Create MOTD
