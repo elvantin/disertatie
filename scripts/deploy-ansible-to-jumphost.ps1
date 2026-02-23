@@ -20,7 +20,22 @@ param(
 )
 
 $SSHTarget = "${User}@${JumphostIP}"
-$SSHOpts = "-o", "StrictHostKeyChecking=no"
+
+# SSH options:
+#  UserKnownHostsFile=/dev/null  — ignora known_hosts complet (rezolva "REMOTE HOST
+#                                  IDENTIFICATION HAS CHANGED" dupa fiecare redeploy)
+#  StrictHostKeyChecking=no      — accepta orice host key nou fara prompt
+#  PasswordAuthentication=yes    — permite autentificare cu parola (server-ul trebuie
+#                                  sa o aiba activata; NSG restrictionaza la IP admin)
+#  PreferredAuthentications      — incearca intai parola, apoi cheie (nu invers)
+#  LogLevel=ERROR                — suprima warning-urile de host key din output
+$SSHOpts = @(
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "PasswordAuthentication=yes",
+    "-o", "PreferredAuthentications=keyboard-interactive,password,publickey",
+    "-o", "LogLevel=ERROR"
+)
 
 Write-Host "========================================="
 Write-Host "SC MEDIA SRL - Deploy Ansible to Jumphost"

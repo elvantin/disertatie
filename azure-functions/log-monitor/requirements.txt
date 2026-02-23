@@ -1,0 +1,11 @@
+# Azure Functions runtime
+azure-functions>=1.21.0
+
+# Autentificare Managed Identity si DefaultAzureCredential
+azure-identity>=1.17.0
+
+# Interogare Log Analytics (KQL)
+azure-monitor-query>=1.3.0
+
+# Azure OpenAI SDK
+openai>=1.51.0

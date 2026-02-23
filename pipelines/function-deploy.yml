@@ -1,0 +1,102 @@
+# ============================================================
+# Pipeline: Deploy Azure Function — Log Monitor AI
+# Trigger: push pe master cu modificari in azure-functions/log-monitor/
+# ============================================================
+
+trigger:
+  branches:
+    include:
+      - master
+  paths:
+    include:
+      - azure-functions/log-monitor/**
+      - pipelines/function-deploy.yml
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  FUNCTION_APP_NAME: 'func-mediasrl-logmonitor'
+  FUNCTION_PATH:     'azure-functions/log-monitor'
+  PYTHON_VERSION:    '3.11'
+  AZURE_SERVICE_CONNECTION: 'Azure-SC-MEDIA-SRL'
+
+stages:
+
+  # ----------------------------------------------------------
+  # Stage 1: Build + test
+  # ----------------------------------------------------------
+  - stage: Build
+    displayName: 'Build Function Package'
+    jobs:
+      - job: BuildJob
+        displayName: 'Install deps & package'
+        steps:
+
+          - task: UsePythonVersion@0
+            displayName: 'Seteaza Python $(PYTHON_VERSION)'
+            inputs:
+              versionSpec: $(PYTHON_VERSION)
+              architecture: 'x64'
+
+          - script: |
+              cd $(FUNCTION_PATH)
+              pip install --upgrade pip
+              pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+            displayName: 'Instaleaza dependinte'
+
+          - task: ArchiveFiles@2
+            displayName: 'Arhiveaza pentru deploy'
+            inputs:
+              rootFolderOrFile: '$(FUNCTION_PATH)'
+              includeRootFolder: false
+              archiveType: 'zip'
+              archiveFile: '$(Build.ArtifactStagingDirectory)/function-$(Build.BuildId).zip'
+              replaceExistingArchive: true
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publica artefactul'
+            inputs:
+              pathToPublish: '$(Build.ArtifactStagingDirectory)'
+              artifactName: 'function-package'
+
+  # ----------------------------------------------------------
+  # Stage 2: Deploy la Azure Functions
+  # ----------------------------------------------------------
+  - stage: Deploy
+    displayName: 'Deploy la Azure'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: DeployFunction
+        displayName: 'Deploy func-mediasrl-logmonitor'
+        environment: 'productie'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: function-package
+
+                - task: AzureFunctionApp@2
+                  displayName: 'Deploy Azure Function App'
+                  inputs:
+                    azureSubscription: $(AZURE_SERVICE_CONNECTION)
+                    appType: 'functionAppLinux'
+                    appName: $(FUNCTION_APP_NAME)
+                    package: '$(Pipeline.Workspace)/function-package/function-$(Build.BuildId).zip'
+                    runtimeStack: 'PYTHON|3.11'
+                    deploymentMethod: 'zipDeploy'
+
+                - task: AzureCLI@2
+                  displayName: 'Verifica starea functiei'
+                  inputs:
+                    azureSubscription: $(AZURE_SERVICE_CONNECTION)
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      echo "Stare Function App:"
+                      az functionapp show \
+                        --name $(FUNCTION_APP_NAME) \
+                        --resource-group rg-mediasrl-aimonitoring-swedencentral \
+                        --query "{state:state, hostNames:hostNames}" -o table
