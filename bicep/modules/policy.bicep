@@ -13,13 +13,6 @@ param allowedLocations array = [
   'northeurope'
 ]
 
-@description('Required tags for resources')
-param requiredTags array = [
-  'environment'
-  'project'
-  'managed-by'
-]
-
 // ----- Policy Assignment: Allowed Locations -----
 
 resource policyAllowedLocations 'Microsoft.Authorization/policyAssignments@2023-04-01' = {

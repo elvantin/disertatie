@@ -215,13 +215,15 @@ touch /etc/cloud/cloud-init.disabled
 echo "  cloud-init disabled via /etc/cloud/cloud-init.disabled"
 
 if [ -f /etc/waagent.conf ]; then
-    sed -i 's/^Provisioning.Enabled=n/Provisioning.Enabled=y/'           /etc/waagent.conf
-    sed -i 's/^Provisioning.UseCloudInit=y/Provisioning.UseCloudInit=n/' /etc/waagent.conf
+    sed -i 's/^Provisioning.Agent=auto/Provisioning.Agent=waagent/'            /etc/waagent.conf
+    sed -i 's/^Provisioning.Enabled=n/Provisioning.Enabled=y/'                 /etc/waagent.conf
+    sed -i 's/^Provisioning.UseCloudInit=y/Provisioning.UseCloudInit=n/'       /etc/waagent.conf
     sed -i 's/^Provisioning.MonitorHostName=n/Provisioning.MonitorHostName=y/' /etc/waagent.conf
-    grep -q '^Provisioning.Enabled'         /etc/waagent.conf || echo 'Provisioning.Enabled=y'         >> /etc/waagent.conf
-    grep -q '^Provisioning.UseCloudInit'    /etc/waagent.conf || echo 'Provisioning.UseCloudInit=n'    >> /etc/waagent.conf
-    grep -q '^Provisioning.MonitorHostName' /etc/waagent.conf || echo 'Provisioning.MonitorHostName=y' >> /etc/waagent.conf
-    echo "  waagent.conf: Provisioning.Enabled=y, UseCloudInit=n, MonitorHostName=y"
+    grep -q '^Provisioning.Agent'           /etc/waagent.conf || echo 'Provisioning.Agent=waagent'        >> /etc/waagent.conf
+    grep -q '^Provisioning.Enabled'         /etc/waagent.conf || echo 'Provisioning.Enabled=y'            >> /etc/waagent.conf
+    grep -q '^Provisioning.UseCloudInit'    /etc/waagent.conf || echo 'Provisioning.UseCloudInit=n'       >> /etc/waagent.conf
+    grep -q '^Provisioning.MonitorHostName' /etc/waagent.conf || echo 'Provisioning.MonitorHostName=y'    >> /etc/waagent.conf
+    echo "  waagent.conf: Provisioning.Agent=waagent, Enabled=y, UseCloudInit=n, MonitorHostName=y"
 fi
 
 # =============================================================================

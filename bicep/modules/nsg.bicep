@@ -8,9 +8,6 @@
 @description('Azure region')
 param location string
 
-@description('Environment (prod/dev)')
-param environment string
-
 @description('Admin IP address for RDP access to jumphost (CIDR notation, e.g., "1.2.3.4/32")')
 param adminIpAddress string
 

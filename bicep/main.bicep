@@ -74,14 +74,8 @@ param adminUsername string = 'azureadmin'
 @secure()
 param adminPassword string
 
-@description('SSH public key for Linux VMs')
-param sshPublicKey string
-
 @description('Use Marketplace images instead of Gallery (set to false once Packer images are built)')
 param useMarketplaceImages bool = true
-
-@description('Recovery Services Vault name for Azure Backup')
-param backupVaultName string = 'rsv-mediasrl-${environment}'
 
 @description('Persistent Resource Group name (survives az group delete on main RG)')
 param persistentResourceGroupName string = 'rg-mediasrl-persistent'
@@ -234,11 +228,6 @@ module policy 'modules/policy.bicep' = {
       'westeurope'
       'northeurope'
     ]
-    requiredTags: [
-      'environment'
-      'project'
-      'managed-by'
-    ]
   }
 }
 
@@ -249,7 +238,6 @@ module nsg 'modules/nsg.bicep' = {
   scope: az.resourceGroup(resourceGroupName)
   params: {
     location: location
-    environment: environment
     adminIpAddress: adminIpAddress
     tags: tags
   }
@@ -358,7 +346,7 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     adminPasswordOrKey: adminPassword
     subnetId: vm.subnet == 'prod' ? networking.outputs.subnetProdId : (vm.subnet == 'dev' ? networking.outputs.subnetDevId : networking.outputs.subnetMgmtId)
     createPublicIp: vm.createPublicIp
-    #disable-next-line prefer-safe-access
+    #disable-next-line use-safe-access
     existingPublicIpId: contains(persistentIpLookup, vm.name) ? persistentIpLookup[vm.name] : ''
     dnsLabel: vm.?dnsLabel ?? ''
     useGalleryImage: !useMarketplaceImages

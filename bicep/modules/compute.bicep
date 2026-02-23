@@ -305,6 +305,6 @@ output vmName string = vm.name
 output nicId string = nic.id
 output privateIpAddress string = nic.properties.ipConfigurations[0].properties.privateIPAddress
 
-// Conditional output for public IP (avoid BCP318 warning by using resource condition)
-@description('Public IP address (empty if createPublicIp = false)')
-output publicIpAddress string = createPublicIp ? publicIp.properties.ipAddress : ''
+// Safe-access operator (.?) handles conditional resource — returns '' when publicIp doesn't exist
+@description('Public IP address (empty if no public IP was created)')
+output publicIpAddress string = publicIp.?properties.?ipAddress ?? ''
