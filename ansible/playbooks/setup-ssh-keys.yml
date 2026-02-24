@@ -37,6 +37,13 @@
           SSH key pair {{ 'already exists' if ssh_key_check.stat.exists else 'does not exist, will be generated' }}
           at {{ ssh_key_path }}
 
+    - name: Ensure .ssh directory exists
+      file:
+        path: "{{ ansible_env.HOME }}/.ssh"
+        state: directory
+        mode: '0700'
+        owner: "{{ ansible_env.USER }}"
+
     - name: Generate SSH key pair (if not exists)
       openssh_keypair:
         path: "{{ ssh_key_path }}"

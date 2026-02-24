@@ -8,7 +8,11 @@
 ansible_connection: ssh
 ansible_port: 22
 ansible_python_interpreter: /usr/bin/python3
-ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+ansible_ssh_common_args: >-
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o PreferredAuthentications=keyboard-interactive,password
+  -o PasswordAuthentication=yes
 
 # SSH Authentication (before SSH keys are deployed)
 # Use --ask-pass or uncomment below temporarily
