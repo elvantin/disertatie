@@ -70,16 +70,16 @@ param vms = [
     name: 'vm-jmp-01'
     osType: 'Linux'
     size: 'Standard_D2s_v3'
-    subnet: 'mgmt'
+    subnet: 'mgmt'                // snet-mgmt (10.10.12.0/24) — jumphost, nsg-mgmt
     createPublicIp: false
-    imageDefinition: 'jumphost'  // marketplace: va folosi imaginea ubuntu canonical (CSE Bootstrap va configura xRDP+Ansible)
+    imageDefinition: 'jumphost'
     osDiskSizeGb: 64
   }
   {
     name: 'vm-web-01'
     osType: 'Linux'
     size: 'Standard_B2s'
-    subnet: 'prod'
+    subnet: 'dev'                 // snet-dev (10.10.11.0/24) — VMs de dezvoltare, nsg-dev
     createPublicIp: false
     imageDefinition: 'ubuntu'
     osDiskSizeGb: 32
@@ -88,7 +88,7 @@ param vms = [
     name: 'vm-app-01'
     osType: 'Linux'
     size: 'Standard_B2s'
-    subnet: 'prod'
+    subnet: 'dev'                 // snet-dev (10.10.11.0/24)
     createPublicIp: false
     imageDefinition: 'ubuntu'
     osDiskSizeGb: 32
@@ -97,7 +97,7 @@ param vms = [
     name: 'vm-cms-01'
     osType: 'Linux'
     size: 'Standard_B2s'
-    subnet: 'prod'
+    subnet: 'dev'                 // snet-dev (10.10.11.0/24)
     createPublicIp: false
     imageDefinition: 'ubuntu'
     osDiskSizeGb: 32
@@ -106,7 +106,7 @@ param vms = [
     name: 'vm-db-01'
     osType: 'Windows'
     size: 'Standard_B2s'
-    subnet: 'prod'
+    subnet: 'dev'                 // snet-dev (10.10.11.0/24)
     createPublicIp: false
     imageDefinition: 'windows'
     osDiskSizeGb: 128
@@ -115,7 +115,7 @@ param vms = [
     name: 'vm-fs-01'
     osType: 'Windows'
     size: 'Standard_B2s'
-    subnet: 'prod'
+    subnet: 'dev'                 // snet-dev (10.10.11.0/24)
     createPublicIp: false
     imageDefinition: 'windows'
     osDiskSizeGb: 128

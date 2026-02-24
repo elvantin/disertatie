@@ -210,6 +210,8 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
 }
 
 // ----- NSG: Development Subnet (snet-dev) -----
+// Reguli similare cu nsg-prod, adaptate pentru snet-dev (10.10.11.0/24).
+// Nu are acces HTTPS/HTTP extern (dev nu e public facing).
 
 resource nsgDev 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
   name: 'nsg-dev'
@@ -218,19 +220,103 @@ resource nsgDev 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
   properties: {
     securityRules: [
       {
-        name: 'Allow-RDP-SSH-From-Jumphost'
+        name: 'Allow-RDP-From-Jumphost'
         properties: {
-          description: 'Allow RDP and SSH from jumphost'
+          description: 'Allow RDP from jumphost to Windows VMs in dev subnet'
           protocol: 'Tcp'
           sourcePortRange: '*'
-          destinationPortRanges: [
-            '3389'
-            '22'
-          ]
+          destinationPortRange: '3389'
           sourceAddressPrefix: '10.10.12.0/24'
           destinationAddressPrefix: '*'
           access: 'Allow'
           priority: 100
+          direction: 'Inbound'
+        }
+      }
+      {
+        name: 'Allow-SSH-From-Jumphost'
+        properties: {
+          description: 'Allow SSH from jumphost to Linux VMs in dev subnet'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '22'
+          sourceAddressPrefix: '10.10.12.0/24'
+          destinationAddressPrefix: '*'
+          access: 'Allow'
+          priority: 110
+          direction: 'Inbound'
+        }
+      }
+      {
+        name: 'Allow-WinRM-From-Jumphost'
+        properties: {
+          description: 'Allow WinRM HTTP from jumphost to Windows VMs in dev (Ansible)'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '5985'
+          sourceAddressPrefix: '10.10.12.0/24'
+          destinationAddressPrefix: '*'
+          access: 'Allow'
+          priority: 115
+          direction: 'Inbound'
+        }
+      }
+      {
+        name: 'Allow-MySQL-Internal'
+        properties: {
+          description: 'Allow MySQL traffic within dev subnet'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '3306'
+          sourceAddressPrefix: '10.10.11.0/24'
+          destinationAddressPrefix: '10.10.11.0/24'
+          access: 'Allow'
+          priority: 200
+          direction: 'Inbound'
+        }
+      }
+      {
+        name: 'Allow-SMTP-Internal'
+        properties: {
+          description: 'Allow SMTP traffic within dev subnet'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRanges: [
+            '25'
+            '587'
+          ]
+          sourceAddressPrefix: '10.10.11.0/24'
+          destinationAddressPrefix: '10.10.11.0/24'
+          access: 'Allow'
+          priority: 210
+          direction: 'Inbound'
+        }
+      }
+      {
+        name: 'Allow-AppServer-Internal'
+        properties: {
+          description: 'Allow port 8080 within dev subnet (nginx -> vm-app-01 API)'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '8080'
+          sourceAddressPrefix: '10.10.11.0/24'
+          destinationAddressPrefix: '10.10.11.0/24'
+          access: 'Allow'
+          priority: 220
+          direction: 'Inbound'
+        }
+      }
+      {
+        name: 'Allow-SMB-Internal'
+        properties: {
+          description: 'Allow SMB traffic within dev subnet (file server)'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '445'
+          sourceAddressPrefix: '10.10.11.0/24'
+          destinationAddressPrefix: '10.10.11.0/24'
+          access: 'Allow'
+          priority: 225
           direction: 'Inbound'
         }
       }
@@ -244,7 +330,7 @@ resource nsgDev 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
           sourceAddressPrefix: '*'
           destinationAddressPrefix: '*'
           access: 'Deny'
-          priority: 200
+          priority: 300
           direction: 'Inbound'
         }
       }

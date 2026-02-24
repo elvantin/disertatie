@@ -21,6 +21,40 @@ echo "SC MEDIA SRL - Jumphost Finalization"
 echo "========================================="
 
 # =============================================================================
+# STEP 0: Asteapta cloud-init sa termine provisioningul
+# =============================================================================
+# CSE poate porni INAINTE ca cloud-init sa termine de creat userul azureadmin.
+# cloud-init status --wait blocheaza pana la finalizarea tuturor fazelor cloud-init.
+
+echo "[0/4] Waiting for cloud-init to finish provisioning..."
+if command -v cloud-init >/dev/null 2>&1; then
+    cloud-init status --wait --long 2>/dev/null \
+        && echo "  OK: cloud-init finished" \
+        || echo "  WARN: cloud-init status --wait returned non-zero (ignorat)"
+else
+    echo "  WARN: cloud-init not found, sleeping 30s as fallback..."
+    sleep 30
+fi
+
+# Verificare suplimentara: daca userul tot nu exista, il cream manual
+if ! id "${ADMIN_USER}" >/dev/null 2>&1; then
+    echo "  WARN: ${ADMIN_USER} inca nu exista dupa cloud-init, il cream manual..."
+    useradd -m -s /bin/bash "${ADMIN_USER}" 2>/dev/null || true
+    usermod -aG sudo "${ADMIN_USER}"         2>/dev/null || true
+    echo "  ${ADMIN_USER} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${ADMIN_USER}"
+    chmod 440 "/etc/sudoers.d/${ADMIN_USER}"
+    echo "  OK: user creat manual"
+fi
+
+# Asigura-te ca home dir exista (poate useradd a fost apelat fara -m)
+if [ ! -d "/home/${ADMIN_USER}" ]; then
+    mkdir -p "/home/${ADMIN_USER}"
+    chown "${ADMIN_USER}:${ADMIN_USER}" "/home/${ADMIN_USER}"
+    chmod 750 "/home/${ADMIN_USER}"
+    echo "  OK: home dir creat"
+fi
+
+# =============================================================================
 # STEP 1: Seteaza parola si deblocheaza contul
 # =============================================================================
 # NU folosim chpasswd — apeleaza PAM si esueaza pe Azure gallery images cu:
