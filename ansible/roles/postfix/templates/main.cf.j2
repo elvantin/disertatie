@@ -67,5 +67,4 @@ smtpd_hard_error_limit = 10
 maximal_queue_lifetime = 1d
 bounce_queue_lifetime = 1d
 
-# Logging
-maillog_file = /var/log/postfix.log
+# Logging: uses syslog/journald (Ubuntu 22.04 default, AppArmor compatible)

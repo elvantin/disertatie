@@ -219,15 +219,11 @@
           ============================================================
           DEPLOYMENT SUMMARY - {{ inventory_hostname }}
           ============================================================
-          OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
-          Kernel: {{ ansible_kernel }}
-          Architecture: {{ ansible_architecture }}
-          IP Address: {{ ansible_default_ipv4.address | default('N/A') }}
-          Hostname: {{ ansible_hostname }}
-          FQDN: {{ ansible_fqdn }}
-          Environment: {{ env_name }}
-          Roles: {{ group_names | join(', ') }}
-          Uptime: {{ (ansible_uptime_seconds | default(0)) // 3600 }} hours
+          OS:          {{ ansible_distribution }} {{ ansible_distribution_version }}  (kernel {{ ansible_kernel }})
+          IP Address:  {{ ansible_default_ipv4.address | default('N/A') }}
+          Role:        {{ group_names | reject('match', '^tag_') | reject('equalto', 'linux') | reject('equalto', 'all') | reject('equalto', 'ungrouped') | list | join(', ') }}
+          Environment: {{ group_names | select('match', '^tag_environment_') | map('regex_replace', '^tag_environment_', '') | first | default(env_name) }}
+          Uptime:      {{ (ansible_uptime_seconds | default(0)) // 3600 }} hours
           ============================================================
       tags: [verify, summary]
 
@@ -258,13 +254,10 @@
           ============================================================
           DEPLOYMENT SUMMARY - {{ inventory_hostname }}
           ============================================================
-          OS: {{ ansible_os_family }} {{ ansible_distribution_version | default('N/A') }}
-          Architecture: {{ ansible_architecture }}
-          IP Address: {{ ansible_ip_addresses | default(['N/A']) | first }}
-          Hostname: {{ ansible_hostname }}
-          FQDN: {{ ansible_fqdn }}
-          Environment: {{ env_name }}
-          Roles: {{ group_names | join(', ') }}
+          OS:          Windows Server 2022  ({{ ansible_distribution_version | default('N/A') }})
+          IP Address:  {{ ansible_ip_addresses | default([]) | select('match', '^[0-9.]+$') | reject('equalto', '127.0.0.1') | list | first | default('N/A') }}
+          Role:        {{ group_names | reject('match', '^tag_') | reject('equalto', 'windows') | reject('equalto', 'all') | reject('equalto', 'ungrouped') | list | join(', ') }}
+          Environment: {{ group_names | select('match', '^tag_environment_') | map('regex_replace', '^tag_environment_', '') | first | default(env_name) }}
           ============================================================
       tags: [verify, summary]
 
@@ -289,30 +282,24 @@
           ============================================================
           ANSIBLE DEPLOYMENT COMPLETED!
           ============================================================
+          Infrastructure:  SC MEDIA SRL
+          Environment:     {{ env_name }}
+          Date/Time:       {{ ansible_date_time.date }}  {{ ansible_date_time.time }}
 
-          Infrastructure: SC MEDIA SRL
-          Environment: {{ env_name }}
-          Date: {{ ansible_date_time.date }}
-          Time: {{ ansible_date_time.time }}
-
-          VMs Configured:
-          {% for host in groups['all'] %}
-            - {{ host }} ({{ hostvars[host]['ansible_host'] | default('N/A') }})
+          VMs Deployed:
+          {% set infra_hosts = groups['all'] | reject('equalto', 'localhost') | list | sort %}
+          {% for host in infra_hosts %}
+          {% set host_role = hostvars[host]['group_names'] | reject('match', '^tag_') | reject('equalto', 'linux') | reject('equalto', 'windows') | reject('equalto', 'all') | reject('equalto', 'ungrouped') | list | join(', ') %}
+            {{ host }}  {{ hostvars[host]['ansible_host'] | default('N/A') }}  [{{ host_role }}]
           {% endfor %}
 
-          Next Steps:
-            1. Test services:
-               - Web: http://{{ hostvars['vm-web-01']['ansible_host'] | default('vm-web-01') }}
-               - WordPress: http://{{ hostvars['vm-cms-01']['ansible_host'] | default('vm-cms-01') }}
+          Access Points (via Azure public IP / jumphost):
+            Website:    https://mediasrl.swedencentral.cloudapp.azure.com
+            API:        https://mediasrl.swedencentral.cloudapp.azure.com/api/
+            WordPress:  http://{{ hostvars['vm-cms-01']['ansible_host'] | default('vm-cms-01') }}  (via jumphost)
+            Jumphost:   ssh azureadmin@{{ hostvars['vm-jmp-01']['ansible_host'] | default('vm-jmp-01') }}
 
-            2. Verify database connectivity:
-               ansible database -m win_shell -a "sqlcmd -S localhost -Q 'SELECT @@VERSION'"
-
-            3. Test email:
-               ansible cmsserver -m shell -a "echo 'Test' | mail -s 'Test' admin@media-srl.ro"
-
-          Log File: ./ansible.log
-
+          Log File:  ./ansible.log
           ============================================================
       tags: [always]
 

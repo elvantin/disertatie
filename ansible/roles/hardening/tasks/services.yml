@@ -10,6 +10,6 @@
   loop:
     - rpcbind
     - nfs-server
-  ignore_errors: yes
+  failed_when: false
   when: ansible_os_family != 'Windows'
   tags: [hardening, services]
