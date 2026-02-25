@@ -65,19 +65,38 @@ apt install -y \
 # =============================================================================
 
 echo "[3/6] Configuring SSH..."
-# sshd_config.d: fisierele se citesc alfabetic, PRIMA aparitie castiga.
-# "10-mediasrl.conf" se citeste INAINTE de "60-cloudimg-settings.conf" (creat de
-# cloud-init la primul boot). Astfel PasswordAuthentication yes castiga intotdeauna.
+# Trei straturi de protectie identice cu jumphost-ul:
+#
+# Strat 1: cloud-init override (ssh_pwauth: true) — cloud-init va scrie
+#          PasswordAuthentication yes in 60-cloudimg-settings.conf.
+#          Fara acest strat, cloud-init poate reseta la 'no' la primul boot
+#          pe Azure gallery images chiar daca Packer a setat 'yes' in imagine.
+#
+# Strat 2: sshd_config.d/10-mediasrl.conf — prefix "10" < "60", deci se citeste
+#          INAINTE de 60-cloudimg-settings.conf. Prima aparitie castiga in sshd.
+#
+# Strat 3: sshd_config principal (insert before Include) — procesata prima,
+#          bate orice fisier din sshd_config.d/.
+
+# --- Strat 1: cloud-init override ---
+mkdir -p /etc/cloud/cloud.cfg.d
+cat > /etc/cloud/cloud.cfg.d/99-mediasrl-ssh.cfg << 'CLOUDINIT'
+# SC MEDIA SRL — Override cloud-init SSH behavior
+# ssh_pwauth: true => cloud-init va scrie PasswordAuthentication yes
+# in loc de no (comportamentul implicit Azure pentru gallery images)
+ssh_pwauth: true
+CLOUDINIT
+chmod 644 /etc/cloud/cloud.cfg.d/99-mediasrl-ssh.cfg
+
+# --- Strat 2: sshd_config.d/10-mediasrl.conf ---
 cat > /etc/ssh/sshd_config.d/10-mediasrl.conf << 'SSHDCONF'
-# SC MEDIA SRL — SSH hardening (prioritate maxima, prefixul 10 < 60-cloudimg-settings)
+# SC MEDIA SRL — SSH hardening (prefix 10, se citeste inaintea oricarui fisier 60-*)
 PasswordAuthentication yes
 PermitRootLogin no
 SSHDCONF
 chmod 644 /etc/ssh/sshd_config.d/10-mediasrl.conf
 
-# Forteaza PasswordAuthentication yes INAINTE de Include in sshd_config principal.
-# Prima aparitie a unui parametru castiga in sshd(8) — deci aceasta setare bate
-# orice fisier din sshd_config.d/ (inclusiv 60-cloudimg-settings.conf de cloud-init).
+# --- Strat 3: sshd_config principal (insert before Include) ---
 sed -i '/^PasswordAuthentication /d' /etc/ssh/sshd_config
 if grep -q '^Include /etc/ssh/sshd_config.d' /etc/ssh/sshd_config; then
     sed -i '/^Include \/etc\/ssh\/sshd_config\.d/i PasswordAuthentication yes' /etc/ssh/sshd_config

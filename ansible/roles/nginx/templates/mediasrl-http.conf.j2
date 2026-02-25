@@ -5,11 +5,11 @@
 
 # Upstream definitions
 upstream wordpress_backend {
-    server 10.10.10.8:80;
+    server {{ hostvars['vm-cms-01']['ansible_host'] }}:80;   # vm-cms-01 (WordPress) - resolved dynamically
 }
 
 upstream app_backend {
-    server 10.10.10.7:8080;
+    server {{ hostvars['vm-app-01']['ansible_host'] }}:8080;  # vm-app-01 (REST API) - resolved dynamically
 }
 
 server {

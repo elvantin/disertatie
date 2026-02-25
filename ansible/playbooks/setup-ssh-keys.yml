@@ -8,8 +8,15 @@
 #   ansible-playbook playbooks/setup-ssh-keys.yml
 #
 # Prerequisites:
-#   - ansible_password defined in group_vars/linux.yml
-#   - sshpass installed on jumphost: sudo apt install -y sshpass
+#   - az login performed on jumphost (used for dynamic inventory + run-command)
+#   - sshpass installed (already in Packer jumphost image)
+#
+# How it works:
+#   Play 1 — generates/reads the jumphost SSH key pair
+#   Play 2 — injects the public key via Azure Run Command (no SSH needed!)
+#             bypasses PasswordAuthentication issues on fresh gallery VMs
+#   Play 3 — verifies SSH key-based authentication works
+#   Play 4 — summary
 #
 # ============================================================
 
@@ -82,47 +89,92 @@
         key: "{{ ssh_public_key_content['content'] | b64decode | trim }}"
         comment: "jumphost-ansible-automation"
 
-    - name: Set SSH public key fact for next play
+    - name: Set SSH public key fact for next plays
       set_fact:
         jumphost_ssh_public_key: "{{ ssh_public_key_content['content'] | b64decode | trim }}"
         cacheable: yes
 
 # ============================================================
-# Deploy SSH Public Key to Linux VMs (excluding jumphost)
+# Inject SSH Public Key via Azure Run Command
 # ============================================================
-# Note: ansible_become must be overridden via vars (not play-level become)
-# because group_vars/linux.yml sets ansible_become: yes which takes
-# precedence over play keywords.
+# Uses Azure's out-of-band API — no SSH connection to target VMs needed.
+# Bypasses PasswordAuthentication issues on fresh gallery image VMs.
+# Requires: az login on jumphost (already done for azure_rm inventory).
+# resource_group is provided by the azure_rm dynamic inventory plugin.
 # ============================================================
 
-- name: Deploy SSH Public Key to Linux VMs
-  hosts: linux:!jumphost
+- name: Inject SSH Public Key via Azure Run Command
+  hosts: localhost
+  connection: local
   gather_facts: no
+  become: no
 
   vars:
-    ansible_become: false
+    target_hosts: "{{ groups['linux'] | difference(groups.get('jumphost', [])) }}"
 
   tasks:
-    - name: Wait for SSH port to be available
-      wait_for:
-        host: "{{ ansible_host }}"
-        port: 22
-        timeout: 60
-      delegate_to: localhost
-      connection: local
+    - name: Check Azure CLI authentication
+      command: az account show --query name -o tsv
+      register: az_account
+      changed_when: false
+      failed_when: false
 
-    - name: Deploy SSH public key to authorized_keys
-      authorized_key:
-        user: "{{ ansible_user }}"
-        state: present
-        key: "{{ hostvars['localhost']['jumphost_ssh_public_key'] }}"
-        comment: "jumphost-ansible-automation"
-        exclusive: no
-      register: key_deployment
+    - name: Fail with instructions if not authenticated
+      fail:
+        msg: |
+          Azure CLI is not authenticated on this jumphost.
 
-    - name: Display key deployment status
+          Please run the following command on the jumphost BEFORE running this playbook:
+            az login --use-device-code
+
+          Then re-run:
+            ansible-playbook playbooks/setup-ssh-keys.yml
+      when: az_account.rc != 0
+
+    - name: Display Azure account
       debug:
-        msg: "SSH key deployed to {{ inventory_hostname }} ({{ ansible_host }}): {{ 'SUCCESS' if key_deployment is succeeded else 'FAILED' }}"
+        msg: "Azure account: {{ az_account.stdout | trim }}"
+
+    - name: Write key injection script to jumphost
+      copy:
+        dest: /tmp/ansible-inject-ssh-key.sh
+        content: |
+          #!/bin/bash
+          # Decode public key from base64 (avoids quoting issues with SSH key content)
+          PUB_KEY=$(printf '%s' '{{ hostvars["localhost"]["jumphost_ssh_public_key"] | b64encode }}' | base64 -d)
+          mkdir -p /home/azureadmin/.ssh
+          chmod 700 /home/azureadmin/.ssh
+          if grep -qxF "$PUB_KEY" /home/azureadmin/.ssh/authorized_keys 2>/dev/null; then
+            echo "KEY_ALREADY_EXISTS"
+          else
+            echo "$PUB_KEY" >> /home/azureadmin/.ssh/authorized_keys
+            echo "KEY_ADDED"
+          fi
+          chmod 600 /home/azureadmin/.ssh/authorized_keys
+          chown -R azureadmin:azureadmin /home/azureadmin/.ssh
+        mode: '0700'
+
+    - name: Inject SSH key to {{ item }} via Azure Run Command
+      command: >
+        az vm run-command invoke
+        --resource-group "{{ hostvars[item]['resource_group'] }}"
+        --name "{{ item }}"
+        --command-id RunShellScript
+        --scripts @/tmp/ansible-inject-ssh-key.sh
+      loop: "{{ target_hosts }}"
+      register: inject_results
+
+    - name: Show injection results
+      debug:
+        msg: "{{ item.item }}: {{ (item.stdout | from_json).value[0].message | default('no output') | trim }}"
+      loop: "{{ inject_results.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Cleanup injection script
+      file:
+        path: /tmp/ansible-inject-ssh-key.sh
+        state: absent
 
 # ============================================================
 # Verify SSH Key-Based Authentication
@@ -135,6 +187,12 @@
   vars:
     ansible_become: false
     ansible_ssh_private_key_file: "~/.ssh/id_rsa"
+    # Verify with key only — no password fallback
+    ansible_ssh_common_args: >-
+      -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
+      -o PreferredAuthentications=publickey
+      -o PasswordAuthentication=no
 
   tasks:
     - name: Test SSH connectivity with key-based auth
@@ -156,6 +214,7 @@
   hosts: localhost
   connection: local
   gather_facts: no
+  become: no
 
   tasks:
     - name: Display setup summary
@@ -168,14 +227,14 @@
           SSH Key: ~/.ssh/id_rsa
           Public Key: ~/.ssh/id_rsa.pub
 
-          Linux VMs Configured:
-          {% for host in groups['linux'] %}
+          Linux VMs Configured (via Azure Run Command):
+          {% for host in groups['linux'] | difference(groups.get('jumphost', [])) %}
             - {{ host }} ({{ hostvars[host]['ansible_host'] }})
           {% endfor %}
 
           Next Steps:
             1. Test: ansible linux -m ping
             2. Run baseline: ansible-playbook playbooks/site.yml --tags common
-            3. Optionally comment out ansible_password in group_vars/linux.yml
+            3. Optional: comment out ansible_password in group_vars/linux.yml
 
           ============================================================

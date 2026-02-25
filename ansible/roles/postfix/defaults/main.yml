@@ -1,0 +1,12 @@
+---
+# ============================================================
+# Ansible Role: postfix - Default Variables
+# ============================================================
+
+# Domain: ansible_domain e string gol pe Azure VMs (nu undefined)
+# Folosim operatorul `or` din Jinja2 care tratează string-ul gol ca falsy
+postfix_domain: "{{ ansible_domain or 'mediasrl.local' }}"
+
+# Rețeaua internă derivată dinamic din IP-ul primar al hostului
+# Pe prod: 10.10.10.0/24  |  Pe dev: 10.10.11.0/24
+postfix_mynetworks: "{{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.prefix }}, 127.0.0.0/8"

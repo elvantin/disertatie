@@ -135,11 +135,15 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-HTTP-To-Web'
         properties: {
-          description: 'Allow HTTP only from VNet (internal reverse proxy traffic, no external HTTP)'
+          // Port 80 must be open from internet for two reasons:
+          // 1. Let's Encrypt ACME HTTP-01 challenge (certbot webroot)
+          // 2. HTTP → HTTPS redirect (nginx serves 301 redirect on port 80)
+          // Once nginx has the certificate, it automatically redirects all HTTP to HTTPS.
+          description: 'Allow HTTP from internet (required for Let\'s Encrypt ACME challenge and HTTP→HTTPS redirect)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRange: '80'
-          sourceAddressPrefix: 'VirtualNetwork'
+          sourceAddressPrefix: '*'
           destinationAddressPrefix: '10.10.10.0/24'
           access: 'Allow'
           priority: 121

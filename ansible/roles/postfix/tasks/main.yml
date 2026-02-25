@@ -50,11 +50,11 @@
     immediate: yes
   tags: [postfix, firewall]
 
-- name: Enable and start Postfix service
+- name: Restart Postfix to apply current configuration
   ansible.builtin.systemd:
     name: postfix
     enabled: yes
-    state: started
+    state: restarted
   tags: [postfix, service]
 
 - name: Verify Postfix is listening on port 25

@@ -22,7 +22,7 @@ wordpress_db_type: "mysql"
 wordpress_db_name: "wordpress_db"
 wordpress_db_user: "wp_user"
 wordpress_db_password: "Wp_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
-wordpress_db_host: "10.10.10.5"  # vm-db-01 MySQL Community Server
+wordpress_db_host: "{{ hostvars['vm-db-01']['ansible_host'] }}"  # resolved dynamically from inventory (works for both dev/prod)
 wordpress_db_port: 3306
 wordpress_db_charset: "utf8mb4"
 wordpress_db_collate: "utf8mb4_unicode_ci"

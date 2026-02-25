@@ -104,72 +104,52 @@ if ($LASTEXITCODE -ne 0) {
 #   - \$ NU functioneaza in PowerShell (\ nu este caracter de escape in PS)
 # =============================================================================
 
-Write-Host "[2/3] Instaland azure.azcollection + Python deps pe jumphost..."
+Write-Host "[2/3] Instaland/actualizand Ansible Galaxy collections pe jumphost..."
+Write-Host "  (requirements.yml: ansible.windows, ansible.posix, community.general, community.windows, azure.azcollection)"
 Write-Host "  (Poate dura 2-5 minute la prima rulare)"
 Write-Host ""
 
 ssh @SSHOpts $SSHTarget @"
 echo '========================================='
-echo 'STEP 2: azure.azcollection setup'
+echo 'STEP 2: Ansible Galaxy collections setup'
 echo '========================================='
 
 echo ''
-echo '--- [2a] Instalare azure.azcollection ---'
-# Rulam din ${RemotePath} ca ansible-galaxy sa citeasca ansible.cfg si sa
-# instaleze colectia in ./collections (= ${RemotePath}/collections/),
-# adica pe calea din collections_path din ansible.cfg.
-cd ${RemotePath} && ansible-galaxy collection install azure.azcollection --force
+echo '--- [2a] Instalare colectii din requirements.yml ---'
+# Colectiile sunt deja pre-baked in imaginea Packer.
+# Aceasta comanda asigura versiunile corecte si aplica pinning-ul din requirements.yml
+# (important: community.general trebuie sa fie <12.0.0 pentru a evita tombstone ERROR)
+cd ${RemotePath} && ansible-galaxy collection install -r requirements.yml --force
 echo ''
 
-echo '--- [2b] Python dependencies (requirements.txt din colectie) ---'
-# ansible.cfg: collections_path = ./collections:~/ansible/collections:...
-# Cand rulezi din ~/ansible, ./collections = ~/ansible/collections (FARA punct)
-# ansible-galaxy fara -p foloseste prima cale din collections_path => ~/ansible/collections
-# Verificam ambele locatii posibile pentru robustete:
+echo '--- [2b] Python dependencies pentru azure.azcollection ---'
+# Verificam ambele locatii posibile (./collections si ~/.ansible/collections)
 COLL1=${RemotePath}/collections/ansible_collections/azure/azcollection
 COLL2=~/.ansible/collections/ansible_collections/azure/azcollection
 
 if [ -f "`$COLL1/requirements.txt" ]; then
     REQS_PATH=`$COLL1/requirements.txt
-    echo "  Gasit (collections_path din ansible.cfg): `$REQS_PATH"
+    echo "  Gasit in collections_path: `$REQS_PATH"
 elif [ -f "`$COLL2/requirements.txt" ]; then
     REQS_PATH=`$COLL2/requirements.txt
-    echo "  Gasit (fallback ~/.ansible): `$REQS_PATH"
+    echo "  Gasit in ~/.ansible: `$REQS_PATH"
 else
     REQS_PATH=""
-    echo '  WARN: requirements.txt negasit in nicio locatie cunoscuta'
+    echo '  WARN: requirements.txt negasit'
 fi
 
 if [ -n "`$REQS_PATH" ]; then
-    pip3 install -r "`$REQS_PATH" --quiet 2>&1 | tail -10
-    echo '  OK: Python deps instalate din requirements.txt'
-else
-    echo '  Instalez pachete Azure de baza (fallback)...'
-    pip3 install --quiet \
-        azure-identity \
-        azure-mgmt-resource \
-        azure-mgmt-compute \
-        azure-mgmt-network \
-        azure-mgmt-storage \
-        msrestazure \
-        2>&1 | tail -5
-    echo '  OK: pachete Azure de baza instalate'
+    pip3 install -r "`$REQS_PATH" --quiet 2>&1 | tail -5
+    echo '  OK: Python deps instalate'
 fi
 echo ''
 
-echo '--- [2b-extra] Instalare explicita azure-cli-core ---'
-# auth_source: cli are nevoie de azure.cli.core._profile.Profile in /usr/bin/python3.
-# Binarul az CLI traieste in /opt/az/ cu Python izolat — nu e vizibil din ansible.
-pip3 install azure-cli-core --upgrade --quiet 2>&1 | tail -5
-echo '  OK: azure-cli-core instalat in /usr/bin/python3'
-echo ''
-
-echo '--- [2c] Verificare import critic pentru auth_source: cli ---'
+echo '--- [2c] Verificare azure-cli-core (pentru auth_source: cli) ---'
+pip3 install azure-cli-core --upgrade --quiet 2>&1 | tail -3
 python3 -c "
 from azure.cli.core._profile import Profile
 print('  OK: azure.cli.core._profile.Profile disponibil')
-print('  Ansible poate folosi auth_source: cli')
-" 2>&1 || echo '  WARN: azure.cli.core._profile nu se poate importa — instalarea a esuat'
+" 2>&1 || echo '  WARN: azure.cli.core._profile nu se poate importa'
 echo ''
 "@
 

@@ -1,7 +1,8 @@
 #!/bin/bash
 # ============================================================
 # Packer Provisioning Script — Ubuntu 22.04 Jumphost Image
-# Installs XFCE Desktop, xRDP, Ansible, Azure CLI, DevOps tools
+# Installs XFCE Desktop, xRDP, Ansible, Azure CLI, DevOps tools,
+# Ansible Galaxy Collections (pre-baked, no post-deploy install needed)
 # NOTE: User passwords and SSH keys are set at deployment time
 #       by Azure osProfile, NOT baked into the image.
 # ============================================================
@@ -20,7 +21,7 @@ echo "========================================="
 # spre formatul DEB822 (.sources), lăsând uneori linii malformate în
 # /etc/apt/sources.list. Reconstruim sources.list curat înainte de apt update.
 
-echo "[0/13] Rebuilding /etc/apt/sources.list (fix Azure image DEB822 migration)..."
+echo "[0/14] Rebuilding /etc/apt/sources.list (fix Azure image DEB822 migration)..."
 cat > /etc/apt/sources.list << 'SOURCES'
 deb http://azure.archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse
 deb http://azure.archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse
@@ -38,7 +39,7 @@ done
 # STEP 1: System Update
 # =============================================================================
 
-echo "[1/13] Updating system packages..."
+echo "[1/14] Updating system packages..."
 apt update -qq
 apt upgrade -y -qq
 
@@ -46,7 +47,7 @@ apt upgrade -y -qq
 # STEP 2: Install Firewalld (replace UFW)
 # =============================================================================
 
-echo "[2/13] Removing UFW and installing firewalld..."
+echo "[2/14] Removing UFW and installing firewalld..."
 systemctl stop ufw || true
 systemctl disable ufw || true
 apt remove -y ufw
@@ -64,10 +65,10 @@ firewall-cmd --reload
 # STEP 3: Install XFCE Desktop Environment
 # =============================================================================
 
-echo "[3/13] Installing XFCE Desktop Environment..."
+echo "[3/14] Installing XFCE Desktop Environment..."
 apt install -y xfce4 xfce4-goodies
 
-echo "[4/13] Installing X11 components..."
+echo "[4/14] Installing X11 components..."
 apt install -y xorg dbus-x11 x11-xserver-utils xterm
 
 systemctl set-default graphical.target
@@ -76,7 +77,7 @@ systemctl set-default graphical.target
 # STEP 4: Install and Configure xRDP
 # =============================================================================
 
-echo "[5/13] Installing and configuring xRDP..."
+echo "[5/14] Installing and configuring xRDP..."
 apt install -y xrdp
 systemctl enable xrdp
 
@@ -98,7 +99,7 @@ chmod +x /etc/xrdp/startwm.sh
 # STEP 5: Install Remmina (RDP/VNC Client)
 # =============================================================================
 
-echo "[6/13] Installing Remmina..."
+echo "[6/14] Installing Remmina..."
 apt-add-repository -y ppa:remmina-ppa-team/remmina-next
 apt update -qq
 apt install -y remmina remmina-plugin-rdp remmina-plugin-secret
@@ -107,7 +108,7 @@ apt install -y remmina remmina-plugin-rdp remmina-plugin-secret
 # STEP 6: Install Ansible and Configuration Management Tools
 # =============================================================================
 
-echo "[7/13] Installing Ansible and dependencies..."
+echo "[7/14] Installing Ansible and dependencies..."
 apt install -y software-properties-common
 add-apt-repository --yes --update ppa:ansible/ansible
 apt install -y ansible python3-pip python3-winrm python3-requests sshpass
@@ -116,19 +117,50 @@ apt install -y ansible python3-pip python3-winrm python3-requests sshpass
 # STEP 7: Install Azure CLI
 # =============================================================================
 
-echo "[8/13] Installing Azure CLI..."
+echo "[8/14] Installing Azure CLI..."
 curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
 # =============================================================================
-# STEP 8: Install Visual Studio Code
+# STEP 8: Install Ansible Galaxy Collections
 # =============================================================================
-# NOTE: azure.azcollection (Ansible modules pentru Azure resources) NU este
-# instalat intentionat — nu folosim Ansible pentru a gestiona resurse Azure
-# (AKS, CosmosDB, IoT Hub etc.). Resursele Azure sunt gestionate prin Azure CLI.
-# Ansible e folosit doar pentru configurarea interna a VM-urilor (SSH/WinRM).
-# Daca e necesar in viitor: ansible-galaxy collection install azure.azcollection
+# Pre-bake all required collections into the golden image so that:
+#   - No internet access needed on first playbook run
+#   - deploy-ansible-to-jumphost.ps1 uses requirements.yml for version pinning
+#
+# Collections installed:
+#   ansible.windows    — win_firewall, win_updates, win_feature, win_shell, win_service_info
+#   ansible.posix      — authorized_key, firewalld
+#   community.general  — ufw, ini_file, profile_tasks callback
+#                        NOTE: Pinned <12.0.0 — v12.0.0 removed the yaml callback
+#                        tombstone which triggers a fatal ERROR with bin_ansible_callbacks=True
+#   community.windows  — win_domain_membership, win_scheduled_task
+#   azure.azcollection — azure_rm dynamic inventory plugin (auth_source: cli)
 
-echo "[9/13] Installing Visual Studio Code..."
+echo "[9/14] Installing Ansible Galaxy collections..."
+ansible-galaxy collection install \
+    "ansible.windows" \
+    "ansible.posix" \
+    "community.general:>=8.0.0,<12.0.0" \
+    "community.windows" \
+    "azure.azcollection" \
+    --force
+
+# Install Python requirements for azure.azcollection (needed for dynamic inventory)
+AZURE_COLL="/root/.ansible/collections/ansible_collections/azure/azcollection"
+if [ -f "${AZURE_COLL}/requirements.txt" ]; then
+    echo "  Installing Python requirements for azure.azcollection..."
+    pip3 install -r "${AZURE_COLL}/requirements.txt" --quiet 2>&1 | tail -5
+fi
+
+# Install azure-cli-core for auth_source: cli in dynamic inventory
+pip3 install azure-cli-core --upgrade --quiet 2>&1 | tail -3
+echo "  OK: Galaxy collections + Python dependencies installed"
+
+# =============================================================================
+# STEP 9: Install Visual Studio Code
+# =============================================================================
+
+echo "[10/14] Installing Visual Studio Code..."
 rm -f /etc/apt/sources.list.d/vscode.list
 rm -f /etc/apt/keyrings/packages.microsoft.gpg
 
@@ -143,7 +175,7 @@ apt install -y code
 # STEP 10: Install Firefox ESR
 # =============================================================================
 
-echo "[10/13] Installing Firefox ESR..."
+echo "[11/14] Installing Firefox ESR..."
 add-apt-repository -y ppa:mozillateam/ppa
 
 cat > /etc/apt/preferences.d/mozilla-firefox <<'EOF'
@@ -162,7 +194,7 @@ update-alternatives --set x-www-browser /usr/bin/firefox-esr
 # STEP 11: Install DevOps Tools
 # =============================================================================
 
-echo "[11/13] Installing DevOps tools..."
+echo "[12/14] Installing DevOps tools..."
 apt install -y \
     git vim nano mc wget curl htop tmux screen \
     net-tools dnsutils tcpdump nmap telnet netcat \
@@ -183,7 +215,7 @@ apt install -y \
 #
 # Accesul SSH ramane sigur prin NSG (portul 22 whitelist pe IP-ul admin).
 
-echo "[12/13] Configuring SSH hardening..."
+echo "[13/14] Configuring SSH hardening..."
 
 # --- Strat 1: cloud-init override — ii spunem sa scrie PasswordAuthentication yes ---
 mkdir -p /etc/cloud/cloud.cfg.d
@@ -232,6 +264,11 @@ Installed Tools:
 - Firefox ESR, Remmina (RDP/VNC)
 - DevOps utilities (htop, tmux, jq, etc.)
 
+Ansible Galaxy Collections (pre-installed):
+- ansible.windows, ansible.posix
+- community.general (<12.0.0), community.windows
+- azure.azcollection (dynamic inventory)
+
 Quick Commands:
   ansible --version
   az --version
@@ -244,7 +281,7 @@ MOTD_EOF
 # STEP 14: Cleanup
 # =============================================================================
 
-echo "[13/13] Cleaning up..."
+echo "[14/14] Cleaning up..."
 apt autoremove -y
 apt clean
 rm -rf /var/lib/apt/lists/*

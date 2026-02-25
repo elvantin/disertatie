@@ -72,6 +72,17 @@
     state: started
   tags: [appserver, service]
 
+- name: Test nginx configuration syntax
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  tags: [appserver, service]
+
+- name: Reload nginx to apply current configuration
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+  tags: [appserver, service]
+
 - name: Allow port {{ app_listen_port }} through firewall
   ansible.builtin.ufw:
     rule: allow

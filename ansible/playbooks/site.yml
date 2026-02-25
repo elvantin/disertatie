@@ -277,6 +277,7 @@
   hosts: localhost
   connection: local
   gather_facts: yes
+  become: no
 
   vars:
     env_name: "productie"

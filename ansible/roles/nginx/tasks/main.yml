@@ -186,7 +186,21 @@
     --keep-until-expiring
   register: certbot_result
   changed_when: "'Certificate not yet due for renewal' not in certbot_result.stdout"
+  failed_when: false
   when: not ssl_cert_exists.stat.exists
+  tags: [nginx, ssl, certbot]
+
+- name: Warn if certbot failed
+  debug:
+    msg: >-
+      WARNING: certbot failed (rc={{ certbot_result.rc | default('N/A') }}).
+      Nginx will run HTTP-only until the certificate is obtained.
+      Ensure port 80 is open in the NSG and DNS resolves to this server,
+      then re-run: certbot certonly --webroot --webroot-path {{ certbot_webroot }}
+      --domain {{ website_domain }} --email {{ certbot_email }} --agree-tos --non-interactive
+  when:
+    - not ssl_cert_exists.stat.exists
+    - certbot_result.rc | default(0) != 0
   tags: [nginx, ssl, certbot]
 
 - name: Verify SSL certificate exists after certbot

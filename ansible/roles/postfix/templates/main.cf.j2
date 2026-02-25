@@ -1,14 +1,14 @@
 # Postfix main configuration - Managed by Ansible
 
 # Network settings
-myhostname = {{ ansible_hostname }}.{{ ansible_domain | default('mediasrl.local') }}
-mydomain = {{ ansible_domain | default('mediasrl.local') }}
+myhostname = {{ ansible_hostname }}.{{ postfix_domain }}
+mydomain = {{ postfix_domain }}
 myorigin = $mydomain
 inet_interfaces = all
 inet_protocols = ipv4
 
 # Network restrictions
-mynetworks = 10.10.10.0/24, 127.0.0.0/8
+mynetworks = {{ postfix_mynetworks }}
 mydestination = $myhostname, localhost.$mydomain, localhost, $mydomain
 relay_domains = $mydestination
 

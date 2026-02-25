@@ -1,0 +1,24 @@
+---
+# ============================================================
+# Ansible Galaxy Requirements — SC MEDIA SRL
+# Install with: ansible-galaxy collection install -r requirements.yml
+# ============================================================
+
+collections:
+  # Windows management modules (win_firewall, win_updates, win_feature, win_shell, etc.)
+  - name: ansible.windows
+    version: ">=2.0.0"
+
+  # Linux/POSIX modules (authorized_key, firewalld, etc.)
+  - name: ansible.posix
+    version: ">=1.5.0"
+
+  # General-purpose modules (ufw, ini_file, etc.)
+  # Pinned to <12.0.0: version 12.0.0 removed the 'yaml' callback tombstone
+  # which causes a fatal ERROR even when not using it (triggered by bin_ansible_callbacks).
+  - name: community.general
+    version: ">=8.0.0,<12.0.0"
+
+  # Additional Windows modules (win_domain_membership, win_scheduled_task, etc.)
+  - name: community.windows
+    version: ">=2.0.0"
