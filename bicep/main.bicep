@@ -100,7 +100,7 @@ param vms array = [
   {
     name: 'vm-jmp-01'
     osType: 'Linux'
-    size: 'Standard_D2s_v3'
+    size: 'Standard_B4als_v2'
     subnet: 'mgmt'
     createPublicIp: false
     imageDefinition: 'jumphost'

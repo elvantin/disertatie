@@ -246,6 +246,10 @@
 
       # Security
       local_infile=0
+      # Skip reverse DNS lookup — use client IP for ACL, not hostname.
+      # Without this, MySQL resolves the jumphost IP to its Azure FQDN
+      # (vm-jmp-01.internal.cloudapp.net) and denies root@that-hostname.
+      skip-name-resolve
 
       [client]
       port={{ mysql_port }}
@@ -341,6 +345,23 @@
     }
   register: mysql_root_set
   changed_when: "'Root password set' in mysql_root_set.stdout"
+  no_log: true
+  tags: [mysql, config, security]
+
+# Create root user for remote management from Azure VNet (10.10.0.0/20)
+# Required for MySQL Workbench connections from the jumphost.
+# With skip-name-resolve active, MySQL uses IP addresses — so we need a
+# user entry that matches the jumphost IP range, not a hostname.
+- name: Create root user for remote management from Azure VNet
+  ansible.windows.win_shell: >-
+    & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
+    -p'{{ mysql_root_password }}'
+    -e "CREATE USER IF NOT EXISTS 'root'@'10.10.%'
+    IDENTIFIED BY '{{ mysql_root_password }}';
+    GRANT ALL PRIVILEGES ON *.* TO 'root'@'10.10.%' WITH GRANT OPTION;
+    FLUSH PRIVILEGES;"
+  register: root_remote_user
+  changed_when: false
   no_log: true
   tags: [mysql, config, security]
 

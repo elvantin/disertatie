@@ -5,6 +5,19 @@
  * @package WordPress
  */
 
+// ** Reverse proxy trust (nginx on vm-web-01 terminates SSL, proxies HTTP internally) **
+// Tell WordPress the connection IS HTTPS even though nginx forwards it over plain HTTP.
+// Without this, WordPress generates http:// URLs and all external redirects break.
+if ( isset( $_SERVER['HTTP_X_FORWARDED_PROTO'] ) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https' ) {
+    $_SERVER['HTTPS']       = 'on';
+    $_SERVER['SERVER_PORT'] = 443;
+}
+
+// ** Site URL constants — always override DB values to prevent IP-based redirects **
+// These constants take precedence over wp_options siteurl/home entries.
+define( 'WP_HOME',    '{{ wordpress_site_url }}' );
+define( 'WP_SITEURL', '{{ wordpress_site_url }}' );
+
 // ** MySQL settings ** //
 define( 'DB_NAME', '{{ wordpress_db_name }}' );
 define( 'DB_USER', '{{ wordpress_db_user }}' );
@@ -41,7 +54,7 @@ define( 'EMPTY_TRASH_DAYS', 7 );
 // ** Security enhancements ** //
 define( 'DISALLOW_FILE_EDIT', true );
 define( 'DISALLOW_FILE_MODS', false );
-define( 'FORCE_SSL_ADMIN', false ); // Set to true when SSL is configured
+define( 'FORCE_SSL_ADMIN', true );  // SSL terminates at nginx proxy (vm-web-01)
 
 // ** Absolute path to WordPress directory ** //
 if ( ! defined( 'ABSPATH' ) ) {

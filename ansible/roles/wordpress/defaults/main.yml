@@ -32,7 +32,8 @@ wordpress_table_prefix: "wp_"
 
 # WordPress site configuration
 wordpress_site_title: "SC MEDIA SRL"
-wordpress_site_url: "http://{{ ansible_host }}"
+# Public URL — uses website_domain from group_vars/linux.yml (override per-env if needed)
+wordpress_site_url: "https://{{ website_domain }}"
 wordpress_admin_user: "admin"
 wordpress_admin_password: "Admin_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
 wordpress_admin_email: "admin@media-srl.ro"

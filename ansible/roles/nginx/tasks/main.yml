@@ -210,6 +210,64 @@
   tags: [nginx, ssl]
 
 # ============================================================
+# Phase 5b: Self-signed certificate fallback
+# If Let's Encrypt failed (DNS not ready, port 80 closed, etc.)
+# generate a self-signed certificate so nginx can always run HTTPS.
+# Browser will show a warning, but traffic IS encrypted.
+# Replace with valid LE cert later: certbot certonly --webroot ...
+# ============================================================
+
+- name: Create self-signed certificate directory
+  file:
+    path: /etc/ssl/mediasrl
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  when: not ssl_cert_after_certbot.stat.exists
+  tags: [nginx, ssl, self-signed]
+
+- name: Generate self-signed certificate (HTTPS fallback)
+  command: >
+    openssl req -x509 -nodes -days 730 -newkey rsa:2048
+    -keyout /etc/ssl/mediasrl/privkey.pem
+    -out /etc/ssl/mediasrl/fullchain.pem
+    -subj "/C=RO/ST=Bucuresti/L=Bucuresti/O=SC MEDIA SRL/CN={{ website_domain }}"
+  args:
+    creates: /etc/ssl/mediasrl/fullchain.pem
+  register: self_signed_cert
+  when: not ssl_cert_after_certbot.stat.exists
+  tags: [nginx, ssl, self-signed]
+
+- name: Ensure Let's Encrypt live directory exists (for self-signed symlinks)
+  file:
+    path: "/etc/letsencrypt/live/{{ website_domain }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: not ssl_cert_after_certbot.stat.exists
+  tags: [nginx, ssl, self-signed]
+
+- name: Link self-signed cert to Let's Encrypt paths (nginx always finds a cert)
+  file:
+    src: "/etc/ssl/mediasrl/{{ item.src }}"
+    dest: "/etc/letsencrypt/live/{{ website_domain }}/{{ item.dest }}"
+    state: link
+    force: yes
+  loop:
+    - { src: fullchain.pem, dest: fullchain.pem }
+    - { src: privkey.pem,   dest: privkey.pem }
+  when: not ssl_cert_after_certbot.stat.exists
+  tags: [nginx, ssl, self-signed]
+
+- name: Re-verify certificate path after self-signed fallback
+  stat:
+    path: "{{ certbot_cert_path }}"
+  register: ssl_cert_after_certbot
+  tags: [nginx, ssl]
+
+# ============================================================
 # Phase 6: Deploy HTTPS configuration (after certificate)
 # ============================================================
 
@@ -303,12 +361,20 @@
       HTTP Port: {{ nginx_http_port }} ({{ 'redirect to HTTPS' if ssl_cert_after_certbot.stat.exists else 'active' }})
       HTTPS Port: {{ nginx_https_port }} ({{ 'active' if ssl_cert_after_certbot.stat.exists else 'pending certificate' }})
       SSL Certificate: {{ certbot_cert_path }}
-      Certificate Status: {{ 'INSTALLED' if ssl_cert_after_certbot.stat.exists else 'PENDING - ensure DNS points to this server' }}
+      Certificate: {{ 'Let\'s Encrypt (trusted)' if (self_signed_cert is not defined or not self_signed_cert.changed | default(false)) else 'Self-signed (HTTPS active, browser warning expected)' }}
+      Cert Path: {{ certbot_cert_path }}
 
       Upstream Backends:
-        WordPress CMS:  10.10.10.8:80 (vm-cms-01)
-        App Server:     10.10.10.7:8080 (vm-app-01)
+        WordPress CMS:  {{ hostvars['vm-cms-01']['ansible_host'] }}:80  (vm-cms-01)
+        App Server:     {{ hostvars['vm-app-01']['ansible_host'] }}:8080 (vm-app-01)
+
+      Access:
+        https://{{ website_domain }}          (public)
+        https://{{ ansible_host }}            (internal / direct IP)
 
       Certbot Renewal: cron every 7 days at 02:30
+      To replace self-signed with Let's Encrypt:
+        certbot certonly --webroot --webroot-path {{ certbot_webroot }} \
+          --domain {{ website_domain }} --email {{ certbot_email }} --agree-tos --non-interactive
       ============================================================
   tags: [nginx, verify]

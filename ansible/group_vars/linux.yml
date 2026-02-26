@@ -4,6 +4,10 @@
 # Applied to all hosts in the 'linux' group
 # ============================================================
 
+# Public website domain — used by nginx (vm-web-01) and wordpress (vm-cms-01)
+# Override per-environment in group_vars/dev.yml or group_vars/prod.yml
+website_domain: "mediasrl.swedencentral.cloudapp.azure.com"
+
 # SSH Connection Settings
 ansible_connection: ssh
 ansible_port: 22

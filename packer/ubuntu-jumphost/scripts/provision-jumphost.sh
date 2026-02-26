@@ -21,7 +21,7 @@ echo "========================================="
 # spre formatul DEB822 (.sources), lăsând uneori linii malformate în
 # /etc/apt/sources.list. Reconstruim sources.list curat înainte de apt update.
 
-echo "[0/14] Rebuilding /etc/apt/sources.list (fix Azure image DEB822 migration)..."
+echo "[0/15] Rebuilding /etc/apt/sources.list (fix Azure image DEB822 migration)..."
 cat > /etc/apt/sources.list << 'SOURCES'
 deb http://azure.archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse
 deb http://azure.archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse
@@ -39,7 +39,7 @@ done
 # STEP 1: System Update
 # =============================================================================
 
-echo "[1/14] Updating system packages..."
+echo "[1/15] Updating system packages..."
 apt update -qq
 apt upgrade -y -qq
 
@@ -47,7 +47,7 @@ apt upgrade -y -qq
 # STEP 2: Install Firewalld (replace UFW)
 # =============================================================================
 
-echo "[2/14] Removing UFW and installing firewalld..."
+echo "[2/15] Removing UFW and installing firewalld..."
 systemctl stop ufw || true
 systemctl disable ufw || true
 apt remove -y ufw
@@ -65,10 +65,10 @@ firewall-cmd --reload
 # STEP 3: Install XFCE Desktop Environment
 # =============================================================================
 
-echo "[3/14] Installing XFCE Desktop Environment..."
+echo "[3/15] Installing XFCE Desktop Environment..."
 apt install -y xfce4 xfce4-goodies
 
-echo "[4/14] Installing X11 components..."
+echo "[4/15] Installing X11 components..."
 apt install -y xorg dbus-x11 x11-xserver-utils xterm
 
 systemctl set-default graphical.target
@@ -77,7 +77,7 @@ systemctl set-default graphical.target
 # STEP 4: Install and Configure xRDP
 # =============================================================================
 
-echo "[5/14] Installing and configuring xRDP..."
+echo "[5/15] Installing and configuring xRDP..."
 apt install -y xrdp
 systemctl enable xrdp
 
@@ -99,7 +99,7 @@ chmod +x /etc/xrdp/startwm.sh
 # STEP 5: Install Remmina (RDP/VNC Client)
 # =============================================================================
 
-echo "[6/14] Installing Remmina..."
+echo "[6/15] Installing Remmina..."
 apt-add-repository -y ppa:remmina-ppa-team/remmina-next
 apt update -qq
 apt install -y remmina remmina-plugin-rdp remmina-plugin-secret
@@ -108,7 +108,7 @@ apt install -y remmina remmina-plugin-rdp remmina-plugin-secret
 # STEP 6: Install Ansible and Configuration Management Tools
 # =============================================================================
 
-echo "[7/14] Installing Ansible and dependencies..."
+echo "[7/15] Installing Ansible and dependencies..."
 apt install -y software-properties-common
 add-apt-repository --yes --update ppa:ansible/ansible
 apt install -y ansible python3-pip python3-winrm python3-requests sshpass
@@ -117,7 +117,7 @@ apt install -y ansible python3-pip python3-winrm python3-requests sshpass
 # STEP 7: Install Azure CLI
 # =============================================================================
 
-echo "[8/14] Installing Azure CLI..."
+echo "[8/15] Installing Azure CLI..."
 curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
 # =============================================================================
@@ -136,7 +136,7 @@ curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 #   community.windows  — win_domain_membership, win_scheduled_task
 #   azure.azcollection — azure_rm dynamic inventory plugin (auth_source: cli)
 
-echo "[9/14] Installing Ansible Galaxy collections..."
+echo "[9/15] Installing Ansible Galaxy collections..."
 ansible-galaxy collection install \
     "ansible.windows" \
     "ansible.posix" \
@@ -160,7 +160,7 @@ echo "  OK: Galaxy collections + Python dependencies installed"
 # STEP 9: Install Visual Studio Code
 # =============================================================================
 
-echo "[10/14] Installing Visual Studio Code..."
+echo "[10/15] Installing Visual Studio Code..."
 rm -f /etc/apt/sources.list.d/vscode.list
 rm -f /etc/apt/keyrings/packages.microsoft.gpg
 
@@ -175,7 +175,7 @@ apt install -y code
 # STEP 10: Install Firefox ESR
 # =============================================================================
 
-echo "[11/14] Installing Firefox ESR..."
+echo "[11/15] Installing Firefox ESR..."
 add-apt-repository -y ppa:mozillateam/ppa
 
 cat > /etc/apt/preferences.d/mozilla-firefox <<'EOF'
@@ -194,14 +194,47 @@ update-alternatives --set x-www-browser /usr/bin/firefox-esr
 # STEP 11: Install DevOps Tools
 # =============================================================================
 
-echo "[12/14] Installing DevOps tools..."
+echo "[12/15] Installing DevOps tools..."
 apt install -y \
     git vim nano mc wget curl htop tmux screen \
     net-tools dnsutils tcpdump nmap telnet netcat \
     jq tree bash-completion unzip zip tar build-essential
 
 # =============================================================================
-# STEP 12: Configurare SSH hardening
+# STEP 13: Install gnome-keyring and MySQL Workbench Community
+# =============================================================================
+# gnome-keyring: required by MySQL Workbench to store connection passwords securely
+# MySQL Workbench: direct CDN download — same approach as the Windows MSI installer
+#   dev.mysql.com/downloads/workbench/ -> "No thanks, just start my download"
+#   resolves to cdn.mysql.com CDN URL (no Oracle account required)
+# =============================================================================
+
+echo "[13/15] Installing gnome-keyring and MySQL Workbench Community..."
+
+# gnome-keyring + secret service (needed by Workbench for password storage)
+apt install -y gnome-keyring libsecret-1-0 libsecret-tools seahorse
+
+# MySQL Workbench Community for Ubuntu 22.04 — direct CDN download
+WORKBENCH_VERSION="8.0.40"
+WORKBENCH_DEB="mysql-workbench-community_${WORKBENCH_VERSION}-1ubuntu22.04_amd64.deb"
+WORKBENCH_URL="https://cdn.mysql.com//Downloads/MySQLGUITools/${WORKBENCH_DEB}"
+
+echo "  Downloading MySQL Workbench ${WORKBENCH_VERSION} from MySQL CDN..."
+wget -O "/tmp/${WORKBENCH_DEB}" "${WORKBENCH_URL}"
+
+# apt install (not dpkg) resolves dependencies automatically from Ubuntu repos
+echo "  Installing MySQL Workbench and dependencies..."
+DEBIAN_FRONTEND=noninteractive apt install -y "/tmp/${WORKBENCH_DEB}" || {
+    echo "  Direct apt install failed, falling back to dpkg + apt -f fix..."
+    dpkg -i "/tmp/${WORKBENCH_DEB}" || true
+    apt install -f -y
+}
+
+rm -f "/tmp/${WORKBENCH_DEB}"
+echo "  MySQL Workbench ${WORKBENCH_VERSION} installed successfully."
+
+# =============================================================================
+# STEP 14: Configurare SSH hardening
 # =============================================================================
 # cloud-init ruleaza normal (necesar pentru Azure provisioning — hostname, SSH key
 # injection, disk resize). Controlam SSH prin doua straturi de prioritate:
@@ -215,7 +248,7 @@ apt install -y \
 #
 # Accesul SSH ramane sigur prin NSG (portul 22 whitelist pe IP-ul admin).
 
-echo "[13/14] Configuring SSH hardening..."
+echo "[14/15] Configuring SSH hardening..."
 
 # --- Strat 1: cloud-init override — ii spunem sa scrie PasswordAuthentication yes ---
 mkdir -p /etc/cloud/cloud.cfg.d
@@ -262,6 +295,7 @@ RDP Port: 3389
 Installed Tools:
 - Ansible, Azure CLI, Git, VS Code
 - Firefox ESR, Remmina (RDP/VNC)
+- MySQL Workbench 8.0 (connect to vm-db-01:3306)
 - DevOps utilities (htop, tmux, jq, etc.)
 
 Ansible Galaxy Collections (pre-installed):
@@ -278,10 +312,10 @@ Quick Commands:
 MOTD_EOF
 
 # =============================================================================
-# STEP 14: Cleanup
+# STEP 15: Cleanup
 # =============================================================================
 
-echo "[14/14] Cleaning up..."
+echo "[15/15] Cleaning up..."
 apt autoremove -y
 apt clean
 rm -rf /var/lib/apt/lists/*

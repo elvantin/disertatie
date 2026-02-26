@@ -262,6 +262,53 @@
     mode: '0755'
   tags: [wordpress, wp-cli]
 
+# ── WordPress core install (runs only if not already installed) ───────────────
+- name: Check if WordPress is already installed
+  ansible.builtin.command: >
+    wp core is-installed
+    --path={{ wordpress_install_dir }}
+    --allow-root
+  register: wp_is_installed
+  changed_when: false
+  failed_when: false
+  tags: [wordpress, wp-cli]
+
+- name: Install WordPress core via WP-CLI
+  ansible.builtin.command: >
+    wp core install
+    --path={{ wordpress_install_dir }}
+    --url="{{ wordpress_site_url }}"
+    --title="{{ wordpress_site_title }}"
+    --admin_user="{{ wordpress_admin_user }}"
+    --admin_password="{{ wordpress_admin_password }}"
+    --admin_email="{{ wordpress_admin_email }}"
+    --skip-email
+    --allow-root
+  when: wp_is_installed.rc != 0
+  no_log: true
+  tags: [wordpress, wp-cli]
+
+# ── Fix siteurl/home in DB (in case WordPress was installed with wrong URL) ───
+# WP_HOME/WP_SITEURL constants in wp-config.php override DB values at runtime,
+# but we also update DB for consistency (admin dashboard, CLI commands, etc.)
+- name: Update WordPress siteurl option in database
+  ansible.builtin.command: >
+    wp option update siteurl "{{ wordpress_site_url }}"
+    --path={{ wordpress_install_dir }}
+    --allow-root
+  changed_when: true
+  failed_when: false
+  tags: [wordpress, wp-cli]
+
+- name: Update WordPress home option in database
+  ansible.builtin.command: >
+    wp option update home "{{ wordpress_site_url }}"
+    --path={{ wordpress_install_dir }}
+    --allow-root
+  changed_when: true
+  failed_when: false
+  tags: [wordpress, wp-cli]
+
 - name: Create WordPress cron job for scheduled tasks
   cron:
     name: "WordPress Cron"
@@ -294,17 +341,15 @@
       PHP Version: {{ php_version }}
       Nginx Port: {{ wordpress_nginx_port }}
 
-      Next Steps:
-        1. Access WordPress: http://{{ ansible_host }}
-        2. Complete WordPress installation wizard
-        3. Login with admin credentials
-        4. Install themes and plugins
-        5. Configure permalink structure
+      Access Points:
+        Site:  {{ wordpress_site_url }}
+        Admin: {{ wordpress_site_url }}/wp-admin
+        Login: {{ wordpress_admin_user }} (see vault for password)
 
-      WP-CLI Commands:
-        wp core install --url="{{ wordpress_site_url }}" --title="{{ wordpress_site_title }}" --admin_user="{{ wordpress_admin_user }}" --admin_password="{{ wordpress_admin_password }}" --admin_email="{{ wordpress_admin_email }}"
-        wp theme list
-        wp plugin list
+      WP-CLI:
+        wp theme list --path={{ wordpress_install_dir }} --allow-root
+        wp plugin list --path={{ wordpress_install_dir }} --allow-root
+        wp user list --path={{ wordpress_install_dir }} --allow-root
 
       ============================================================
   tags: [wordpress, verify]

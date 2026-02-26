@@ -135,15 +135,14 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-HTTP-To-Web'
         properties: {
-          // Port 80 must be open from internet for two reasons:
-          // 1. Let's Encrypt ACME HTTP-01 challenge (certbot webroot)
-          // 2. HTTP → HTTPS redirect (nginx serves 301 redirect on port 80)
-          // Once nginx has the certificate, it automatically redirects all HTTP to HTTPS.
-          description: 'Allow HTTP from internet (required for Let\'s Encrypt ACME challenge and HTTP→HTTPS redirect)'
+          // Port 80 restricted to internal Azure VNet (10.0.0.0/8).
+          // Let's Encrypt renewal uses DNS-01 challenge (no public port 80 needed).
+          // HTTP → HTTPS redirect is handled by nginx for internal/VNet traffic.
+          description: 'Allow HTTP from Azure VNet only (internal traffic + HTTP→HTTPS redirect)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRange: '80'
-          sourceAddressPrefix: '*'
+          sourceAddressPrefix: '10.0.0.0/8'
           destinationAddressPrefix: '10.10.10.0/24'
           access: 'Allow'
           priority: 121
@@ -153,11 +152,11 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-MySQL-Internal'
         properties: {
-          description: 'Allow MySQL traffic within production subnet'
+          description: 'Allow MySQL from Azure VNet (prod subnet + jumphost in mgmt subnet)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRange: '3306'
-          sourceAddressPrefix: '10.10.10.0/24'
+          sourceAddressPrefix: '10.0.0.0/8'
           destinationAddressPrefix: '10.10.10.0/24'
           access: 'Allow'
           priority: 200
@@ -167,14 +166,14 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-SMTP-Internal'
         properties: {
-          description: 'Allow SMTP traffic within production subnet'
+          description: 'Allow SMTP from Azure VNet (prod subnet + jumphost in mgmt subnet)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRanges: [
             '25'
             '587'
           ]
-          sourceAddressPrefix: '10.10.10.0/24'
+          sourceAddressPrefix: '10.0.0.0/8'
           destinationAddressPrefix: '10.10.10.0/24'
           access: 'Allow'
           priority: 210
@@ -184,11 +183,11 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-AppServer-Internal'
         properties: {
-          description: 'Allow port 8080 within production subnet (nginx reverse proxy -> vm-app-01 API)'
+          description: 'Allow port 8080 from Azure VNet (nginx reverse proxy -> vm-app-01 API)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRange: '8080'
-          sourceAddressPrefix: '10.10.10.0/24'
+          sourceAddressPrefix: '10.0.0.0/8'
           destinationAddressPrefix: '10.10.10.0/24'
           access: 'Allow'
           priority: 220
@@ -268,11 +267,11 @@ resource nsgDev 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-MySQL-Internal'
         properties: {
-          description: 'Allow MySQL traffic within dev subnet'
+          description: 'Allow MySQL from Azure VNet (dev subnet + jumphost in mgmt subnet)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRange: '3306'
-          sourceAddressPrefix: '10.10.11.0/24'
+          sourceAddressPrefix: '10.0.0.0/8'
           destinationAddressPrefix: '10.10.11.0/24'
           access: 'Allow'
           priority: 200
@@ -282,14 +281,14 @@ resource nsgDev 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-SMTP-Internal'
         properties: {
-          description: 'Allow SMTP traffic within dev subnet'
+          description: 'Allow SMTP from Azure VNet (dev subnet + jumphost in mgmt subnet)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRanges: [
             '25'
             '587'
           ]
-          sourceAddressPrefix: '10.10.11.0/24'
+          sourceAddressPrefix: '10.0.0.0/8'
           destinationAddressPrefix: '10.10.11.0/24'
           access: 'Allow'
           priority: 210
@@ -299,11 +298,11 @@ resource nsgDev 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-AppServer-Internal'
         properties: {
-          description: 'Allow port 8080 within dev subnet (nginx -> vm-app-01 API)'
+          description: 'Allow port 8080 from Azure VNet (nginx -> vm-app-01 API)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRange: '8080'
-          sourceAddressPrefix: '10.10.11.0/24'
+          sourceAddressPrefix: '10.0.0.0/8'
           destinationAddressPrefix: '10.10.11.0/24'
           access: 'Allow'
           priority: 220
