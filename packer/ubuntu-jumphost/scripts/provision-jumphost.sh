@@ -215,7 +215,7 @@ echo "[13/15] Installing gnome-keyring and MySQL Workbench Community..."
 apt install -y gnome-keyring libsecret-1-0 libsecret-tools seahorse
 
 # MySQL Workbench Community for Ubuntu 22.04 — direct CDN download
-WORKBENCH_VERSION="8.0.40"
+WORKBENCH_VERSION="8.0.46"
 WORKBENCH_DEB="mysql-workbench-community_${WORKBENCH_VERSION}-1ubuntu22.04_amd64.deb"
 WORKBENCH_URL="https://cdn.mysql.com//Downloads/MySQLGUITools/${WORKBENCH_DEB}"
 
@@ -295,7 +295,7 @@ RDP Port: 3389
 Installed Tools:
 - Ansible, Azure CLI, Git, VS Code
 - Firefox ESR, Remmina (RDP/VNC)
-- MySQL Workbench 8.0 (connect to vm-db-01:3306)
+- MySQL Workbench 8.0.46 (connect to vm-db-01:3306)
 - DevOps utilities (htop, tmux, jq, etc.)
 
 Ansible Galaxy Collections (pre-installed):
