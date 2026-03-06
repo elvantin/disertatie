@@ -114,6 +114,18 @@ Set-NetFirewallProfile -Profile Domain -LogFileName $logPath -LogBlocked True -L
 Set-NetFirewallProfile -Profile Private -LogFileName $logPath -LogBlocked True -LogMaxSizeKilobytes 16384
 Set-NetFirewallProfile -Profile Public -LogFileName $logPath -LogBlocked True -LogMaxSizeKilobytes 16384
 
+# Allow ICMP Echo (ping) inbound — needed for monitoring and VNet diagnostics.
+# DefaultInboundAction=Block above would otherwise silently drop pings.
+New-NetFirewallRule -DisplayName "Allow-ICMP-Echo-In" `
+    -Name "Allow-ICMP-Echo-In" `
+    -Protocol ICMPv4 `
+    -IcmpType 8 `
+    -Direction Inbound `
+    -Action Allow `
+    -Profile Any `
+    -ErrorAction SilentlyContinue | Out-Null
+Write-Output "  ICMP Echo (ping) allowed inbound"
+
 # =============================================================
 # 5. TLS/SSL HARDENING (CIS 18.x)
 # =============================================================

@@ -4,6 +4,22 @@
 # Baseline configuration for Ubuntu 22.04 LTS
 # ============================================================
 
+# unattended-upgrades runs at boot and holds /var/lib/dpkg/lock-frontend.
+# Wait up to 5 minutes for it to finish before any apt operation.
+- name: Wait for automatic system updates to release apt/dpkg locks
+  shell: |
+    for i in $(seq 1 60); do
+      if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
+         ! fuser /var/lib/dpkg/lock          >/dev/null 2>&1 && \
+         ! fuser /var/lib/apt/lists/lock     >/dev/null 2>&1; then
+        exit 0
+      fi
+      sleep 5
+    done
+    exit 0
+  changed_when: false
+  timeout: 310
+
 - name: Update apt cache
   apt:
     update_cache: yes
@@ -50,6 +66,10 @@
         state: absent
         purge: yes
       when: ufw_check.rc == 0
+      register: ufw_remove
+      retries: 5
+      delay: 15
+      until: ufw_remove is succeeded
 
 
 - name: Install common packages

@@ -6,7 +6,8 @@
 
 plugin: azure_rm
 
-auth_source: cli
+# Azure authentication — System-Assigned MSI on vm-jmp-01 (assigned via Bicep, Reader on RG).
+auth_source: msi
 
 # Filter VMs by resource group — DEZVOLTARE only
 # For PROD environment use: ansible-playbook ... -i inventory/azure_rm.yml

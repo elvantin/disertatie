@@ -47,8 +47,9 @@ server {
     resolver 8.8.8.8 8.8.4.4 valid=300s;
     resolver_timeout 5s;
 
-    # HSTS (force HTTPS for 1 year)
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    # HSTS: max-age=0 disables HSTS (safe for self-signed certs).
+    # Set nginx_hsts_max_age=31536000 in group_vars after obtaining a valid LE certificate.
+    add_header Strict-Transport-Security "max-age={{ nginx_hsts_max_age }}" always;
 
     # Access and error logs
     access_log /var/www/mediasrl/logs/access.log main;
@@ -65,8 +66,9 @@ server {
     }
 
     # Proxy to application server (vm-app-01)
+    # No trailing slash: preserves /api/ prefix so app-nginx locations match correctly.
     location /api/ {
-        proxy_pass http://app_backend/;
+        proxy_pass http://app_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

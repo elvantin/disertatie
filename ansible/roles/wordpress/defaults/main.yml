@@ -30,9 +30,13 @@ wordpress_db_collate: "utf8mb4_unicode_ci"
 # WordPress table prefix
 wordpress_table_prefix: "wp_"
 
+# Public website domain — must match nginx role and DNS.
+# Override in group_vars/linux.yml or per-environment vars.
+website_domain: "mediasrl.swedencentral.cloudapp.azure.com"
+
 # WordPress site configuration
 wordpress_site_title: "SC MEDIA SRL"
-# Public URL — uses website_domain from group_vars/linux.yml (override per-env if needed)
+# Public URL — built from website_domain above (override website_domain per-env)
 wordpress_site_url: "https://{{ website_domain }}"
 wordpress_admin_user: "admin"
 wordpress_admin_password: "Admin_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!

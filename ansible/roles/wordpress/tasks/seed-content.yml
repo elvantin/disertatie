@@ -211,34 +211,42 @@
   tags: [wordpress, seed, posts]
 
 # ============================================================
-# Create Navigation Menu
+# Theme: restore Twenty Twenty-Four (default WordPress FSE theme)
 # ============================================================
 
-- name: Check if main menu exists
-  command: wp menu list --fields=name --format=csv --path={{ wordpress_install_dir }}
-  register: existing_menus
-  become: true
-  become_user: "{{ wordpress_user }}"
-  changed_when: false
-  failed_when: false
-  tags: [wordpress, seed, menu]
-
-- name: Create main navigation menu
-  command: wp menu create "Meniu Principal" --path={{ wordpress_install_dir }}
-  become: true
-  become_user: "{{ wordpress_user }}"
-  when: "'Meniu Principal' not in existing_menus.stdout"
-  tags: [wordpress, seed, menu]
-
-- name: Add pages to navigation menu
+- name: Activate Twenty Twenty-Four theme (default WordPress FSE theme)
   command: >
-    wp menu item add-post "Meniu Principal" {{ item }}
+    wp theme activate twentytwentyfour
     --path={{ wordpress_install_dir }}
+    --allow-root
+  register: theme_activate
+  changed_when: true
+  failed_when: false
+  tags: [wordpress, seed, theme]
+
+# ============================================================
+# Fix FSE navigation
+# Twenty Twenty-Four is a Full Site Editing (FSE) theme.
+# Navigation is stored as a wp_navigation post, not a classic menu.
+# This task replaces the default placeholder links (Blog, About, FAQs…)
+# with actual links to our pages.
+# ============================================================
+
+- name: Remove default FSE navigation placeholder links
+  # Twenty Twenty-Four ships with placeholder nav links (Blog, About, FAQs…).
+  # We clear the wp_navigation post so no broken links appear in the header.
+  shell: |
+    WP="wp --path={{ wordpress_install_dir }}"
+    NAV_ID=$($WP post list --post_type=wp_navigation --field=ID 2>/dev/null | head -1)
+    if [[ -n "$NAV_ID" ]]; then
+      $WP post update "$NAV_ID" --post_content="" --post_status=publish
+      echo "Navigation cleared (post ID: $NAV_ID)"
+    else
+      echo "No wp_navigation post found — nothing to clear"
+    fi
   become: true
   become_user: "{{ wordpress_user }}"
-  loop: "{{ menu_page_ids | default([]) }}"
-  when: "'Meniu Principal' not in existing_menus.stdout"
-  failed_when: false
+  changed_when: true
   tags: [wordpress, seed, menu]
 
 # ============================================================

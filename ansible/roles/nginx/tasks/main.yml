@@ -361,7 +361,7 @@
       HTTP Port: {{ nginx_http_port }} ({{ 'redirect to HTTPS' if ssl_cert_after_certbot.stat.exists else 'active' }})
       HTTPS Port: {{ nginx_https_port }} ({{ 'active' if ssl_cert_after_certbot.stat.exists else 'pending certificate' }})
       SSL Certificate: {{ certbot_cert_path }}
-      Certificate: {{ 'Let\'s Encrypt (trusted)' if (self_signed_cert is not defined or not self_signed_cert.changed | default(false)) else 'Self-signed (HTTPS active, browser warning expected)' }}
+      Certificate: {{ "Let's Encrypt (trusted)" if (self_signed_cert is not defined or not self_signed_cert.changed | default(false)) else 'Self-signed (HTTPS active, browser warning expected)' }}
       Cert Path: {{ certbot_cert_path }}
 
       Upstream Backends:

@@ -1,7 +1,10 @@
 # ============================================================
 # Deploy Ansible Configuration to Jumphost
-# Copiaza ansible/ pe jumphost, instaleaza azure.azcollection
-# + Python deps, activeaza inventarul corect ca azure_rm.yml.
+# Copiaza ansible/ pe jumphost si activeaza inventarul corect.
+#
+# Nota: Ansible Galaxy collections (inclusiv azure.azcollection >=3.15.0)
+# si dependentele Python sunt pre-installed in imaginea Packer a jumphost-ului.
+# Autentificarea foloseste Managed Identity (auth_source: msi) — fara az login.
 #
 # Strategia inventory:
 #   ansible.cfg pointeaza intotdeauna la ./inventory/azure_rm.yml
@@ -83,7 +86,7 @@ if (-not (Test-Path $LocalPath)) {
 # STEP 1: Copiaza fisierele Ansible pe jumphost
 # =============================================================================
 
-Write-Host "[1/3] Copiind fisierele Ansible pe jumphost..."
+Write-Host "[1/2] Copiind fisierele Ansible pe jumphost..."
 scp @SSHOpts -r "${LocalPath}\*" "${SSHTarget}:${RemotePath}/"
 
 if ($LASTEXITCODE -ne 0) {
@@ -96,74 +99,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # =============================================================================
-# STEP 2: Instaleaza azure.azcollection + dependente Python pe jumphost
-# =============================================================================
-# IMPORTANT despre escaping in PowerShell heredoc @"..."@:
-#   - PowerShell expandeaza $variable si $(expression) in @"..."@
-#   - Pentru a trimite un $ literal catre bash, folosim `$ (backtick)
-#   - \$ NU functioneaza in PowerShell (\ nu este caracter de escape in PS)
+# STEP 2: Permisiuni + activeaza inventory + verificare
 # =============================================================================
 
-Write-Host "[2/3] Instaland/actualizand Ansible Galaxy collections pe jumphost..."
-Write-Host "  (requirements.yml: ansible.windows, ansible.posix, community.general, community.windows, azure.azcollection)"
-Write-Host "  (Poate dura 2-5 minute la prima rulare)"
-Write-Host ""
-
-ssh @SSHOpts $SSHTarget @"
-echo '========================================='
-echo 'STEP 2: Ansible Galaxy collections setup'
-echo '========================================='
-
-echo ''
-echo '--- [2a] Instalare colectii din requirements.yml ---'
-# Colectiile sunt deja pre-baked in imaginea Packer.
-# Aceasta comanda asigura versiunile corecte si aplica pinning-ul din requirements.yml
-# (important: community.general trebuie sa fie <12.0.0 pentru a evita tombstone ERROR)
-cd ${RemotePath} && ansible-galaxy collection install -r requirements.yml --force
-echo ''
-
-echo '--- [2b] Python dependencies pentru azure.azcollection ---'
-# Verificam ambele locatii posibile (./collections si ~/.ansible/collections)
-COLL1=${RemotePath}/collections/ansible_collections/azure/azcollection
-COLL2=~/.ansible/collections/ansible_collections/azure/azcollection
-
-if [ -f "`$COLL1/requirements.txt" ]; then
-    REQS_PATH=`$COLL1/requirements.txt
-    echo "  Gasit in collections_path: `$REQS_PATH"
-elif [ -f "`$COLL2/requirements.txt" ]; then
-    REQS_PATH=`$COLL2/requirements.txt
-    echo "  Gasit in ~/.ansible: `$REQS_PATH"
-else
-    REQS_PATH=""
-    echo '  WARN: requirements.txt negasit'
-fi
-
-if [ -n "`$REQS_PATH" ]; then
-    pip3 install -r "`$REQS_PATH" --quiet 2>&1 | tail -5
-    echo '  OK: Python deps instalate'
-fi
-echo ''
-
-echo '--- [2c] Verificare azure-cli-core (pentru auth_source: cli) ---'
-pip3 install azure-cli-core --upgrade --quiet 2>&1 | tail -3
-python3 -c "
-from azure.cli.core._profile import Profile
-print('  OK: azure.cli.core._profile.Profile disponibil')
-" 2>&1 || echo '  WARN: azure.cli.core._profile nu se poate importa'
-echo ''
-"@
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "WARN: Step 2 a raportat erori (vezi output)" -ForegroundColor Yellow
-    Write-Host "      Continui cu configurarea..." -ForegroundColor Yellow
-    Write-Host ""
-}
-
-# =============================================================================
-# STEP 3: Permisiuni + activeaza inventory + patch ansible.cfg + verificare
-# =============================================================================
-
-Write-Host "[3/3] Permisiuni, activare inventory ($SourceInventory -> $ActiveInventory), verificare..."
+Write-Host "[2/2] Permisiuni, activare inventory ($SourceInventory -> $ActiveInventory), verificare..."
 
 ssh @SSHOpts $SSHTarget @"
 echo '========================================='
@@ -202,18 +141,16 @@ echo '--- Versiune Ansible ---'
 ansible --version 2>&1 | head -3
 
 echo ''
-echo '--- Lista hosturi (necesita az login) ---'
+echo '--- Lista hosturi ---'
 cd ${RemotePath} && ansible all --list-hosts 2>&1 | head -20
 
 echo ''
 echo '========================================='
 echo 'Deployment complet!'
 echo ''
-echo 'PASUL URMATOR (pe jumphost):'
-echo '  az login'
-echo '  (sau: az login --use-device-code  daca nu ai browser deschis)'
+echo 'Jumphost-ul foloseste Managed Identity (auth_source: msi).'
+echo 'Nu este necesara autentificarea manuala (az login).'
 echo ''
-echo 'Dupa az login:'
 echo "  cd ${RemotePath}"
 echo '  ansible linux   -m ping'
 echo '  ansible windows -m win_ping'
@@ -227,8 +164,8 @@ Write-Host "=========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Conecteaza-te la jumphost si ruleaza:" -ForegroundColor Cyan
 Write-Host "  ssh ${User}@${JumphostIP}"
-Write-Host "  az login"
 Write-Host "  cd ${RemotePath}"
 Write-Host "  ansible linux   -m ping"
 Write-Host "  ansible windows -m win_ping"
+Write-Host "  (Fara az login — autentificare prin Managed Identity)"
 Write-Host "========================================="

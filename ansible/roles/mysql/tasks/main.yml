@@ -182,7 +182,7 @@
     }
   register: mysql_actual_path
   changed_when: false
-  when: not (mysql_service_check.exists | default(false))
+  failed_when: false
   tags: [mysql, install]
 
 - name: Debug - detected MySQL path
@@ -214,7 +214,11 @@
     state: directory
   tags: [mysql, config]
 
-- name: Create MySQL configuration file (my.ini)
+# Bootstrap my.ini intentionally omits skip-name-resolve so that mysql.exe can
+# authenticate as root@'localhost' via TCP from 127.0.0.1 during initial user setup.
+# After bootstrap users (root@'127.0.0.1', root@'10.10.%') are created, the final
+# my.ini (with skip-name-resolve) is written and MySQL is restarted.
+- name: Create MySQL bootstrap my.ini (skip-name-resolve disabled for initial user setup)
   ansible.windows.win_copy:
     content: |
       [mysqld]
@@ -246,16 +250,13 @@
 
       # Security
       local_infile=0
-      # Skip reverse DNS lookup — use client IP for ACL, not hostname.
-      # Without this, MySQL resolves the jumphost IP to its Azure FQDN
-      # (vm-jmp-01.internal.cloudapp.net) and denies root@that-hostname.
-      skip-name-resolve
+      enable-named-pipe
 
       [client]
       port={{ mysql_port }}
       default-character-set=utf8mb4
     dest: "{{ mysql_install_dir }}\\my.ini"
-  notify: restart mysql
+  when: not (mysql_service_check.exists | default(false))
   tags: [mysql, config]
 
 - name: Check if MySQL data directory is initialized
@@ -286,6 +287,13 @@
   when: not (mysql_svc_exists.exists | default(false))
   tags: [mysql, service]
 
+- name: Reboot before starting MySQL service (clean state after install)
+  ansible.windows.win_reboot:
+    reboot_timeout: 300
+    post_reboot_delay: 30
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, service]
+
 - name: Ensure MySQL service is running
   ansible.windows.win_service:
     name: MySQL80
@@ -293,34 +301,61 @@
     state: started
   tags: [mysql, service]
 
-- name: Wait for MySQL to be ready
+# Firewall rule must be created BEFORE the wait loop so the TCP connection
+# from the Ansible control node (jumphost) is not blocked during health checks.
+- name: Configure Windows Firewall for MySQL
+  community.windows.win_firewall_rule:
+    name: "MySQL Server (TCP {{ mysql_port }})"
+    localport: "{{ mysql_port }}"
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: yes
+  tags: [mysql, firewall]
+
+- name: Wait for MySQL port to accept TCP connections
   ansible.windows.win_shell: |
-    $maxRetries = 30
+    # MySQL can take >60s on first boot after --initialize-insecure.
+    # Test-NetConnection checks the TCP port without needing mysql.exe or passwords.
+    Start-Sleep -Seconds 10
+    $maxRetries = 60
     $retry = 0
-    $mysqlExe = "{{ mysql_install_dir }}\bin\mysql.exe"
     while ($retry -lt $maxRetries) {
-        try {
-            $result = & $mysqlExe -u root --skip-password -e "SELECT 1" 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Output "MySQL is ready (no password set yet)"
-                exit 0
-            }
-            # Try with password (might already be configured)
-            $result = & $mysqlExe -u root -p"{{ mysql_root_password }}" -e "SELECT 1" 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Output "MySQL is ready (password already set)"
-                exit 0
-            }
-        } catch {}
+        $tcpTest = Test-NetConnection -ComputerName 127.0.0.1 -Port {{ mysql_port }} `
+            -InformationLevel Quiet -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+        if ($tcpTest -eq $true) {
+            Write-Output "MySQL port {{ mysql_port }} is accepting connections (attempt $retry)"
+            exit 0
+        }
         $retry++
         Start-Sleep -Seconds 2
     }
-    Write-Output "MySQL failed to become ready after $maxRetries attempts"
+    Write-Output "Timeout: MySQL port {{ mysql_port }} not ready after $($maxRetries * 2)s"
     exit 1
   register: mysql_ready
   changed_when: false
-  no_log: true
   tags: [mysql, service]
+
+- name: Dump MySQL error log when wait fails
+  ansible.windows.win_shell: |
+    $logFile = "{{ mysql_log_dir }}\error.log"
+    if (Test-Path $logFile) {
+        Write-Output "=== Last 40 lines of MySQL error log ==="
+        Get-Content $logFile -Tail 40
+    } else {
+        Write-Output "Log file not found at: $logFile"
+        Write-Output ""
+        Write-Output "=== MySQL service status ==="
+        Get-Service MySQL80 -ErrorAction SilentlyContinue | Select-Object Name, Status, StartType | Format-List
+        Write-Output ""
+        Write-Output "=== mysqld.exe presence ==="
+        Test-Path "{{ mysql_install_dir }}\bin\mysqld.exe"
+    }
+  when: mysql_ready is failed
+  failed_when: false
+  changed_when: false
+  tags: [mysql, service, debug]
 
 # ============================================================
 # Phase 5: Security configuration
@@ -329,13 +364,15 @@
 - name: Set MySQL root password
   ansible.windows.win_shell: |
     $mysqlExe = "{{ mysql_install_dir }}\bin\mysql.exe"
-    # Test if password is already set
-    $testAuth = & $mysqlExe -u root -p"{{ mysql_root_password }}" -e "SELECT 1" 2>&1
+    # On fresh install: bootstrap my.ini has no skip-name-resolve, so root@'localhost'
+    # matches TCP from 127.0.0.1. root has no password after --initialize-insecure.
+    # On re-run: root@'127.0.0.1' already exists with password set.
+    $testAuth = & $mysqlExe -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} -e "SELECT 1" 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Output "Root password already configured"
     } else {
-        # Try setting password (root has no password after fresh install)
-        & $mysqlExe -u root --skip-password -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_root_password }}'; FLUSH PRIVILEGES;" 2>&1
+        # Fresh install: root has no password — connect without -p and set it
+        & $mysqlExe -u root -h 127.0.0.1 -P {{ mysql_port }} -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '{{ mysql_root_password }}'; FLUSH PRIVILEGES;" 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Output "Root password set"
         } else {
@@ -348,15 +385,20 @@
   no_log: true
   tags: [mysql, config, security]
 
-# Create root user for remote management from Azure VNet (10.10.0.0/20)
-# Required for MySQL Workbench connections from the jumphost.
-# With skip-name-resolve active, MySQL uses IP addresses — so we need a
-# user entry that matches the jumphost IP range, not a hostname.
-- name: Create root user for remote management from Azure VNet
+# Create remote root users for management access.
+# skip-name-resolve requires explicit IP entries (not hostnames).
+# root@'127.0.0.1' — TCP loopback for Ansible tasks using -h 127.0.0.1.
+# root@'10.10.%'   — MySQL Workbench from jumphost/any VNet VM.
+# Uses named pipe (no -h) since root@'127.0.0.1' does not exist yet.
+- name: Create root users for TCP loopback and VNet remote management
   ansible.windows.win_shell: >-
     & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
     -p'{{ mysql_root_password }}'
-    -e "CREATE USER IF NOT EXISTS 'root'@'10.10.%'
+    -h 127.0.0.1 -P {{ mysql_port }}
+    -e "CREATE USER IF NOT EXISTS 'root'@'127.0.0.1'
+    IDENTIFIED BY '{{ mysql_root_password }}';
+    GRANT ALL PRIVILEGES ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;
+    CREATE USER IF NOT EXISTS 'root'@'10.10.%'
     IDENTIFIED BY '{{ mysql_root_password }}';
     GRANT ALL PRIVILEGES ON *.* TO 'root'@'10.10.%' WITH GRANT OPTION;
     FLUSH PRIVILEGES;"
@@ -365,28 +407,86 @@
   no_log: true
   tags: [mysql, config, security]
 
-# ============================================================
-# Phase 6: Firewall
-# ============================================================
+# Write the final my.ini now that root@'127.0.0.1' and root@'10.10.%' exist.
+# skip-name-resolve is safe to enable: all subsequent Ansible tasks use -h 127.0.0.1
+# which matches root@'127.0.0.1', and MySQL Workbench connects as root@'10.10.%'.
+- name: Write final MySQL my.ini with skip-name-resolve
+  ansible.windows.win_copy:
+    content: |
+      [mysqld]
+      # Installation paths
+      basedir={{ mysql_install_dir }}
+      datadir={{ mysql_data_dir }}
 
-- name: Configure Windows Firewall for MySQL
-  community.windows.win_firewall_rule:
-    name: "MySQL Server (TCP {{ mysql_port }})"
-    localport: "{{ mysql_port }}"
-    action: allow
-    direction: in
-    protocol: tcp
-    state: present
-    enabled: yes
-  tags: [mysql, firewall]
+      # Network
+      port={{ mysql_port }}
+      bind-address={{ mysql_bind_address }}
+
+      # Connections
+      max_connections={{ mysql_max_connections }}
+
+      # Character set
+      character-set-server=utf8mb4
+      collation-server=utf8mb4_unicode_ci
+
+      # InnoDB settings
+      innodb_buffer_pool_size=256M
+      innodb_log_file_size=64M
+      innodb_flush_log_at_trx_commit=1
+
+      # Logging
+      log-error={{ mysql_log_dir }}/error.log
+      slow_query_log=1
+      slow_query_log_file={{ mysql_log_dir }}/slow-query.log
+      long_query_time=2
+
+      # Security
+      local_infile=0
+      # Required for IP wildcard grants (root@'10.10.%') to work.
+      # Without this MySQL resolves client IPs to FQDNs and IP-pattern grants never match.
+      skip-name-resolve
+      enable-named-pipe
+
+      [client]
+      port={{ mysql_port }}
+      default-character-set=utf8mb4
+    dest: "{{ mysql_install_dir }}\\my.ini"
+  notify: restart mysql
+  tags: [mysql, config]
+
+- name: Apply my.ini changes (restart MySQL if skip-name-resolve was just added)
+  meta: flush_handlers
+
+# After flush_handlers restarts MySQL (win_service restarted returns before MySQL
+# is fully accepting connections). Wait explicitly before Phase 6 tasks connect.
+- name: Wait for MySQL to be ready after my.ini restart
+  ansible.windows.win_shell: |
+    $maxRetries = 30
+    $retry = 0
+    while ($retry -lt $maxRetries) {
+        $tcpTest = Test-NetConnection -ComputerName 127.0.0.1 -Port {{ mysql_port }} `
+            -InformationLevel Quiet -ErrorAction SilentlyContinue -WarningAction SilentlyContinue
+        if ($tcpTest -eq $true) {
+            Write-Output "MySQL ready after restart (attempt $retry)"
+            exit 0
+        }
+        $retry++
+        Start-Sleep -Seconds 3
+    }
+    Write-Output "MySQL not ready after restart"
+    exit 1
+  register: mysql_ready_after_restart
+  changed_when: false
+  tags: [mysql, service]
 
 # ============================================================
-# Phase 7: Create databases and users
+# Phase 6: Create databases and users
 # ============================================================
 
 - name: Create WordPress database
   ansible.windows.win_shell: |
-    & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -e "CREATE DATABASE IF NOT EXISTS {{ mysql_wordpress_db }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" 2>&1
+    & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} -e "CREATE DATABASE IF NOT EXISTS {{ mysql_wordpress_db }} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Output "Database {{ mysql_wordpress_db }} ensured"
   register: create_db
   changed_when: false
@@ -397,9 +497,10 @@
   ansible.windows.win_shell: >-
     & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
     -p'{{ mysql_root_password }}'
-    -e "CREATE USER IF NOT EXISTS '{{ mysql_wordpress_user }}'@'%%'
+    -h 127.0.0.1 -P {{ mysql_port }}
+    -e "CREATE USER IF NOT EXISTS '{{ mysql_wordpress_user }}'@'%'
     IDENTIFIED BY '{{ mysql_wordpress_password }}';
-    GRANT ALL PRIVILEGES ON {{ mysql_wordpress_db }}.* TO '{{ mysql_wordpress_user }}'@'%%';
+    GRANT ALL PRIVILEGES ON {{ mysql_wordpress_db }}.* TO '{{ mysql_wordpress_user }}'@'%';
     FLUSH PRIVILEGES;"
   register: create_user
   changed_when: false
@@ -410,6 +511,7 @@
   ansible.windows.win_shell: >-
     & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
     -p'{{ mysql_root_password }}'
+    -h 127.0.0.1 -P {{ mysql_port }}
     -e "CREATE USER IF NOT EXISTS 'monitoring'@'localhost'
     IDENTIFIED BY '{{ mysql_monitoring_password }}';
     GRANT SELECT, PROCESS, REPLICATION CLIENT ON *.* TO 'monitoring'@'localhost';
@@ -433,6 +535,7 @@
   ansible.windows.win_shell: |
     $ErrorActionPreference = 'Continue'
     & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" `
+      -h 127.0.0.1 -P {{ mysql_port }} `
       -e "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='{{ mysql_business_db }}';" 2>&1
   register: business_db_check
   changed_when: false
@@ -445,7 +548,7 @@
     $ErrorActionPreference = 'Continue'
     $sql = Get-Content -Path 'C:\Temp\seed-business-data.sql' -Raw -Encoding UTF8
     $sql | & "{{ mysql_install_dir }}\bin\mysql.exe" -u root -p"{{ mysql_root_password }}" `
-      --default-character-set=utf8mb4 2>&1
+      -h 127.0.0.1 -P {{ mysql_port }} --default-character-set=utf8mb4 2>&1
     exit $LASTEXITCODE
   when: "'mediasrl_business' not in business_db_check.stdout"
   no_log: true
@@ -455,9 +558,10 @@
   ansible.windows.win_shell: >-
     & '{{ mysql_install_dir }}\bin\mysql.exe' -u root
     -p'{{ mysql_root_password }}'
-    -e "CREATE USER IF NOT EXISTS '{{ mysql_api_user }}'@'%%'
+    -h 127.0.0.1 -P {{ mysql_port }}
+    -e "CREATE USER IF NOT EXISTS '{{ mysql_api_user }}'@'%'
     IDENTIFIED BY '{{ mysql_api_password }}';
-    GRANT SELECT ON {{ mysql_business_db }}.* TO '{{ mysql_api_user }}'@'%%';
+    GRANT SELECT ON {{ mysql_business_db }}.* TO '{{ mysql_api_user }}'@'%';
     FLUSH PRIVILEGES;"
   changed_when: false
   no_log: true
@@ -476,7 +580,7 @@
 - name: Verify MySQL installation
   ansible.windows.win_shell: |
     $ErrorActionPreference = 'SilentlyContinue'
-    & '{{ mysql_install_dir }}\bin\mysql.exe' -u root -p'{{ mysql_root_password }}' -e 'SELECT VERSION() AS version; SHOW DATABASES;' 2>$null
+    & '{{ mysql_install_dir }}\bin\mysql.exe' -u root -p'{{ mysql_root_password }}' -h 127.0.0.1 -P {{ mysql_port }} -e 'SELECT VERSION() AS version; SHOW DATABASES;' 2>$null
   register: mysql_version
   changed_when: false
   failed_when: "'version' not in mysql_version.stdout"

@@ -5,8 +5,10 @@
 
 plugin: azure_rm
 
-# Azure authentication (uses az login credentials)
-auth_source: cli
+# Azure authentication — uses the VM's System-Assigned Managed Identity (MSI).
+# No az login required. The MSI is assigned to vm-jmp-01 via Bicep with Reader role on the RG.
+# azure-identity's ManagedIdentityCredential reads from the Azure IMDS endpoint (169.254.169.254).
+auth_source: msi
 
 # Filter VMs by resource group — PRODUCTIE only
 # For DEV environment use: ansible-playbook ... -i inventory/azure_rm_dev.yml

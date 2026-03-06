@@ -100,7 +100,7 @@ param vms array = [
   {
     name: 'vm-jmp-01'
     osType: 'Linux'
-    size: 'Standard_B4as_v2'
+    size: 'Standard_B4ls_v2'
     subnet: 'mgmt'
     createPublicIp: false
     imageDefinition: 'jumphost'
@@ -360,6 +360,7 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     osDiskStorageType: 'StandardSSD_LRS'
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     deployMonitoringAgent: false // Disable to avoid package manager lock issues during deployment
+    assignManagedIdentity: vm.name == 'vm-jmp-01' // SystemAssigned MSI for Ansible auth_source: msi
     // vm-jmp-01: marketplace -> bootstrap complet; gallery -> finalizare minima (auth fix)
     // Alte VM-uri Linux: fara CSE (configurate de Ansible)
     // VM-uri Windows: WinRM bootstrap (doar marketplace)
@@ -389,6 +390,27 @@ module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
   ]
 }]
 */
+
+// ----- MSI: Reader on Persistent RG (for azure_rm inventory plugin) -----
+// The jumphost MSI (assigned above) needs Reader on rg-mediasrl-persistent so the
+// azure_rm inventory plugin can read public IP objects referenced by VM NICs.
+// Without this, the plugin logs AuthorizationFailed errors (non-fatal, but noisy).
+//
+// principalId is taken from the virtualMachines module output (evaluated at runtime,
+// after the VM is deployed) — NOT from an 'existing' reference (evaluated at ARM
+// planning time, before the RG exists, which caused ResourceGroupNotFound on fresh deploys).
+
+var jumphostIndex = filter(range(0, length(vms)), i => vms[i].name == 'vm-jmp-01')[0]
+
+module jumphostMsiPersistentRgReader 'modules/role-assignment.bicep' = {
+  name: 'jumphost-msi-persistent-rg-reader'
+  scope: az.resourceGroup(persistentResourceGroupName)
+  params: {
+    principalId: virtualMachines[jumphostIndex].outputs.msiPrincipalId
+    roleDefinitionId: 'acdd72a7-3385-48ef-bd42-f606fba81ae7' // Reader
+    roleDescription: 'Ansible MSI: vm-jmp-01 reads persistent RG (static public IPs for inventory)'
+  }
+}
 
 // NOTE: Bootstrap/CSE strategy:
 // - vm-jmp-01 + marketplace: scripts/bootstrap-jumphost.sh (install complet: xRDP, Ansible, etc.)

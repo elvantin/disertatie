@@ -84,6 +84,9 @@ param deployMonitoringAgent bool = false
 @description('Custom script to execute after VM creation (raw text, empty = skip)')
 param customScriptContent string = ''
 
+@description('Assign System-Assigned Managed Identity to this VM (used by jumphost for Ansible MSI auth)')
+param assignManagedIdentity bool = false
+
 @description('Tags to apply to resources')
 param tags object = {}
 
@@ -151,10 +154,16 @@ resource nic 'Microsoft.Network/networkInterfaces@2023-09-01' = {
 
 // ----- Virtual Machine -----
 
+// Built-in Reader role — allows MSI to enumerate Azure resources for Ansible dynamic inventory
+var readerRoleDefinitionId = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
+
 resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
   name: vmName
   location: location
   tags: tags
+  identity: assignManagedIdentity ? {
+    type: 'SystemAssigned'
+  } : null
   // Plan information is only needed for specific marketplace images (not Windows Server or Ubuntu/Canonical)
   plan: !useGalleryImage && marketplacePublisher != 'MicrosoftWindowsServer' && marketplacePublisher != 'canonical' ? {
     name: marketplaceSku
@@ -298,6 +307,20 @@ resource customScriptWindows 'Microsoft.Compute/virtualMachines/extensions@2023-
   }
 }
 
+// ----- Role Assignment: Reader on resource group (only when MSI is assigned) -----
+// Grants the VM's managed identity read access to all resources in the RG.
+// Required for Ansible azure_rm inventory plugin with auth_source: msi.
+
+resource roleAssignmentReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignManagedIdentity) {
+  name: guid(resourceGroup().id, vmName, readerRoleDefinitionId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', readerRoleDefinitionId)
+    principalId: vm.identity.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Ansible dynamic inventory: ${vmName} MSI reads Azure resources in this RG'
+  }
+}
+
 // ----- Outputs -----
 
 output vmId string = vm.id
@@ -308,3 +331,6 @@ output privateIpAddress string = nic.properties.ipConfigurations[0].properties.p
 // Safe-access operator (.?) handles conditional resource — returns '' when publicIp doesn't exist
 @description('Public IP address (empty if no public IP was created)')
 output publicIpAddress string = publicIp.?properties.?ipAddress ?? ''
+
+// ARM if() is lazy — vm.identity.principalId is only evaluated when assignManagedIdentity = true
+output msiPrincipalId string = assignManagedIdentity ? vm.identity.principalId : ''
