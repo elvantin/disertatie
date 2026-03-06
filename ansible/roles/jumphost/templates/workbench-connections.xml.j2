@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<data>
+  <value type="object" struct-name="db.mgmt.Connection" id="1" struct-checksum="0x78877689">
+    <value type="string" key="name">db</value>
+    <value type="string" key="description">SC MEDIA SRL - MySQL vm-db-01</value>
+    <value type="string" key="driver">com.mysql.rdbms.mysql</value>
+    <value type="dict" key="parameterValues">
+      <value type="string" key="hostName">{{ hostvars['vm-db-01']['ansible_host'] | default('vm-db-01') }}</value>
+      <value type="int" key="port">3306</value>
+      <value type="string" key="userName">root</value>
+      <value type="string" key="schema"></value>
+    </value>
+    <value type="dict" key="modules"></value>
+    <value type="dict" key="serverInfo"></value>
+    <value type="list" key="loginScripting"></value>
+  </value>
+</data>

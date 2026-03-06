@@ -75,6 +75,25 @@
       tags: [common]
 
 # =============================================================================
+# Phase 1b: Jumphost Post-Configuration (tool connections, shortcuts)
+# =============================================================================
+
+- name: Configure Jumphost - Tool Connections (vm-jmp-01)
+  hosts: jumphost
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - role: jumphost
+      tags: [jumphost, tools]
+
+  tasks:
+    - name: Display jumphost configuration status
+      debug:
+        msg: "Jumphost post-deployment configuration completed on {{ inventory_hostname }}"
+      tags: [jumphost]
+
+# =============================================================================
 # Phase 2: Database Services (Must run before application servers)
 # =============================================================================
 

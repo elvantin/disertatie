@@ -12,6 +12,16 @@ param(
 $ErrorActionPreference = "Continue"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 
+# ----- Logging setup -----
+$LogDir = Join-Path $ProjectRoot "logs"
+if (-not (Test-Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir | Out-Null
+}
+$LogTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$LogFile = Join-Path $LogDir "test-infrastructure_$LogTimestamp.log"
+Start-Transcript -Path $LogFile -Append | Out-Null
+Write-Host "Log saved to: $LogFile" -ForegroundColor DarkGray
+
 # Counters
 $script:passed = 0
 $script:failed = 0
@@ -220,10 +230,10 @@ Test-Check "Security" "Key Vault has purge protection enabled" {
     $LASTEXITCODE -eq 0 -and $purge -eq "true"
 }
 
-# Azure Policy assignments
+# Azure Policy assignments — check for a specific known assignment deployed by policy.bicep
 Test-Check "Security" "Azure Policy assignments exist on subscription" {
-    $count = az policy assignment list --scope "/subscriptions/$SubscriptionId" --query "length(@)" -o tsv 2>$null
-    $LASTEXITCODE -eq 0 -and [int]$count -gt 0
+    az policy assignment show --name "policy-allowed-locations" --scope "/subscriptions/$SubscriptionId" 2>$null | Out-Null
+    $LASTEXITCODE -eq 0
 }
 
 # Tags on main resource group
@@ -424,4 +434,8 @@ if ($script:failed -eq 0) {
     Write-Host "  [WARN] $($script:failed) test(e) au esuat. Verifica detaliile de mai sus." -ForegroundColor Red
 }
 Write-Host ""
+Write-Host "  Log complet: $LogFile" -ForegroundColor DarkGray
+Write-Host ""
 Write-Host "==========================================" -ForegroundColor Cyan
+
+Stop-Transcript | Out-Null

@@ -42,45 +42,15 @@
   tags: [mysql, download]
 
 - name: Download MySQL Installer MSI (~350MB, please wait)
-  ansible.windows.win_shell: |
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $url = "{{ mysql_download_url }}"
-    $dest = "C:\Temp\mysql-installer.msi"
-    # Method 1: Invoke-WebRequest with session (handles redirects + cookies)
-    try {
-        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec 600 `
-            -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" `
-            -WebSession $session
-    } catch {
-        Write-Output "Invoke-WebRequest failed: $_"
-        # Method 2: BITS Transfer (Background Intelligent Transfer Service)
-        try {
-            Import-Module BitsTransfer
-            Start-BitsTransfer -Source $url -Destination $dest -Description "MySQL Installer"
-        } catch {
-            Write-Output "BITS failed: $_"
-            # Method 3: curl.exe (ships with Windows Server 2022)
-            & curl.exe -L -o $dest -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" $url 2>&1
-        }
-    }
-    if (Test-Path $dest) {
-        $size = (Get-Item $dest).Length / 1MB
-        if ($size -lt 10) {
-            Remove-Item $dest -Force
-            Write-Output "Downloaded file too small ($([math]::Round($size,1)) MB) - likely an error page"
-            exit 1
-        }
-        Write-Output "Downloaded successfully: $([math]::Round($size,1)) MB"
-    } else {
-        Write-Output "All download methods failed"
-        exit 1
-    }
+  ansible.windows.win_get_url:
+    url: "{{ mysql_download_url }}"
+    dest: 'C:\Temp\mysql-installer.msi'
+    force: no
+    timeout: 900
   when:
     - not (mysql_service_check.exists | default(false))
     - not (mysql_msi_stat.stat.exists | default(false))
   register: mysql_download
-  timeout: 900
   tags: [mysql, download]
 
 - name: Verify MSI file was downloaded
