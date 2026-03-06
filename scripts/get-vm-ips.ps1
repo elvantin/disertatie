@@ -209,7 +209,7 @@ ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 # ============================================================
 # Notes:
 # - Update ansible_password in group_vars/all/vault.yml (encrypted)
-# - Configure SSH keys with: ansible-playbook playbooks/setup-ssh-keys.yml
+# - Configure SSH keys with: ansible-playbook playbooks/1-setup-ssh-keys.yml
 # - Test connectivity: ansible all -m ping
 # ============================================================
 "@

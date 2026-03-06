@@ -1,0 +1,109 @@
+{
+  "policies": {
+
+    "DisplayBookmarksToolbar": "always",
+
+    "Homepage": {
+      "URL": "{{ website_url }}",
+      "Locked": false,
+      "StartPage": "homepage"
+    },
+
+    "Bookmarks": [
+
+      {
+        "Title": "SC MEDIA SRL — Website",
+        "URL": "{{ website_url }}/",
+        "Placement": "toolbar"
+      },
+
+      {
+        "Title": "WordPress Admin",
+        "URL": "{{ website_url }}/wp-admin",
+        "Placement": "toolbar"
+      },
+
+      {
+        "Title": "API Overview",
+        "URL": "{{ website_url }}/api/",
+        "Placement": "toolbar",
+        "Folder": "API"
+      },
+      {
+        "Title": "Servicii",
+        "URL": "{{ website_url }}/api/services",
+        "Placement": "toolbar",
+        "Folder": "API"
+      },
+      {
+        "Title": "Clienti",
+        "URL": "{{ website_url }}/api/clients",
+        "Placement": "toolbar",
+        "Folder": "API"
+      },
+      {
+        "Title": "Proiecte",
+        "URL": "{{ website_url }}/api/projects",
+        "Placement": "toolbar",
+        "Folder": "API"
+      },
+      {
+        "Title": "Echipa",
+        "URL": "{{ website_url }}/api/team",
+        "Placement": "toolbar",
+        "Folder": "API"
+      },
+      {
+        "Title": "Statistici",
+        "URL": "{{ website_url }}/api/stats",
+        "Placement": "toolbar",
+        "Folder": "API"
+      },
+
+      {
+        "Title": "Azure Portal",
+        "URL": "https://portal.azure.com",
+        "Placement": "toolbar",
+        "Folder": "Azure"
+      },
+      {
+        "Title": "Azure Monitor",
+        "URL": "https://portal.azure.com/#view/Microsoft_Azure_Monitoring/AzureMonitoringBrowseBlade/~/overview",
+        "Placement": "toolbar",
+        "Folder": "Azure"
+      },
+      {
+        "Title": "Resource Group — Productie",
+        "URL": "https://portal.azure.com/#resource/subscriptions/{{ ansible_env.ARM_SUBSCRIPTION_ID | default('') }}/resourceGroups/rg-mediasrl-productie-swedencentral/overview",
+        "Placement": "toolbar",
+        "Folder": "Azure"
+      },
+
+      {
+        "Title": "Jumphost — MySQL Workbench (vm-db-01)",
+        "URL": "about:blank",
+        "Placement": "menu",
+        "Folder": "Instrumente interne"
+      },
+      {
+        "Title": "CMS direct (vm-cms-01)",
+        "URL": "http://{{ hostvars['vm-cms-01']['ansible_host'] | default('vm-cms-01') }}/",
+        "Placement": "menu",
+        "Folder": "Instrumente interne"
+      },
+      {
+        "Title": "CMS Admin direct (vm-cms-01)",
+        "URL": "http://{{ hostvars['vm-cms-01']['ansible_host'] | default('vm-cms-01') }}/wp-admin",
+        "Placement": "menu",
+        "Folder": "Instrumente interne"
+      },
+      {
+        "Title": "App Server direct (vm-app-01:8080)",
+        "URL": "http://{{ hostvars['vm-app-01']['ansible_host'] | default('vm-app-01') }}:8080/api/",
+        "Placement": "menu",
+        "Folder": "Instrumente interne"
+      }
+
+    ]
+  }
+}

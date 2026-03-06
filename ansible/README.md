@@ -89,7 +89,7 @@ cd ~/ansible-workspace
 ssh-keygen -t rsa -b 4096 -C "jumphost-ansible" -f ~/.ssh/id_rsa -N ""
 
 # Deploy SSH keys to Linux VMs (folosește password authentication pentru prima dată)
-ansible-playbook playbooks/setup-ssh-keys.yml --ask-pass
+ansible-playbook playbooks/1-setup-ssh-keys.yml --ask-pass
 
 # Test connectivity
 ansible all -m ping
@@ -99,35 +99,35 @@ ansible all -m ping
 
 ```bash
 # Deployment complet (baseline + servicii + hardening)
-ansible-playbook playbooks/site.yml
+ansible-playbook playbooks/2-site.yml
 
 # Deployment doar servicii
-ansible-playbook playbooks/deploy-services.yml
+ansible-playbook playbooks/obsolete/deploy-services.yml
 
 # Doar hardening security
-ansible-playbook playbooks/harden-all.yml
+ansible-playbook playbooks/obsolete/harden-all.yml
 
 # Deployment cu tags specifice
-ansible-playbook playbooks/site.yml --tags "nginx,wordpress"
+ansible-playbook playbooks/2-site.yml --tags "nginx,wordpress"
 
 # Dry-run (test fără modificări)
-ansible-playbook playbooks/site.yml --check
+ansible-playbook playbooks/2-site.yml --check
 ```
 
 ### 5. Deployment Selectiv
 
 ```bash
 # Doar Web Server
-ansible-playbook playbooks/site.yml --limit webserver
+ansible-playbook playbooks/2-site.yml --limit webserver
 
 # Doar Linux VMs
-ansible-playbook playbooks/site.yml --limit linux
+ansible-playbook playbooks/2-site.yml --limit linux
 
 # Doar Windows VMs
-ansible-playbook playbooks/site.yml --limit windows
+ansible-playbook playbooks/2-site.yml --limit windows
 
 # Doar un VM specific
-ansible-playbook playbooks/site.yml --limit vm-cms-01
+ansible-playbook playbooks/2-site.yml --limit vm-cms-01
 ```
 
 ## 🔐 Securitate - Ansible Vault
@@ -142,12 +142,12 @@ ansible-vault create group_vars/all/vault.yml
 ansible-vault edit group_vars/all/vault.yml
 
 # Deployment cu vault
-ansible-playbook playbooks/site.yml --ask-vault-pass
+ansible-playbook playbooks/2-site.yml --ask-vault-pass
 
 # Sau folosiți un password file
 echo 'your-vault-password' > ~/.vault_pass
 chmod 600 ~/.vault_pass
-ansible-playbook playbooks/site.yml --vault-password-file ~/.vault_pass
+ansible-playbook playbooks/2-site.yml --vault-password-file ~/.vault_pass
 ```
 
 ## 📦 Roluri Ansible
@@ -266,19 +266,19 @@ company_domain: "media-srl.ro"
 
 ```bash
 # Verbose mode (debug)
-ansible-playbook playbooks/site.yml -vvv
+ansible-playbook playbooks/2-site.yml -vvv
 
 # Check syntax
-ansible-playbook playbooks/site.yml --syntax-check
+ansible-playbook playbooks/2-site.yml --syntax-check
 
 # List hosts
-ansible-playbook playbooks/site.yml --list-hosts
+ansible-playbook playbooks/2-site.yml --list-hosts
 
 # List tasks
-ansible-playbook playbooks/site.yml --list-tasks
+ansible-playbook playbooks/2-site.yml --list-tasks
 
 # List tags
-ansible-playbook playbooks/site.yml --list-tags
+ansible-playbook playbooks/2-site.yml --list-tags
 
 # Test WinRM connectivity to Windows VMs
 ansible windows -m win_ping
@@ -299,7 +299,7 @@ ssh azureadmin@vm-web-01
 ansible linux -m shell -a "cat ~/.ssh/authorized_keys" --ask-pass
 
 # Re-deploy SSH keys
-ansible-playbook playbooks/setup-ssh-keys.yml --ask-pass --limit vm-web-01
+ansible-playbook playbooks/1-setup-ssh-keys.yml --ask-pass --limit vm-web-01
 ```
 
 ### WinRM Connection Failed (Windows VMs)

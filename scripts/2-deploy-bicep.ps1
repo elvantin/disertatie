@@ -272,10 +272,10 @@ Write-Host ""
 Write-Host "  3. Din jumphost, ruleaza Ansible:" -ForegroundColor White
 if ($Environment -eq 'dev') {
     Write-Host "     cd ~/ansible" -ForegroundColor Cyan
-    Write-Host "     ansible-playbook playbooks/site.yml -i inventory/azure_rm_dev.yml" -ForegroundColor Cyan
+    Write-Host "     ansible-playbook playbooks/2-site.yml -i inventory/azure_rm_dev.yml" -ForegroundColor Cyan
 } else {
     Write-Host "     cd ~/ansible" -ForegroundColor Cyan
-    Write-Host "     ansible-playbook playbooks/site.yml" -ForegroundColor Cyan
+    Write-Host "     ansible-playbook playbooks/2-site.yml" -ForegroundColor Cyan
 }
 
 Write-Host ""

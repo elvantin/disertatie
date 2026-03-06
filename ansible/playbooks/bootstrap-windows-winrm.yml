@@ -147,5 +147,5 @@
           WinRM Port: 5985 (HTTP)
           Authentication: Basic, Negotiate, Kerberos, CredSSP
 
-          Next step: ansible-playbook playbooks/site.yml
+          Next step: ansible-playbook playbooks/2-site.yml
           ============================================================

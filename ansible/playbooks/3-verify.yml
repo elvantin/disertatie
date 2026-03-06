@@ -1,0 +1,734 @@
+---
+# ============================================================
+# Ansible Playbook: verify.yml
+# Post-deployment service verification for SC MEDIA SRL
+# Checks all services deployed by site.yml
+# ============================================================
+#
+# Usage:
+#   ./scripts/run-playbook.sh playbooks/3-verify.yml
+#   ansible-playbook playbooks/3-verify.yml
+#
+#   # Check only one VM
+#   ansible-playbook playbooks/3-verify.yml --limit vm-web-01
+#
+#   # Check by role
+#   ansible-playbook playbooks/3-verify.yml --tags web
+#   ansible-playbook playbooks/3-verify.yml --tags database
+#   ansible-playbook playbooks/3-verify.yml --tags cms
+#   ansible-playbook playbooks/3-verify.yml --tags app
+#   ansible-playbook playbooks/3-verify.yml --tags fileserver
+#   ansible-playbook playbooks/3-verify.yml --tags jumphost
+# ============================================================
+
+# =============================================================================
+# vm-web-01: Nginx reverse proxy + SSL
+# =============================================================================
+
+- name: Verify vm-web-01 — Nginx Reverse Proxy
+  hosts: webserver
+  become: yes
+  gather_facts: yes
+  tags: [verify, web]
+
+  tasks:
+
+    - name: "[web] Check nginx service state"
+      ansible.builtin.systemd:
+        name: nginx
+      register: web_nginx_svc
+      failed_when: false
+
+    - name: "[web] Check port 80 listening"
+      ansible.builtin.wait_for:
+        port: 80
+        host: 127.0.0.1
+        timeout: 5
+      register: web_port_80
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[web] Check port 443 listening"
+      ansible.builtin.wait_for:
+        port: 443
+        host: 127.0.0.1
+        timeout: 5
+      register: web_port_443
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[web] Check HTTP endpoint responds (200 or 301)"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/health"
+        status_code: [200, 301, 302]
+        follow_redirects: none
+        timeout: 10
+      register: web_http_check
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[web] Check HTTPS endpoint responds (200)"
+      ansible.builtin.uri:
+        url: "https://127.0.0.1/health"
+        status_code: 200
+        validate_certs: no
+        timeout: 10
+      register: web_https_check
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[web] Check SSL certificate on disk"
+      ansible.builtin.stat:
+        path: "/etc/letsencrypt/live/mediasrl.swedencentral.cloudapp.azure.com/fullchain.pem"
+      register: web_ssl_cert
+
+    - name: "[web] Check nginx config syntax"
+      ansible.builtin.command: nginx -t
+      register: web_nginx_syntax
+      changed_when: false
+      failed_when: false
+
+    - name: "[web] Check certbot renewal cron"
+      ansible.builtin.shell: crontab -l -u root 2>/dev/null || true
+      register: web_cron
+      changed_when: false
+      failed_when: false
+
+    - name: "[web] Check website document root exists"
+      ansible.builtin.stat:
+        path: /var/www/mediasrl/html
+      register: web_docroot
+
+    - name: "[web] Compile verification results"
+      ansible.builtin.set_fact:
+        verify_results:
+          host: "vm-web-01"
+          role: "Nginx Reverse Proxy + SSL"
+          checks:
+            - { name: "nginx service running",          pass: "{{ web_nginx_svc.status.ActiveState | default('') == 'active' }}" }
+            - { name: "Port 80 listening",              pass: "{{ web_port_80 is not failed and 'elapsed' in web_port_80 }}" }
+            - { name: "Port 443 listening",             pass: "{{ web_port_443 is not failed and 'elapsed' in web_port_443 }}" }
+            - { name: "HTTP responds (200/301)",        pass: "{{ web_http_check.status is defined and web_http_check.status in [200, 301, 302] }}" }
+            - { name: "HTTPS responds (200)",           pass: "{{ web_https_check.status is defined and web_https_check.status == 200 }}" }
+            - { name: "SSL certificate on disk",        pass: "{{ web_ssl_cert.stat.exists }}" }
+            - { name: "nginx config syntax valid",      pass: "{{ web_nginx_syntax.rc | default(1) == 0 }}" }
+            - { name: "Certbot renewal cron active",    pass: "{{ 'certbot renew' in (web_cron.stdout | default('')) }}" }
+            - { name: "Website document root exists",   pass: "{{ web_docroot.stat.exists }}" }
+
+    - name: "[web] Print vm-web-01 summary"
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          VERIFY: {{ verify_results.host }} — {{ verify_results.role }}
+          ============================================================
+          {% for c in verify_results.checks %}
+          {{ '[PASS]' if c.pass | bool else '[FAIL]' }}  {{ c.name }}
+          {% endfor %}
+          ============================================================
+
+# =============================================================================
+# vm-app-01: Nginx backend API server (port 8080)
+# =============================================================================
+
+- name: Verify vm-app-01 — Backend API Server
+  hosts: appserver
+  become: yes
+  gather_facts: yes
+  tags: [verify, app]
+
+  tasks:
+
+    - name: "[app] Check nginx service state"
+      ansible.builtin.systemd:
+        name: nginx
+      register: app_nginx_svc
+      failed_when: false
+
+    - name: "[app] Check port 8080 listening"
+      ansible.builtin.wait_for:
+        port: 8080
+        host: 127.0.0.1
+        timeout: 5
+      register: app_port_8080
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[app] Check API root endpoint (/api/)"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8080/api/"
+        status_code: 200
+        timeout: 10
+      register: app_api_root
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[app] Check individual API endpoints"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8080/api/{{ item }}"
+        status_code: 200
+        timeout: 10
+      loop:
+        - services
+        - clients
+        - projects
+        - team
+        - stats
+      register: app_api_endpoints
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[app] Check API JSON files on disk"
+      ansible.builtin.stat:
+        path: "/var/www/app/api/{{ item }}.json"
+      loop:
+        - index
+        - services
+        - clients
+        - projects
+        - team
+        - stats
+      register: app_json_files
+      failed_when: false
+
+    - name: "[app] Check nginx config syntax"
+      ansible.builtin.command: nginx -t
+      register: app_nginx_syntax
+      changed_when: false
+      failed_when: false
+
+    - name: "[app] Compile verification results"
+      ansible.builtin.set_fact:
+        verify_results:
+          host: "vm-app-01"
+          role: "Nginx Backend API"
+          checks:
+            - { name: "nginx service running",        pass: "{{ app_nginx_svc.status.ActiveState | default('') == 'active' }}" }
+            - { name: "Port 8080 listening",          pass: "{{ app_port_8080 is not failed and 'elapsed' in app_port_8080 }}" }
+            - { name: "GET /api/ → 200",             pass: "{{ app_api_root.status is defined and app_api_root.status == 200 }}" }
+            - { name: "GET /api/services → 200",     pass: "{{ app_api_endpoints.results[0].status is defined and app_api_endpoints.results[0].status == 200 }}" }
+            - { name: "GET /api/clients → 200",      pass: "{{ app_api_endpoints.results[1].status is defined and app_api_endpoints.results[1].status == 200 }}" }
+            - { name: "GET /api/projects → 200",     pass: "{{ app_api_endpoints.results[2].status is defined and app_api_endpoints.results[2].status == 200 }}" }
+            - { name: "GET /api/team → 200",         pass: "{{ app_api_endpoints.results[3].status is defined and app_api_endpoints.results[3].status == 200 }}" }
+            - { name: "GET /api/stats → 200",        pass: "{{ app_api_endpoints.results[4].status is defined and app_api_endpoints.results[4].status == 200 }}" }
+            - { name: "All 6 API JSON files on disk", pass: "{{ app_json_files.results | map(attribute='stat') | map(attribute='exists') | list | min }}" }
+            - { name: "nginx config syntax valid",    pass: "{{ app_nginx_syntax.rc | default(1) == 0 }}" }
+
+    - name: "[app] Print vm-app-01 summary"
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          VERIFY: {{ verify_results.host }} — {{ verify_results.role }}
+          ============================================================
+          {% for c in verify_results.checks %}
+          {{ '[PASS]' if c.pass | bool else '[FAIL]' }}  {{ c.name }}
+          {% endfor %}
+          ============================================================
+
+# =============================================================================
+# vm-cms-01: WordPress CMS + PHP-FPM + Postfix
+# =============================================================================
+
+- name: Verify vm-cms-01 — WordPress CMS + Postfix
+  hosts: cmsserver
+  become: yes
+  gather_facts: yes
+  tags: [verify, cms]
+
+  tasks:
+
+    - name: "[cms] Check nginx service state"
+      ansible.builtin.systemd:
+        name: nginx
+      register: cms_nginx_svc
+      failed_when: false
+
+    - name: "[cms] Check php8.1-fpm service state"
+      ansible.builtin.systemd:
+        name: "php8.1-fpm"
+      register: cms_phpfpm_svc
+      failed_when: false
+
+    - name: "[cms] Check postfix service state"
+      ansible.builtin.systemd:
+        name: postfix
+      register: cms_postfix_svc
+      failed_when: false
+
+    - name: "[cms] Check port 80 listening (WordPress)"
+      ansible.builtin.wait_for:
+        port: 80
+        host: 127.0.0.1
+        timeout: 5
+      register: cms_port_80
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[cms] Check port 25 listening (SMTP)"
+      ansible.builtin.wait_for:
+        port: 25
+        host: 127.0.0.1
+        timeout: 5
+      register: cms_port_25
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[cms] Check WordPress HTTP response"
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/"
+        status_code: [200, 301, 302]
+        follow_redirects: none
+        timeout: 15
+      register: cms_wp_http
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[cms] Check wp-config.php exists"
+      ansible.builtin.stat:
+        path: /var/www/wordpress/wp-config.php
+      register: cms_wpconfig
+
+    - name: "[cms] Check WP-CLI installed"
+      ansible.builtin.stat:
+        path: /usr/local/bin/wp
+      register: cms_wpcli
+
+    - name: "[cms] Check WordPress core is installed (WP-CLI)"
+      ansible.builtin.command: wp core is-installed --path=/var/www/wordpress --allow-root
+      register: cms_wp_installed
+      changed_when: false
+      failed_when: false
+
+    - name: "[cms] Check database port reachable (vm-db-01:3306)"
+      ansible.builtin.command: >
+        python3 -c "import socket; s = socket.create_connection(('{{ hostvars['vm-db-01']['ansible_host'] }}', 3306), timeout=5); s.close()"
+      register: cms_db_reachable
+      changed_when: false
+      failed_when: false
+
+    - name: "[cms] Check PHP-FPM socket exists"
+      ansible.builtin.stat:
+        path: /run/php/php8.1-fpm.sock
+      register: cms_phpfpm_sock
+
+    - name: "[cms] Check nginx config syntax"
+      ansible.builtin.command: nginx -t
+      register: cms_nginx_syntax
+      changed_when: false
+      failed_when: false
+
+    - name: "[cms] Compile verification results"
+      ansible.builtin.set_fact:
+        verify_results:
+          host: "vm-cms-01"
+          role: "WordPress CMS + PHP-FPM + Postfix"
+          checks:
+            - { name: "nginx service running",            pass: "{{ cms_nginx_svc.status.ActiveState | default('') == 'active' }}" }
+            - { name: "php8.1-fpm service running",       pass: "{{ cms_phpfpm_svc.status.ActiveState | default('') == 'active' }}" }
+            - { name: "postfix service running",          pass: "{{ cms_postfix_svc.status.ActiveState | default('') == 'active' }}" }
+            - { name: "Port 80 listening (WordPress)",    pass: "{{ cms_port_80 is not failed and 'elapsed' in cms_port_80 }}" }
+            - { name: "Port 25 listening (SMTP)",         pass: "{{ cms_port_25 is not failed and 'elapsed' in cms_port_25 }}" }
+            - { name: "WordPress HTTP responds",          pass: "{{ cms_wp_http.status is defined and cms_wp_http.status in [200, 301, 302] }}" }
+            - { name: "wp-config.php exists",             pass: "{{ cms_wpconfig.stat.exists }}" }
+            - { name: "WP-CLI installed",                 pass: "{{ cms_wpcli.stat.exists }}" }
+            - { name: "WordPress core installed",         pass: "{{ cms_wp_installed.rc | default(1) == 0 }}" }
+            - { name: "DB port 3306 reachable (vm-db-01)", pass: "{{ cms_db_reachable.rc | default(1) == 0 }}" }
+            - { name: "PHP-FPM socket exists",            pass: "{{ cms_phpfpm_sock.stat.exists }}" }
+            - { name: "nginx config syntax valid",        pass: "{{ cms_nginx_syntax.rc | default(1) == 0 }}" }
+
+    - name: "[cms] Print vm-cms-01 summary"
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          VERIFY: {{ verify_results.host }} — {{ verify_results.role }}
+          ============================================================
+          {% for c in verify_results.checks %}
+          {{ '[PASS]' if c.pass | bool else '[FAIL]' }}  {{ c.name }}
+          {% endfor %}
+          ============================================================
+
+# =============================================================================
+# vm-db-01: MySQL Community Server 8.0 (Windows)
+# =============================================================================
+
+- name: Verify vm-db-01 — MySQL Community Server
+  hosts: database
+  gather_facts: yes
+  tags: [verify, database]
+
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become: false
+    ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
+
+  tasks:
+
+    - name: "[db] Check MySQL80 service state"
+      ansible.windows.win_service:
+        name: MySQL80
+      register: db_mysql_svc
+      failed_when: false
+
+    - name: "[db] Check port 3306 listening"
+      ansible.windows.win_wait_for:
+        port: 3306
+        host: 127.0.0.1
+        timeout: 10
+      register: db_port_3306
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[db] Check wordpress_db database exists"
+      ansible.windows.win_shell: |
+        $result = & 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' `
+          -u root -e "SHOW DATABASES LIKE 'wordpress_db';" 2>&1
+        if ($result -match 'wordpress_db') { exit 0 } else { exit 1 }
+      register: db_wordpress_db
+      changed_when: false
+      failed_when: false
+
+    - name: "[db] Check mediasrl_business database exists"
+      ansible.windows.win_shell: |
+        $result = & 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' `
+          -u root -e "SHOW DATABASES LIKE 'mediasrl_business';" 2>&1
+        if ($result -match 'mediasrl_business') { exit 0 } else { exit 1 }
+      register: db_business_db
+      changed_when: false
+      failed_when: false
+
+    - name: "[db] Check wp_user exists"
+      ansible.windows.win_shell: |
+        $result = & 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' `
+          -u root -e "SELECT User FROM mysql.user WHERE User='wp_user';" 2>&1
+        if ($result -match 'wp_user') { exit 0 } else { exit 1 }
+      register: db_wp_user
+      changed_when: false
+      failed_when: false
+
+    - name: "[db] Check api_user exists"
+      ansible.windows.win_shell: |
+        $result = & 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' `
+          -u root -e "SELECT User FROM mysql.user WHERE User='api_user';" 2>&1
+        if ($result -match 'api_user') { exit 0 } else { exit 1 }
+      register: db_api_user
+      changed_when: false
+      failed_when: false
+
+    - name: "[db] Check backup directory exists"
+      ansible.windows.win_stat:
+        path: 'C:\Backup\MySQL'
+      register: db_backup_dir
+      failed_when: false
+
+    - name: "[db] Check Windows Firewall rule for MySQL"
+      ansible.windows.win_shell: |
+        $rule = Get-NetFirewallRule -DisplayName 'MySQL Server' -ErrorAction SilentlyContinue
+        if ($rule) { exit 0 } else { exit 1 }
+      register: db_firewall_rule
+      changed_when: false
+      failed_when: false
+
+    - name: "[db] Compile verification results"
+      ansible.builtin.set_fact:
+        verify_results:
+          host: "vm-db-01"
+          role: "MySQL Community Server 8.0"
+          checks:
+            - { name: "MySQL80 service running",          pass: "{{ db_mysql_svc.state | default('') == 'running' }}" }
+            - { name: "Port 3306 listening",              pass: "{{ db_port_3306 is not failed }}" }
+            - { name: "Database 'wordpress_db' exists",   pass: "{{ db_wordpress_db.rc | default(1) == 0 }}" }
+            - { name: "Database 'mediasrl_business' exists", pass: "{{ db_business_db.rc | default(1) == 0 }}" }
+            - { name: "MySQL user 'wp_user' exists",      pass: "{{ db_wp_user.rc | default(1) == 0 }}" }
+            - { name: "MySQL user 'api_user' exists",     pass: "{{ db_api_user.rc | default(1) == 0 }}" }
+            - { name: "Backup directory exists",          pass: "{{ db_backup_dir.stat.exists | default(false) }}" }
+            - { name: "Firewall rule for port 3306",      pass: "{{ db_firewall_rule.rc | default(1) == 0 }}" }
+
+    - name: "[db] Print vm-db-01 summary"
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          VERIFY: {{ verify_results.host }} — {{ verify_results.role }}
+          ============================================================
+          {% for c in verify_results.checks %}
+          {{ '[PASS]' if c.pass | bool else '[FAIL]' }}  {{ c.name }}
+          {% endfor %}
+          ============================================================
+
+# =============================================================================
+# vm-fs-01: Windows File Server (SMB Shares on D:\)
+# =============================================================================
+
+- name: Verify vm-fs-01 — Windows File Server (SMB)
+  hosts: fileserver
+  gather_facts: yes
+  tags: [verify, fileserver]
+
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become: false
+    ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
+
+  tasks:
+
+    - name: "[fs] Check LanmanServer (SMB) service state"
+      ansible.windows.win_service:
+        name: LanmanServer
+      register: fs_smb_svc
+      failed_when: false
+
+    - name: "[fs] Check FS-FileServer Windows Feature installed"
+      ansible.windows.win_shell: |
+        $f = Get-WindowsFeature -Name FS-FileServer
+        if ($f.Installed) { exit 0 } else { exit 1 }
+      register: fs_feature
+      changed_when: false
+      failed_when: false
+
+    - name: "[fs] Check D:\\ drive exists"
+      ansible.windows.win_stat:
+        path: 'D:\'
+      register: fs_d_drive
+      failed_when: false
+
+    - name: "[fs] Check SMB shares exist"
+      ansible.windows.win_shell: |
+        $shares = Get-SmbShare | Select-Object -ExpandProperty Name
+        $required = @('Public', 'Marketing', 'IT', 'Backups')
+        $missing = $required | Where-Object { $_ -notin $shares }
+        if ($missing.Count -eq 0) { exit 0 } else { Write-Output "Missing: $($missing -join ', ')"; exit 1 }
+      register: fs_shares
+      changed_when: false
+      failed_when: false
+
+    - name: "[fs] Check key share directories exist"
+      ansible.windows.win_stat:
+        path: "{{ item }}"
+      loop:
+        - 'D:\Shares\Public'
+        - 'D:\Shares\Marketing'
+        - 'D:\Shares\IT'
+        - 'D:\Shares\Backups'
+      register: fs_share_dirs
+      failed_when: false
+
+    - name: "[fs] Check demo documents exist"
+      ansible.windows.win_stat:
+        path: "{{ item }}"
+      loop:
+        - 'D:\Shares\Public\Bine_ati_venit.txt'
+        - 'D:\Shares\Public\Regulament_Intern.txt'
+        - 'D:\Shares\Marketing\Calendar_Campanii_2026.txt'
+        - 'D:\Shares\IT\Proceduri_Backup.txt'
+        - 'D:\Shares\Backups\README.txt'
+      register: fs_demo_docs
+      failed_when: false
+
+    - name: "[fs] Check SMBv1 is disabled"
+      ansible.windows.win_shell: |
+        $cfg = Get-SmbServerConfiguration
+        if (-not $cfg.EnableSMB1Protocol) { exit 0 } else { exit 1 }
+      register: fs_smb1_disabled
+      changed_when: false
+      failed_when: false
+
+    - name: "[fs] Check SMBv2 is enabled"
+      ansible.windows.win_shell: |
+        $cfg = Get-SmbServerConfiguration
+        if ($cfg.EnableSMB2Protocol) { exit 0 } else { exit 1 }
+      register: fs_smb2_enabled
+      changed_when: false
+      failed_when: false
+
+    - name: "[fs] Check port 445 listening"
+      ansible.windows.win_wait_for:
+        port: 445
+        host: 127.0.0.1
+        timeout: 10
+      register: fs_port_445
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[fs] Compile verification results"
+      ansible.builtin.set_fact:
+        verify_results:
+          host: "vm-fs-01"
+          role: "Windows File Server (SMB)"
+          checks:
+            - { name: "LanmanServer service running",      pass: "{{ fs_smb_svc.state | default('') == 'running' }}" }
+            - { name: "FS-FileServer feature installed",   pass: "{{ fs_feature.rc | default(1) == 0 }}" }
+            - { name: "D:\\ drive exists",                 pass: "{{ fs_d_drive.stat.exists | default(false) }}" }
+            - { name: "All 4 SMB shares created",          pass: "{{ fs_shares.rc | default(1) == 0 }}" }
+            - { name: "Share directories on D:\\",         pass: "{{ fs_share_dirs.results | map(attribute='stat') | map(attribute='exists') | list | min }}" }
+            - { name: "Demo documents in shares",          pass: "{{ fs_demo_docs.results | map(attribute='stat') | map(attribute='exists') | list | min }}" }
+            - { name: "SMBv1 disabled (security)",         pass: "{{ fs_smb1_disabled.rc | default(1) == 0 }}" }
+            - { name: "SMBv2/v3 enabled",                  pass: "{{ fs_smb2_enabled.rc | default(1) == 0 }}" }
+            - { name: "Port 445 listening (SMB/TCP)",      pass: "{{ fs_port_445 is not failed }}" }
+
+    - name: "[fs] Print vm-fs-01 summary"
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          VERIFY: {{ verify_results.host }} — {{ verify_results.role }}
+          ============================================================
+          {% for c in verify_results.checks %}
+          {{ '[PASS]' if c.pass | bool else '[FAIL]' }}  {{ c.name }}
+          {% endfor %}
+          ============================================================
+
+# =============================================================================
+# vm-jmp-01: Ubuntu Jumphost
+# =============================================================================
+
+- name: Verify vm-jmp-01 — Jumphost
+  hosts: jumphost
+  become: yes
+  gather_facts: yes
+  tags: [verify, jumphost]
+
+  tasks:
+
+    - name: "[jmp] Check xrdp service state"
+      ansible.builtin.systemd:
+        name: xrdp
+      register: jmp_xrdp_svc
+      failed_when: false
+
+    - name: "[jmp] Check port 3389 listening (RDP)"
+      ansible.builtin.wait_for:
+        port: 3389
+        host: 127.0.0.1
+        timeout: 5
+      register: jmp_port_3389
+      failed_when: false
+      ignore_errors: yes
+
+    - name: "[jmp] Check MySQL Workbench connections.xml exists"
+      ansible.builtin.stat:
+        path: "/home/{{ ansible_user }}/.mysql/workbench/connections.xml"
+      register: jmp_wb_connections
+
+    - name: "[jmp] Check mysql client available"
+      ansible.builtin.command: which mysql
+      register: jmp_mysql_client
+      changed_when: false
+      failed_when: false
+
+    - name: "[jmp] Check smbclient available"
+      ansible.builtin.command: which smbclient
+      register: jmp_smbclient
+      changed_when: false
+      failed_when: false
+
+    - name: "[jmp] Check ansible installed"
+      ansible.builtin.command: ansible --version
+      register: jmp_ansible
+      changed_when: false
+      failed_when: false
+
+    - name: "[jmp] Check ansible-playbook available"
+      ansible.builtin.command: which ansible-playbook
+      register: jmp_ansible_pb
+      changed_when: false
+      failed_when: false
+
+    - name: "[jmp] Check SSH connectivity to vm-web-01"
+      ansible.builtin.command: "ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes azureadmin@{{ hostvars['vm-web-01']['ansible_host'] }} echo ok"
+      register: jmp_ssh_web
+      changed_when: false
+      failed_when: false
+
+    - name: "[jmp] Check SSH connectivity to vm-cms-01"
+      ansible.builtin.command: "ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes azureadmin@{{ hostvars['vm-cms-01']['ansible_host'] }} echo ok"
+      register: jmp_ssh_cms
+      changed_when: false
+      failed_when: false
+
+    - name: "[jmp] Compile verification results"
+      ansible.builtin.set_fact:
+        verify_results:
+          host: "vm-jmp-01"
+          role: "Ubuntu Jumphost"
+          checks:
+            - { name: "xrdp service running",                   pass: "{{ jmp_xrdp_svc.status.ActiveState | default('') == 'active' }}" }
+            - { name: "Port 3389 listening (RDP)",              pass: "{{ jmp_port_3389 is not failed and 'elapsed' in jmp_port_3389 }}" }
+            - { name: "MySQL Workbench connections.xml exists", pass: "{{ jmp_wb_connections.stat.exists }}" }
+            - { name: "mysql client installed",                 pass: "{{ jmp_mysql_client.rc | default(1) == 0 }}" }
+            - { name: "smbclient installed",                    pass: "{{ jmp_smbclient.rc | default(1) == 0 }}" }
+            - { name: "ansible installed",                      pass: "{{ jmp_ansible.rc | default(1) == 0 }}" }
+            - { name: "SSH reachable → vm-web-01",             pass: "{{ jmp_ssh_web.rc | default(1) == 0 }}" }
+            - { name: "SSH reachable → vm-cms-01",             pass: "{{ jmp_ssh_cms.rc | default(1) == 0 }}" }
+
+    - name: "[jmp] Print vm-jmp-01 summary"
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          VERIFY: {{ verify_results.host }} — {{ verify_results.role }}
+          ============================================================
+          {% for c in verify_results.checks %}
+          {{ '[PASS]' if c.pass | bool else '[FAIL]' }}  {{ c.name }}
+          {% endfor %}
+          ============================================================
+
+# =============================================================================
+# Final Report — aggregate PASS/FAIL across all VMs
+# =============================================================================
+
+- name: Generate Final Verification Report
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  tags: [verify, report, always]
+
+  tasks:
+
+    - name: "Collect all VM results"
+      ansible.builtin.set_fact:
+        all_results: >-
+          {{
+            ['vm-web-01', 'vm-app-01', 'vm-cms-01', 'vm-db-01', 'vm-fs-01', 'vm-jmp-01']
+            | map('extract', hostvars)
+            | selectattr('verify_results', 'defined')
+            | map(attribute='verify_results')
+            | list
+          }}
+
+    - name: "Print master verification report"
+      ansible.builtin.debug:
+        msg: |
+
+          ================================================================
+            SC MEDIA SRL — INFRASTRUCTURE VERIFICATION REPORT
+          ================================================================
+            Date: {{ ansible_date_time.date }}  {{ ansible_date_time.time }}
+          ================================================================
+
+          {% for vm in all_results %}
+          {% set total = vm.checks | length %}
+          {% set passed = vm.checks | selectattr('pass', 'truthy') | list | length %}
+          {% set failed = total - passed %}
+          ┌─────────────────────────────────────────────────────────────┐
+          │ {{ vm.host | upper }}  —  {{ vm.role }}
+          │ Result: {{ passed }}/{{ total }} checks passed  {% if failed > 0 %}({{ failed }} FAILED){% else %}✓ ALL PASS{% endif %}
+
+          {% for c in vm.checks %}
+          │  {{ '[PASS]' if c.pass | bool else '[FAIL]' }}  {{ c.name }}
+          {% endfor %}
+          └─────────────────────────────────────────────────────────────┘
+
+          {% endfor %}
+          ================================================================
+          {% set grand_total = all_results | map(attribute='checks') | map('length') | sum %}
+          {% set grand_pass  = all_results | map(attribute='checks') | flatten | selectattr('pass', 'truthy') | list | length %}
+          {% set grand_fail  = grand_total - grand_pass %}
+            TOTAL: {{ grand_pass }}/{{ grand_total }} checks passed
+            {% if grand_fail == 0 %}
+            STATUS: ALL SYSTEMS OPERATIONAL
+            {% else %}
+            STATUS: {{ grand_fail }} CHECK(S) FAILED — review output above
+            {% endif %}
+          ================================================================

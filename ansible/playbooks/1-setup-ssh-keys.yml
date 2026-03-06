@@ -5,7 +5,7 @@
 # ============================================================
 #
 # Usage:
-#   ansible-playbook playbooks/setup-ssh-keys.yml
+#   ansible-playbook playbooks/1-setup-ssh-keys.yml
 #
 # Prerequisites:
 #   - az login performed on jumphost (used for dynamic inventory + run-command)
@@ -128,7 +128,7 @@
             az login --use-device-code
 
           Then re-run:
-            ansible-playbook playbooks/setup-ssh-keys.yml
+            ansible-playbook playbooks/1-setup-ssh-keys.yml
       when: az_account.rc != 0
 
     - name: Display Azure account
@@ -234,7 +234,7 @@
 
           Next Steps:
             1. Test: ansible linux -m ping
-            2. Run baseline: ansible-playbook playbooks/site.yml --tags common
+            2. Run baseline: ansible-playbook playbooks/2-site.yml --tags common
             3. Optional: comment out ansible_password in group_vars/linux.yml
 
           ============================================================

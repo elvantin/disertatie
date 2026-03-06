@@ -2,8 +2,47 @@
 # ============================================================
 # Ansible Role: jumphost
 # Post-deployment configuration for the Ubuntu jumphost VM
-# (GUI apps, tool connections, desktop shortcuts)
+# (GUI apps, tool connections, desktop shortcuts, bookmarks)
 # ============================================================
+
+# ============================================================
+# Timezone — Europe/Bucharest
+# (common role excludes jumphost, so we set it here directly)
+# ============================================================
+
+- name: Set timezone to Europe/Bucharest
+  community.general.timezone:
+    name: Europe/Bucharest
+  tags: [jumphost, timezone]
+
+# ============================================================
+# Firefox — install + pre-configured bookmarks via policy
+# ============================================================
+
+- name: Install Firefox
+  ansible.builtin.apt:
+    name: firefox
+    state: present
+    update_cache: yes
+  tags: [jumphost, firefox]
+
+- name: Create Firefox system policy directory
+  ansible.builtin.file:
+    path: /etc/firefox/policies
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags: [jumphost, firefox]
+
+- name: Deploy Firefox bookmarks and homepage policy
+  ansible.builtin.template:
+    src: firefox-policies.json.j2
+    dest: /etc/firefox/policies/policies.json
+    owner: root
+    group: root
+    mode: '0644'
+  tags: [jumphost, firefox]
 
 # ============================================================
 # MySQL Workbench — pre-configured connection to vm-db-01

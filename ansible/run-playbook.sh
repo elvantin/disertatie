@@ -6,10 +6,12 @@
 #   ./scripts/run-playbook.sh <playbook> [ansible-playbook options...]
 #
 # Examples:
-#   ./scripts/run-playbook.sh playbooks/site.yml
-#   ./scripts/run-playbook.sh playbooks/site.yml --tags nginx,wordpress
-#   ./scripts/run-playbook.sh playbooks/site.yml --limit vm-web-01 -v
-#   ./scripts/run-playbook.sh playbooks/setup-ssh-keys.yml
+#   ./run-playbook.sh playbooks/1-setup-ssh-keys.yml --ask-pass
+#   ./run-playbook.sh playbooks/2-site.yml
+#   ./run-playbook.sh playbooks/2-site.yml --tags nginx,wordpress
+#   ./run-playbook.sh playbooks/2-site.yml --limit vm-web-01 -v
+#   ./run-playbook.sh playbooks/3-verify.yml
+#   ./run-playbook.sh playbooks/4-harden-nginx-ssl.yml
 #
 # Logs are saved to: logs/YYYY-MM-DD_HH-MM-SS_<playbook>.log
 # List recent logs:  ls -lt logs/*.log | head -20
@@ -19,7 +21,7 @@
 set -euo pipefail
 
 # ── Arguments ─────────────────────────────────────────────────────────────────
-PLAYBOOK="${1:-playbooks/site.yml}"
+PLAYBOOK="${1:-playbooks/2-site.yml}"
 shift || true   # remaining args passed through to ansible-playbook
 
 # ── Paths ─────────────────────────────────────────────────────────────────────

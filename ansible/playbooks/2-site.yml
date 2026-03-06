@@ -12,24 +12,24 @@
 #   - Infrastructure deployed via Bicep
 #   - Jumphost bootstrapped with Ansible + xRDP
 #   - WinRM configured on Windows VMs (scripts/bootstrap-windows-winrm.ps1)
-#   - SSH keys distributed to Linux VMs (playbooks/setup-ssh-keys.yml)
+#   - SSH keys distributed to Linux VMs (playbooks/1-setup-ssh-keys.yml)
 #
 # Usage:
 #   # Complete deployment
-#   ansible-playbook playbooks/site.yml
+#   ansible-playbook playbooks/2-site.yml
 #
 #   # Deploy specific roles
-#   ansible-playbook playbooks/site.yml --tags common
-#   ansible-playbook playbooks/site.yml --tags sqlserver
-#   ansible-playbook playbooks/site.yml --tags nginx,wordpress
+#   ansible-playbook playbooks/2-site.yml --tags common
+#   ansible-playbook playbooks/2-site.yml --tags sqlserver
+#   ansible-playbook playbooks/2-site.yml --tags nginx,wordpress
 #
 #   # Deploy to specific hosts
-#   ansible-playbook playbooks/site.yml --limit webserver
-#   ansible-playbook playbooks/site.yml --limit linux
-#   ansible-playbook playbooks/site.yml --limit windows
+#   ansible-playbook playbooks/2-site.yml --limit webserver
+#   ansible-playbook playbooks/2-site.yml --limit linux
+#   ansible-playbook playbooks/2-site.yml --limit windows
 #
 #   # Dry run (check mode)
-#   ansible-playbook playbooks/site.yml --check
+#   ansible-playbook playbooks/2-site.yml --check
 #
 # ============================================================
 
@@ -39,8 +39,8 @@
 
 - name: Configure Linux VMs - Common Baseline (Ubuntu 22.04)
   hosts: linux:!jumphost
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
 
   roles:
     - role: common
@@ -54,7 +54,7 @@
 
 - name: Configure Windows VMs - Common Baseline (Windows Server 2022)
   hosts: windows
-  gather_facts: yes
+  gather_facts: true
 
   vars:
     ansible_connection: winrm
@@ -80,8 +80,8 @@
 
 - name: Configure Jumphost - Tool Connections (vm-jmp-01)
   hosts: jumphost
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
 
   roles:
     - role: jumphost
@@ -99,7 +99,7 @@
 
 - name: Configure Database Server - MySQL Community Server (vm-db-01)
   hosts: database
-  gather_facts: yes
+  gather_facts: true
 
   vars:
     ansible_connection: winrm
@@ -125,8 +125,8 @@
 
 - name: Configure Web Server - Nginx (vm-web-01)
   hosts: webserver
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
 
   roles:
     - role: nginx
@@ -140,8 +140,8 @@
 
 - name: Configure Application Server - Nginx Backend API (vm-app-01)
   hosts: appserver
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
 
   roles:
     - role: appserver
@@ -155,8 +155,8 @@
 
 - name: Configure CMS Server - WordPress + MySQL + Postfix (vm-cms-01)
   hosts: cmsserver
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
 
   roles:
     - role: wordpress
@@ -177,7 +177,7 @@
 
 - name: Configure File Server - SMB Shares (vm-fs-01)
   hosts: fileserver
-  gather_facts: yes
+  gather_facts: true
 
   vars:
     ansible_connection: winrm
@@ -203,8 +203,8 @@
 
 - name: Apply Security Hardening to Linux VMs
   hosts: linux:!jumphost
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
 
   roles:
     - role: hardening
@@ -222,7 +222,7 @@
 
 - name: Verify Deployment - Linux VMs
   hosts: linux:!jumphost
-  gather_facts: yes
+  gather_facts: true
 
   vars:
     env_name: "productie"
@@ -248,7 +248,7 @@
 
 - name: Verify Deployment - Windows VMs
   hosts: windows
-  gather_facts: yes
+  gather_facts: true
 
   collections:
     - ansible.windows
@@ -282,14 +282,95 @@
 
 
 # =============================================================================
+# Phase 7: SSL Certificate Validation — Auto-obtain Let's Encrypt if needed
+# =============================================================================
+# Logic:
+#   1. Check on vm-web-01 whether the current cert is issued by Let's Encrypt
+#   2. On localhost (jumphost): if NOT LE cert → chmod +x + run certbot script
+#      If LE cert is valid → skip silently
+# The certbot script handles: NSG port 80 open → certbot → nginx reload → NSG close
+
+- name: Check SSL Certificate on vm-web-01
+  hosts: webserver
+  become: true
+  gather_facts: false
+  tags: [ssl, certbot]
+
+  vars:
+    website_domain: "mediasrl.swedencentral.cloudapp.azure.com"
+
+  tasks:
+    # certbot certificates is the authoritative source: reads from /etc/letsencrypt/renewal/
+    # and shows (VALID: X days) only for real LE certs — unaffected by live/ symlink state.
+    - name: Query certbot for certificate status
+      ansible.builtin.command: certbot certificates --domain {{ website_domain }}
+      register: certbot_certs
+      changed_when: false
+      failed_when: false
+
+    - name: Set ssl_is_letsencrypt fact
+      ansible.builtin.set_fact:
+        ssl_is_letsencrypt: "{{ '(VALID:' in (certbot_certs.stdout | default('')) }}"
+
+    - name: Display SSL certificate status
+      ansible.builtin.debug:
+        msg: |
+          Certbot status on {{ inventory_hostname }}:
+          {% for line in certbot_certs.stdout_lines | default([]) %}
+            {{ line }}
+          {% endfor %}
+          is_letsencrypt={{ ssl_is_letsencrypt }}
+
+- name: Auto-obtain Let's Encrypt Certificate (if needed)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  tags: [ssl, certbot]
+
+  tasks:
+    - name: Read SSL status from vm-web-01
+      ansible.builtin.set_fact:
+        ssl_valid: "{{ hostvars['vm-web-01']['ssl_is_letsencrypt'] | default(false) | bool }}"
+
+    - name: "[SSL OK] Let's Encrypt certificate is valid — skipping certbot"
+      ansible.builtin.debug:
+        msg: >-
+          Let's Encrypt certificate is valid and HTTPS is operational.
+          No action needed. Certbot script will NOT run.
+      when: ssl_valid
+
+    - name: "[SSL NEEDED] Make certbot script executable"
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../scripts/certbot-letsencrypt.sh"
+        mode: '0755'
+      when: not ssl_valid
+
+    - name: "[SSL NEEDED] Obtain Let's Encrypt certificate via certbot script"
+      ansible.builtin.command:
+        cmd: "{{ playbook_dir }}/../scripts/certbot-letsencrypt.sh"
+        chdir: "{{ playbook_dir }}/.."
+      register: certbot_run
+      when: not ssl_valid
+      timeout: 900
+      failed_when: certbot_run.rc | default(0) != 0
+
+    - name: "[SSL NEEDED] Display certbot output"
+      ansible.builtin.debug:
+        msg: "{{ certbot_run.stdout_lines | default([]) }}"
+      when:
+        - not ssl_valid
+        - certbot_run is defined and certbot_run is not skipped
+
+# =============================================================================
 # Final Status Report
 # =============================================================================
 
 - name: Generate Final Status Report
   hosts: localhost
   connection: local
-  gather_facts: yes
-  become: no
+  gather_facts: true
+  become: false
 
   vars:
     env_name: "productie"

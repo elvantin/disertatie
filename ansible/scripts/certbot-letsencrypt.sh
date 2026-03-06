@@ -202,26 +202,34 @@ fi
 
 # ── Step 3: Remove self-signed symlinks from LE live directory ─────────────────
 echo ""
-log "STEP 3: Clearing self-signed symlinks from LE live directory..."
+log "STEP 3: Removing self-signed symlinks from LE live directory (if present)..."
 cd "$ANSIBLE_DIR"
 
+# Only remove symlinks that point to /etc/ssl/mediasrl (self-signed fallback path).
+# Real LE cert symlinks point to /etc/letsencrypt/archive/ and must NOT be removed.
 ansible webserver \
     -i "$INVENTORY" \
     -m shell \
     -a "
-        if [ -L '${LE_LIVE_DIR}/fullchain.pem' ]; then
-            rm -f '${LE_LIVE_DIR}/fullchain.pem' \
-                  '${LE_LIVE_DIR}/privkey.pem' \
-                  '${LE_LIVE_DIR}/chain.pem' \
-                  '${LE_LIVE_DIR}/cert.pem'
-            echo 'Self-signed symlinks removed.'
+        CERT='${LE_LIVE_DIR}/fullchain.pem'
+        if [ -L \"\$CERT\" ]; then
+            TARGET=\$(readlink -f \"\$CERT\" 2>/dev/null || echo '')
+            if echo \"\$TARGET\" | grep -q '/etc/ssl/mediasrl'; then
+                rm -f '${LE_LIVE_DIR}/fullchain.pem' \
+                      '${LE_LIVE_DIR}/privkey.pem' \
+                      '${LE_LIVE_DIR}/chain.pem' \
+                      '${LE_LIVE_DIR}/cert.pem'
+                echo \"Self-signed symlinks removed (target was: \$TARGET).\"
+            else
+                echo \"Symlink points to real LE cert (\$TARGET). Nothing to remove.\"
+            fi
         else
-            echo 'No symlinks found (or already a real cert). Nothing to remove.'
+            echo 'No symlinks in LE live directory. Nothing to remove.'
         fi
     " \
     --become 2>&1 | grep -v "^$" | sed 's/^/  /'
 
-log "LE live directory is clear for certbot."
+log "LE live directory checked."
 
 # ── Step 4: Run certbot ────────────────────────────────────────────────────────
 echo ""
@@ -250,17 +258,48 @@ if [[ $CERTBOT_EXIT -ne 0 ]]; then
 fi
 log "Certbot completed successfully."
 
+# ── Step 4b: Repair live symlinks if certbot skipped renewal ───────────────────
+# certbot --keep-until-expiring skips issuance when cert is still valid, but does
+# NOT recreate live/ symlinks if they were removed. Recreate from archive if needed.
+echo ""
+log "STEP 4b: Ensuring live certificate symlinks are intact..."
+
+ansible webserver \
+    -i "$INVENTORY" \
+    -m shell \
+    -a "
+        if [ ! -e '${LE_LIVE_DIR}/fullchain.pem' ]; then
+            LATEST_CERT=\$(ls -1t /etc/letsencrypt/archive/${DOMAIN}/fullchain*.pem 2>/dev/null | head -1)
+            if [ -n \"\$LATEST_CERT\" ]; then
+                mkdir -p '${LE_LIVE_DIR}'
+                ln -sf \"\$LATEST_CERT\" '${LE_LIVE_DIR}/fullchain.pem'
+                ln -sf \"\$(ls -1t /etc/letsencrypt/archive/${DOMAIN}/privkey*.pem | head -1)\" '${LE_LIVE_DIR}/privkey.pem'
+                ln -sf \"\$(ls -1t /etc/letsencrypt/archive/${DOMAIN}/chain*.pem   | head -1)\" '${LE_LIVE_DIR}/chain.pem'
+                ln -sf \"\$(ls -1t /etc/letsencrypt/archive/${DOMAIN}/cert*.pem    | head -1)\" '${LE_LIVE_DIR}/cert.pem'
+                echo \"Live symlinks recreated from archive: \$LATEST_CERT\"
+            else
+                echo 'No cert found in archive. A full certbot renewal is required.'
+                exit 1
+            fi
+        else
+            echo 'Live certificate already present — no repair needed.'
+        fi
+    " \
+    --become 2>&1 | grep -v "^$" | sed 's/^/  /'
+
 # ── Step 5: Verify certificate ─────────────────────────────────────────────────
 echo ""
 log "STEP 5: Verifying certificate..."
 
+# Non-fatal: symlinks may have just been recreated; nginx reload (step 6) will validate.
 ansible webserver \
     -i "$INVENTORY" \
     -m command \
     -a "openssl x509
         -in ${LE_LIVE_DIR}/fullchain.pem
         -noout -subject -issuer -dates" \
-    --become 2>&1 | sed 's/^/  /'
+    --become 2>&1 | sed 's/^/  /' \
+    || warn "Could not read certificate details — verify manually after nginx reload."
 
 # Confirm it's a real LE cert (issuer should contain "Let's Encrypt")
 ISSUER=$(ansible webserver \
@@ -280,7 +319,7 @@ fi
 echo ""
 log "STEP 6: Deploying HTTPS nginx configuration..."
 
-ansible-playbook playbooks/site.yml \
+ansible-playbook playbooks/2-site.yml \
     -i "$INVENTORY" \
     --tags nginx \
     --limit vm-web-01 \
@@ -316,7 +355,7 @@ echo ""
 warn "IMPORTANT: Enable HSTS now that cert is trusted."
 warn "  Edit ansible/roles/nginx/defaults/main.yml:"
 warn "    nginx_hsts_max_age: 31536000"
-warn "  Then re-run: ansible-playbook playbooks/site.yml --tags nginx --limit vm-web-01"
+warn "  Then re-run: ansible-playbook playbooks/2-site.yml --tags nginx --limit vm-web-01"
 echo ""
 warn "NOTE: Auto-renewal (certbot renew) needs port 80 open from internet."
 warn "  For renewal, re-run this script or open port 80 manually before 'certbot renew'."

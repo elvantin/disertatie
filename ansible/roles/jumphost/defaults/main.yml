@@ -1,0 +1,8 @@
+---
+# ============================================================
+# Ansible Role: jumphost — Default Variables
+# ============================================================
+
+# Public domain (must match nginx role)
+website_domain: "mediasrl.swedencentral.cloudapp.azure.com"
+website_url: "https://{{ website_domain }}"

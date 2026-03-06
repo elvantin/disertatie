@@ -122,7 +122,7 @@ vm-jmp-01
 - `bicep/parameters/prod.bicepparam` - Production parameters
 
 ### Ansible
-- `ansible/playbooks/site.yml` - Main playbook
+- `ansible/playbooks/2-site.yml` - Main playbook
 - `ansible/inventory/hosts.ini` - Inventory (6 VMs)
 - `ansible/roles/mssql/` - MS SQL Server role (NEW)
 - `ansible/roles/wordpress/` - WordPress role (updated for SQL Server)
@@ -162,13 +162,13 @@ az deployment sub create \
 ### Configure All VMs
 ```bash
 ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/site.yml
+  ansible/playbooks/2-site.yml
 ```
 
 ### Configure Database Server Only
 ```bash
 ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/site.yml \
+  ansible/playbooks/2-site.yml \
   --tags database
 ```
 

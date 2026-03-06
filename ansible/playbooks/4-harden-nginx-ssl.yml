@@ -9,7 +9,7 @@
 #   - OWASP Security Headers recommendations
 #
 # Usage:
-#   ansible-playbook playbooks/harden-nginx-ssl.yml
+#   ansible-playbook playbooks/4-harden-nginx-ssl.yml
 #
 # Before/After testing:
 #   Use https://www.ssllabs.com/ssltest/ to compare grades

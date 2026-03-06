@@ -87,7 +87,7 @@ Created complete Ansible role: `ansible/roles/mssql/`
 
 ### 5. Main Playbook
 
-#### `ansible/playbooks/site.yml`
+#### `ansible/playbooks/2-site.yml`
 - Added new play: "Configure Database Server (Windows with MS SQL Server 2022)"
 - Targets: hosts: database
 - Applies role: mssql
@@ -146,21 +146,21 @@ az deployment sub create \
 ### 2. Configure Database Server (Ansible)
 ```bash
 ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/site.yml \
+  ansible/playbooks/2-site.yml \
   --tags database
 ```
 
 ### 3. Configure WordPress Server (Ansible)
 ```bash
 ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/site.yml \
+  ansible/playbooks/2-site.yml \
   --tags cms
 ```
 
 ### 4. Run Full Deployment (All VMs)
 ```bash
 ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/site.yml
+  ansible/playbooks/2-site.yml
 ```
 
 ## Testing Checklist

@@ -368,7 +368,7 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
     - Test idempotență: Bicep what-if verifică 0 modificări la re-deploy (`-SkipIdempotency` pentru skip)
     - Teste performanță: response time webserver, SSH connect time
     - Raport sumar cu contoare pass/fail/warn per categorie
-  - **`ansible/playbooks/test-services.yml`** — Playbook Ansible rulat de pe jumphost, testează serviciile VM-urilor
+  - **`ansible/playbooks/obsolete/test-services.yml`** — Playbook Ansible rulat de pe jumphost, testează serviciile VM-urilor
     - 10 secțiuni de teste: Linux baseline, Windows baseline, Jumphost, Webserver, App server, CMS, File server, DB server, Cross-VM connectivity, Summary
     - Verifică: OS version, timezone, SSH hardening, WinRM, Ansible, Azure CLI, xRDP, Nginx, PHP-FPM, MySQL, Postfix, SMB shares
     - Test conectivitate cross-VM de pe jumphost (SSH + WinRM)

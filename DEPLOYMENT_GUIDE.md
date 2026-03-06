@@ -163,15 +163,15 @@ ansible all -m ping                    # Linux VMs (SSH)
 ansible windows -m win_ping            # Windows VMs (WinRM)
 
 # Deploy complet (toate rolurile)
-ansible-playbook playbooks/site.yml
+ansible-playbook playbooks/2-site.yml
 
 # Deploy selectiv
-ansible-playbook playbooks/site.yml --tags common          # pachete de baza
-ansible-playbook playbooks/site.yml --tags webserver        # nginx pe vm-web-01
-ansible-playbook playbooks/site.yml --tags cms              # WordPress pe vm-cms-01
-ansible-playbook playbooks/site.yml --tags appserver        # nginx:8080 pe vm-app-01
-ansible-playbook playbooks/site.yml --tags fileserver       # SMB shares pe vm-fs-01
-ansible-playbook playbooks/site.yml --tags hardening        # CIS hardening
+ansible-playbook playbooks/2-site.yml --tags common          # pachete de baza
+ansible-playbook playbooks/2-site.yml --tags webserver        # nginx pe vm-web-01
+ansible-playbook playbooks/2-site.yml --tags cms              # WordPress pe vm-cms-01
+ansible-playbook playbooks/2-site.yml --tags appserver        # nginx:8080 pe vm-app-01
+ansible-playbook playbooks/2-site.yml --tags fileserver       # SMB shares pe vm-fs-01
+ansible-playbook playbooks/2-site.yml --tags hardening        # CIS hardening
 ```
 
 **Roluri Ansible disponibile:**
@@ -464,13 +464,13 @@ Conecteaza-te RDP la vm-jmp-01, deschide un terminal si ruleaza:
 cd ~/ansible
 
 # Ruleaza toate testele de servicii
-ansible-playbook playbooks/test-services.yml
+ansible-playbook playbooks/obsolete/test-services.yml
 
 # Ruleaza doar anumite sectiuni (tags disponibile)
-ansible-playbook playbooks/test-services.yml --tags linux_baseline
-ansible-playbook playbooks/test-services.yml --tags jumphost_services
-ansible-playbook playbooks/test-services.yml --tags webserver_tests
-ansible-playbook playbooks/test-services.yml --tags connectivity
+ansible-playbook playbooks/obsolete/test-services.yml --tags linux_baseline
+ansible-playbook playbooks/obsolete/test-services.yml --tags jumphost_services
+ansible-playbook playbooks/obsolete/test-services.yml --tags webserver_tests
+ansible-playbook playbooks/obsolete/test-services.yml --tags connectivity
 ```
 
 **Ce testeaza (10 sectiuni):**
@@ -512,7 +512,7 @@ Playbook-ul `harden-nginx-ssl.yml` aplica best practices de securitate SSL/TLS p
 **Pasul 2: Aplica hardening-ul** (de pe jumphost)
 ```bash
 cd ~/ansible
-ansible-playbook playbooks/harden-nginx-ssl.yml
+ansible-playbook playbooks/4-harden-nginx-ssl.yml
 ```
 
 **Nota:** Generarea parametrilor DH (4096-bit) dureaza 5-15 minute la prima rulare.

@@ -1,7 +1,7 @@
 # ============================================================
 # Dynamic Azure Inventory Plugin — Development Environment
 # Discovers VMs only from rg-mediasrl-dezvoltare-swedencentral
-# Usage: ansible-playbook playbooks/site.yml -i inventory/azure_rm_dev.yml
+# Usage: ansible-playbook playbooks/2-site.yml -i inventory/azure_rm_dev.yml
 # ============================================================
 
 plugin: azure_rm

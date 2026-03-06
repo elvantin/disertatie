@@ -187,7 +187,7 @@ Credentiale: `azureadmin` / parola din `prod.bicepparam`
 cd ~/ansible
 ansible all -m ping
 ansible windows -m win_ping
-ansible-playbook playbooks/site.yml
+ansible-playbook playbooks/2-site.yml
 ```
 
 ### 6. Testare
@@ -197,7 +197,7 @@ ansible-playbook playbooks/site.yml
 .\scripts\test-infrastructure.ps1
 
 # Din jumphost (servicii VM-uri)
-ansible-playbook playbooks/test-services.yml
+ansible-playbook playbooks/obsolete/test-services.yml
 ```
 
 Pentru detalii complete, vezi [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
