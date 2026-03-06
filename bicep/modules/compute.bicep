@@ -87,6 +87,9 @@ param customScriptContent string = ''
 @description('Assign System-Assigned Managed Identity to this VM (used by jumphost for Ansible MSI auth)')
 param assignManagedIdentity bool = false
 
+@description('Data disks to attach (array of {lun, diskSizeGB, storageType}). Empty = no data disks.')
+param dataDisks array = []
+
 @description('Tags to apply to resources')
 param tags object = {}
 
@@ -192,6 +195,16 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
         }
         caching: 'ReadWrite'
       }
+      dataDisks: [for (disk, i) in dataDisks: {
+        lun: disk.lun
+        name: 'datadisk-${vmName}-${disk.lun}'
+        createOption: 'Empty'
+        diskSizeGB: disk.diskSizeGB
+        managedDisk: {
+          storageAccountType: disk.?storageType ?? 'StandardSSD_LRS'
+        }
+        caching: 'None'
+      }]
     }
     osProfile: {
       computerName: vmName

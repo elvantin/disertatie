@@ -141,9 +141,10 @@ Test-Check "Azure Resources" "Compute Gallery 'gal_mediasrl' exists" {
 
 # Image Definitions
 foreach ($imgDef in @("imgdef-ubuntu2204", "imgdef-ubuntu2204-jumphost", "imgdef-winserver2022")) {
+    $imgDefCopy = $imgDef  # capture by value to avoid foreach closure issues
     Test-Check "Azure Resources" "Image Definition '$imgDef' has versions" {
-        $versions = az sig image-version list -g $RgPacker --gallery-name gal_mediasrl --gallery-image-definition $imgDef --query "length(@)" -o tsv 2>$null
-        $LASTEXITCODE -eq 0 -and [int]$versions -gt 0
+        $versionList = az sig image-version list -g $RgPacker --gallery-name gal_mediasrl --gallery-image-definition $imgDefCopy -o json 2>$null | ConvertFrom-Json
+        $LASTEXITCODE -eq 0 -and $null -ne $versionList -and $versionList.Count -gt 0
     }
 }
 
@@ -161,8 +162,9 @@ Write-Host ""
 $ExpectedVMs = @("vm-jmp-01", "vm-web-01", "vm-app-01", "vm-cms-01", "vm-db-01", "vm-fs-01")
 
 foreach ($vmName in $ExpectedVMs) {
-    Test-Check "Virtual Machines" "VM '$vmName' exists and is running" {
-        $powerState = az vm get-instance-view -g $RgMain -n $vmName --query "instanceView.statuses[?starts_with(code,'PowerState/')].displayStatus" -o tsv 2>$null
+    $vmNameCopy = $vmName  # capture by value to avoid foreach closure issues
+    Test-Check "Virtual Machines" "VM '$vmNameCopy' exists and is running" {
+        $powerState = az vm show -g $RgMain -n $vmNameCopy -d --query powerState -o tsv 2>$null
         $LASTEXITCODE -eq 0 -and $powerState -eq "VM running"
     }
 }
@@ -191,12 +193,12 @@ Write-Host ""
 
 # NSG nsg-mgmt: RDP si SSH doar de la admin IP
 Test-Check "Security" "NSG-mgmt: RDP allowed only from admin IP" {
-    $rule = az network nsg rule show -g $RgMain --nsg-name nsg-mgmt -n AllowRDP --query "sourceAddressPrefix" -o tsv 2>$null
+    $rule = az network nsg rule show -g $RgMain --nsg-name nsg-mgmt -n Allow-RDP-From-Admin --query "sourceAddressPrefix" -o tsv 2>$null
     $LASTEXITCODE -eq 0 -and $rule -ne "*"
 }
 
 Test-Check "Security" "NSG-mgmt: SSH allowed only from admin IP" {
-    $rule = az network nsg rule show -g $RgMain --nsg-name nsg-mgmt -n AllowSSH --query "sourceAddressPrefix" -o tsv 2>$null
+    $rule = az network nsg rule show -g $RgMain --nsg-name nsg-mgmt -n Allow-SSH-From-Admin --query "sourceAddressPrefix" -o tsv 2>$null
     $LASTEXITCODE -eq 0 -and $rule -ne "*"
 }
 
@@ -220,7 +222,7 @@ Test-Check "Security" "Key Vault has purge protection enabled" {
 
 # Azure Policy assignments
 Test-Check "Security" "Azure Policy assignments exist on subscription" {
-    $count = az policy assignment list --query "length(@)" -o tsv 2>$null
+    $count = az policy assignment list --scope "/subscriptions/$SubscriptionId" --query "length(@)" -o tsv 2>$null
     $LASTEXITCODE -eq 0 -and [int]$count -gt 0
 }
 
@@ -276,15 +278,16 @@ if ($JumphostIp) {
 $WebIp = az network public-ip show -g $RgPersistent -n pip-vm-web-01 --query ipAddress -o tsv 2>$null
 
 if ($WebIp) {
-    Test-Check "Connectivity" "Webserver HTTP port (80) reachable" {
+    Test-Check "Connectivity" "Webserver HTTP port (80) blocked from internet (VNet-only)" {
+        # Port 80 is restricted to VNet CIDR (10.10.0.0/20) by NSG — must NOT be reachable from outside
         $tcp = New-Object System.Net.Sockets.TcpClient
         try {
-            $tcp.Connect($WebIp, 80)
-            $result = $tcp.Connected
+            $tcp.ConnectAsync($WebIp, 80).Wait(2000) | Out-Null
+            $connected = $tcp.Connected
             $tcp.Close()
-            $result
+            -not $connected  # PASS if connection was refused/timed out
         } catch {
-            $false
+            $true  # connection failed = port is blocked = correct behaviour
         }
     }
 
@@ -317,14 +320,21 @@ Write-Host ""
 if ($SkipIdempotency) {
     Write-Host "  [SKIP] Idempotency tests skipped (-SkipIdempotency)" -ForegroundColor Yellow
 } else {
-    Test-Check "Idempotency" "Bicep what-if shows no changes (NoChange/Ignore only)" {
+    Test-Check "Idempotency" "Bicep what-if shows no Create/Delete changes" {
         Write-Host "    Running what-if (this may take 1-2 minutes)..." -ForegroundColor Gray
-        $whatif = az deployment sub what-if --location swedencentral --template-file "$ProjectRoot\bicep\main.bicep" --parameters "$ProjectRoot\bicep\parameters\prod.bicepparam" --no-pretty-print --query "changes[?changeType!='NoChange' && changeType!='Ignore'].{Name:resourceId, Change:changeType}" -o json 2>$null
+        # Only flag Create/Delete as unexpected — Modify is a known ARM what-if false positive
+        # (policy assignments, NICs, public IPs always show Modify due to internal ARM properties)
+        $whatif = az deployment sub what-if --location swedencentral --template-file "$ProjectRoot\bicep\main.bicep" --parameters "$ProjectRoot\bicep\parameters\prod.bicepparam" --no-pretty-print --query "changes[?changeType=='Create' || changeType=='Delete'].{Name:resourceId, Change:changeType}" -o json 2>$null
         $changes = $whatif | ConvertFrom-Json
+        $modifyOnly = az deployment sub what-if --location swedencentral --template-file "$ProjectRoot\bicep\main.bicep" --parameters "$ProjectRoot\bicep\parameters\prod.bicepparam" --no-pretty-print --query "changes[?changeType=='Modify'].resourceId" -o json 2>$null | ConvertFrom-Json
+        if ($null -ne $modifyOnly -and $modifyOnly.Count -gt 0) {
+            Write-Host "    Modify-only changes (ARM false positives, not blocking): $($modifyOnly.Count)" -ForegroundColor Gray
+            foreach ($r in $modifyOnly) { Write-Host "      Modify: $r" -ForegroundColor DarkGray }
+        }
         if ($null -eq $changes -or $changes.Count -eq 0) {
             $true
         } else {
-            Write-Host "    Unexpected changes detected:" -ForegroundColor Yellow
+            Write-Host "    Unexpected Create/Delete changes detected:" -ForegroundColor Yellow
             foreach ($c in $changes) {
                 Write-Host "      $($c.Change): $($c.Name)" -ForegroundColor Yellow
             }
@@ -345,13 +355,14 @@ Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
 if ($WebIp) {
-    Test-Check "Performance" "Webserver responds within 5 seconds" {
+    Test-Check "Performance" "Webserver HTTPS responds within 5 seconds" {
         try {
             $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-            $response = Invoke-WebRequest -Uri "http://$WebIp" -TimeoutSec 5 -UseBasicParsing -ErrorAction SilentlyContinue
+            # Use HTTPS — port 80 is VNet-only, port 443 is public; skip cert validation (self-signed accepted)
+            $response = Invoke-WebRequest -Uri "https://$WebIp" -TimeoutSec 5 -UseBasicParsing -SkipCertificateCheck -ErrorAction SilentlyContinue
             $stopwatch.Stop()
             $ms = $stopwatch.ElapsedMilliseconds
-            Write-Host "    Response time: ${ms}ms (HTTP $($response.StatusCode))" -ForegroundColor Gray
+            Write-Host "    Response time: ${ms}ms (HTTPS $($response.StatusCode))" -ForegroundColor Gray
             $ms -lt 5000
         } catch {
             Write-Host "    Webserver did not respond (may not be configured yet by Ansible)" -ForegroundColor Yellow

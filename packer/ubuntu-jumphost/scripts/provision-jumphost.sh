@@ -204,7 +204,8 @@ echo "[12/15] Installing DevOps tools..."
 apt install -y \
     git vim nano mc wget curl htop tmux screen \
     net-tools dnsutils tcpdump nmap telnet netcat \
-    jq tree bash-completion unzip zip tar build-essential
+    jq tree bash-completion unzip zip tar build-essential \
+    mysql-client-core-8.0 smbclient
 
 # =============================================================================
 # STEP 13: Install gnome-keyring and MySQL Workbench Community

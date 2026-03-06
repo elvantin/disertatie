@@ -3,6 +3,60 @@
 # Configures Windows Server as File Server with SMB shares
 # ============================================================
 
+# ============================================================
+# Phase 0: Windows Storage Spaces — initialize data disk (LUN 0)
+# Creates a Storage Pool + VirtualDisk + D:\ volume from the
+# 32 GB data disk attached via Bicep. Idempotent: skipped if
+# D:\ already exists.
+# ============================================================
+
+- name: Initialize data disk and create Storage Pool (D:\)
+  ansible.windows.win_shell: |
+    # Skip if D:\ already exists
+    if (Test-Path "D:\") {
+        Write-Output "D:\ already exists - skipping storage pool creation"
+        exit 0
+    }
+
+    # Find the raw (uninitialized) disk attached at LUN 0
+    $rawDisk = Get-Disk | Where-Object { $_.PartitionStyle -eq 'RAW' -and $_.BusType -eq 'SCSI' } | Select-Object -First 1
+    if ($null -eq $rawDisk) {
+        Write-Error "No raw SCSI disk found. Ensure a data disk is attached in Azure."
+        exit 1
+    }
+
+    # Create Storage Pool from the physical disk
+    $subSystem = Get-StorageSubSystem | Select-Object -First 1
+    $physDisk  = Get-PhysicalDisk -UniqueId $rawDisk.UniqueId
+    $pool = New-StoragePool `
+        -FriendlyName "MediaSRL-FileData" `
+        -StorageSubSystemFriendlyName $subSystem.FriendlyName `
+        -PhysicalDisks $physDisk
+
+    # Create a simple (no redundancy) VirtualDisk using maximum space
+    $vdisk = New-VirtualDisk `
+        -StoragePoolFriendlyName "MediaSRL-FileData" `
+        -FriendlyName "FileServerData" `
+        -UseMaximumSize `
+        -ProvisioningType Fixed `
+        -ResiliencySettingName Simple
+
+    # Initialize, partition and format the VirtualDisk as D:\
+    $vdisk | Get-Disk | Initialize-Disk -PartitionStyle GPT -PassThru |
+        New-Partition -DriveLetter D -UseMaximumSize |
+        Format-Volume -FileSystem NTFS -NewFileSystemLabel "FileServerData" -Confirm:$false | Out-Null
+
+    Write-Output "Storage pool created and D:\ formatted successfully"
+  register: storage_pool_result
+  changed_when: "'already exists' not in storage_pool_result.stdout"
+  tags: [fileserver, storage]
+
+- name: Wait for D:\ to become available
+  ansible.windows.win_wait_for:
+    path: "D:\\"
+    timeout: 60
+  tags: [fileserver, storage]
+
 - name: Install File Server role
   ansible.windows.win_feature:
     name: FS-FileServer
@@ -15,17 +69,17 @@
     path: "{{ item }}"
     state: directory
   loop:
-    - C:\Shares
-    - C:\Shares\Public
-    - C:\Shares\Marketing
-    - C:\Shares\IT
-    - C:\Shares\Backups
+    - D:\Shares
+    - D:\Shares\Public
+    - D:\Shares\Marketing
+    - D:\Shares\IT
+    - D:\Shares\Backups
   tags: [fileserver, directories]
 
 - name: Create SMB share - Public
   ansible.windows.win_share:
     name: Public
-    path: C:\Shares\Public
+    path: D:\Shares\Public
     description: "Public shared folder"
     full: "Everyone"
     state: present
@@ -34,7 +88,7 @@
 - name: Create SMB share - Marketing
   ansible.windows.win_share:
     name: Marketing
-    path: C:\Shares\Marketing
+    path: D:\Shares\Marketing
     description: "Marketing department files"
     full: "Administrators"
     change: "Users"
@@ -44,7 +98,7 @@
 - name: Create SMB share - IT
   ansible.windows.win_share:
     name: IT
-    path: C:\Shares\IT
+    path: D:\Shares\IT
     description: "IT department files"
     full: "Administrators"
     state: present
@@ -53,7 +107,7 @@
 - name: Create SMB share - Backups
   ansible.windows.win_share:
     name: Backups
-    path: C:\Shares\Backups
+    path: D:\Shares\Backups
     description: "Centralized backup storage"
     full: "Administrators"
     state: present
@@ -111,7 +165,7 @@
 
       ==========================================
       Ultima actualizare: Februarie 2026
-    dest: C:\Shares\Public\Bine_ati_venit.txt
+    dest: D:\Shares\Public\Bine_ati_venit.txt
   tags: [fileserver, documents]
 
 - name: Create internal regulation document
@@ -148,7 +202,7 @@
 
       ==========================================
       Aprobat de: Elena Popescu, Director General
-    dest: C:\Shares\Public\Regulament_Intern.txt
+    dest: D:\Shares\Public\Regulament_Intern.txt
   tags: [fileserver, documents]
 
 - name: Create marketing campaigns calendar
@@ -182,7 +236,7 @@
 
       ==========================================
       Nota: Calendar orientativ, se actualizeaza lunar
-    dest: C:\Shares\Marketing\Calendar_Campanii_2026.txt
+    dest: D:\Shares\Marketing\Calendar_Campanii_2026.txt
   tags: [fileserver, documents]
 
 - name: Create client proposal template
@@ -225,7 +279,7 @@
       SC MEDIA SRL | CUI: RO 41234567
       Str. Victoriei 45, Sector 1, Bucuresti
       Tel: +40 21 300 1234 | office@media-srl.ro
-    dest: C:\Shares\Marketing\Template_Propunere_Client.txt
+    dest: D:\Shares\Marketing\Template_Propunere_Client.txt
   tags: [fileserver, documents]
 
 - name: Create IT backup procedures document
@@ -245,7 +299,7 @@
          - MySQL (vm-db-01): wordpress_db + mediasrl_business
          - WordPress (vm-cms-01): /var/www/wordpress
          - Ansible (vm-jmp-01): ~/ansible
-         - File server (vm-fs-01): C:\Shares
+         - File server (vm-fs-01): D:\Shares
 
       3. PROCEDURA DE RESTORE
          a) Identificare punct de restore
@@ -262,7 +316,7 @@
 
       ==========================================
       CONFIDENTIAL - Doar uz intern IT
-    dest: C:\Shares\IT\Proceduri_Backup.txt
+    dest: D:\Shares\IT\Proceduri_Backup.txt
   tags: [fileserver, documents]
 
 - name: Create backups readme
@@ -285,7 +339,7 @@
       de retentie (7 zile zilnic, 4 saptamani saptamanal).
 
       ==========================================
-    dest: C:\Shares\Backups\README.txt
+    dest: D:\Shares\Backups\README.txt
   tags: [fileserver, documents]
 
 - name: Display file server information

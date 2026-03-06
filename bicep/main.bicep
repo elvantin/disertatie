@@ -133,6 +133,9 @@ param vms array = [
     createPublicIp: false
     imageDefinition: 'windows'
     osDiskSizeGb: 128
+    dataDisks: [
+      { lun: 0, diskSizeGB: 32, storageType: 'StandardSSD_LRS' }
+    ]
   }
   {
     name: 'vm-app-01'
@@ -358,6 +361,7 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     marketplaceVersion: 'latest'
     osDiskSizeGb: vm.osDiskSizeGb
     osDiskStorageType: 'StandardSSD_LRS'
+    dataDisks: vm.?dataDisks ?? []
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     deployMonitoringAgent: false // Disable to avoid package manager lock issues during deployment
     assignManagedIdentity: vm.name == 'vm-jmp-01' // SystemAssigned MSI for Ansible auth_source: msi
