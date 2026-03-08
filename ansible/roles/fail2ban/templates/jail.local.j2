@@ -1,0 +1,78 @@
+# ============================================================
+# Fail2ban — jail.local
+# Managed by Ansible (fail2ban role)
+# DO NOT EDIT MANUALLY
+# ============================================================
+
+[DEFAULT]
+# Ban duration (seconds). -1 = permanent
+bantime  = {{ fail2ban_bantime }}
+
+# Time window for counting failures
+findtime = {{ fail2ban_findtime }}
+
+# Number of failures before ban
+maxretry = {{ fail2ban_maxretry }}
+
+# Log backend: systemd for Ubuntu 22.04 (reads from journald)
+backend  = {{ fail2ban_backend }}
+
+# Action: ban only (iptables DROP)
+banaction = iptables-multiport
+banaction_allports = iptables-allports
+
+# Notification (optional — configure postfix to use)
+destemail = {{ fail2ban_destemail }}
+sender    = {{ fail2ban_sender }}
+action    = %(action_)s
+
+# ============================================================
+# SSH Jail
+# ============================================================
+
+[sshd]
+enabled  = {{ fail2ban_ssh_enabled | lower }}
+port     = {{ fail2ban_ssh_port }}
+logpath  = %(sshd_log)s
+backend  = %(default_backend)s
+maxretry = {{ fail2ban_ssh_maxretry }}
+bantime  = {{ fail2ban_ssh_bantime }}
+
+# ============================================================
+# nginx — HTTP Auth failures (401 from nginx basic auth)
+# ============================================================
+
+[nginx-http-auth]
+enabled  = {{ fail2ban_nginx_http_auth_enabled | lower }}
+port     = http,https
+filter   = nginx-http-auth
+logpath  = {{ fail2ban_nginx_error_log }}
+maxretry = {{ fail2ban_nginx_maxretry }}
+bantime  = {{ fail2ban_nginx_bantime }}
+
+# ============================================================
+# nginx — Rate limit violations (HTTP 429)
+# Integrates with nginx rate limiting (Hardening #1)
+# ============================================================
+
+[nginx-req-limit]
+enabled  = {{ fail2ban_nginx_req_limit_enabled | lower }}
+port     = http,https
+filter   = nginx-req-limit
+logpath  = {{ fail2ban_nginx_access_log }}
+maxretry = 10
+findtime = 60
+bantime  = {{ fail2ban_nginx_bantime }}
+
+# ============================================================
+# nginx — Bot/scanner detection (404 floods on sensitive paths)
+# ============================================================
+
+[nginx-botsearch]
+enabled  = {{ fail2ban_nginx_botsearch_enabled | lower }}
+port     = http,https
+filter   = nginx-botsearch
+logpath  = {{ fail2ban_nginx_access_log }}
+maxretry = 5
+findtime = 60
+bantime  = {{ fail2ban_nginx_bantime * 2 }}   # double ban for bots

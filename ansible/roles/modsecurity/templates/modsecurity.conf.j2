@@ -1,0 +1,49 @@
+# ============================================================
+# ModSecurity Configuration
+# /etc/nginx/modsecurity/modsecurity.conf
+# Managed by Ansible (modsecurity role)
+# DO NOT EDIT MANUALLY
+# ============================================================
+
+# ── Engine Mode ───────────────────────────────────────────────────────────────
+# DetectionOnly : log but do not block (safe for initial deployment)
+# On            : detect AND block (production enforcement mode)
+SecRuleEngine {{ modsecurity_mode }}
+
+# ── Request Body Handling ─────────────────────────────────────────────────────
+SecRequestBodyAccess {{ modsecurity_request_body_access }}
+SecRequestBodyLimit {{ modsecurity_request_body_limit }}
+SecRequestBodyNoFilesLimit {{ modsecurity_request_body_no_files_limit }}
+SecRequestBodyLimitAction Reject
+
+# ── Response Body Handling ────────────────────────────────────────────────────
+SecResponseBodyAccess {{ modsecurity_response_body_access }}
+SecResponseBodyLimit {{ modsecurity_response_body_limit }}
+SecResponseBodyLimitAction ProcessPartial
+
+# ── Temporary File Storage ────────────────────────────────────────────────────
+SecTmpDir /tmp/modsecurity
+SecDataDir /tmp/modsecurity
+
+# ── Audit Logging ─────────────────────────────────────────────────────────────
+# Log all relevant transactions (blocked + detection-only)
+SecAuditEngine RelevantOnly
+SecAuditLogRelevantStatus "^(?:5|4(?!04))"
+SecAuditLog {{ modsecurity_audit_log }}
+SecAuditLogFormat {{ modsecurity_audit_log_format }}
+SecAuditLogType Serial
+SecAuditLogParts ABCFHZ
+
+# ── Debug Logging (disable in production) ────────────────────────────────────
+SecDebugLog {{ modsecurity_debug_log }}
+SecDebugLogLevel {{ modsecurity_debug_log_level }}
+
+# ── Encoding / Character Handling ─────────────────────────────────────────────
+# NOTE: SecDefaultAction is intentionally NOT set here.
+# OWASP CRS defines it in crs-setup.conf — setting it twice causes a conflict.
+SecArgumentSeparator &
+SecCookieFormat 0
+
+# ── Include OWASP Core Rule Set ───────────────────────────────────────────────
+Include {{ modsecurity_crs_dir }}/crs-setup.conf
+Include {{ modsecurity_crs_dir }}/rules/*.conf

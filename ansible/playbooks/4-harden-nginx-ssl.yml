@@ -13,7 +13,7 @@
 #
 # Before/After testing:
 #   Use https://www.ssllabs.com/ssltest/ to compare grades
-#   Expected: Before = B/C, After = A/A+
+#   Expected: Before = A-/B, After = A/A+
 # ============================================================
 
 - name: Harden Nginx SSL/TLS Configuration
@@ -138,9 +138,6 @@
           ssl_stapling_verify on;
           resolver {{ ssl_resolver }} valid=300s;
           resolver_timeout {{ ssl_resolver_timeout }};
-
-          # Connection timeout
-          keepalive_timeout 75;
       notify: reload nginx
       tags: [ssl, config]
 
@@ -307,7 +304,7 @@
             - Security Headers: https://securityheaders.com/?q={{ website_domain }}
 
           Expected improvement:
-            Before hardening: Grade B or C
+            Before hardening: Grade A- or B
             After hardening:  Grade A or A+
 
           To rollback:

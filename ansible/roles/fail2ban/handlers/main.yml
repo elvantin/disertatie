@@ -1,0 +1,10 @@
+---
+- name: restart fail2ban
+  ansible.builtin.systemd:
+    name: fail2ban
+    state: restarted
+    enabled: true
+
+- name: reload fail2ban
+  ansible.builtin.command: fail2ban-client reload
+  changed_when: true

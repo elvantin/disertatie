@@ -1,0 +1,43 @@
+---
+# ============================================================
+# Ansible Role: modsecurity — Default Variables
+# ModSecurity 3 + OWASP Core Rule Set for nginx
+# ============================================================
+
+# Mode: DetectionOnly (log only) or On (block + log)
+modsecurity_mode: "On"
+
+# Directories
+modsecurity_conf_dir: /etc/nginx/modsecurity
+modsecurity_crs_dir: /etc/nginx/modsecurity/coreruleset
+
+# Logging
+modsecurity_audit_log: /var/log/nginx/modsec_audit.log
+modsecurity_audit_log_format: JSON
+modsecurity_debug_log: /var/log/nginx/modsec_debug.log
+modsecurity_debug_log_level: 0   # 0=off, 9=verbose
+
+# Request body handling
+modsecurity_request_body_access: "On"
+modsecurity_request_body_limit: 13107200   # 12.5MB
+modsecurity_request_body_no_files_limit: 131072
+
+# Response body handling
+modsecurity_response_body_access: "On"
+modsecurity_response_body_limit: 524288    # 512KB
+
+# OWASP CRS version to clone
+# CRS 3.3.x+ uses MULTIPART_PART_HEADERS requiring libmodsecurity3 >= 3.0.9.
+# Ubuntu 22.04 apt has libmodsecurity3 3.0.7 — use CRS 3.2.1 (last pre-3.3.0 stable).
+modsecurity_crs_git_url: "https://github.com/coreruleset/coreruleset.git"
+modsecurity_crs_version: "v3.2.1"
+
+# CRS paranoia level (1=default, 2=moderate, 3=strict, 4=paranoid)
+modsecurity_crs_paranoia_level: 1
+
+# Anomaly scoring thresholds (lower = stricter)
+modsecurity_inbound_anomaly_score_threshold: 5
+modsecurity_outbound_anomaly_score_threshold: 4
+
+# WordPress-specific exclusions (prevents false positives on WP admin)
+modsecurity_wordpress_exclusions: true

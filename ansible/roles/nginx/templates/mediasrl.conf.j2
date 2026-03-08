@@ -37,6 +37,11 @@ server {
 
     server_name {{ website_domain }} {{ ansible_hostname }} {{ ansible_fqdn | default('_') }};
 
+{% if nginx_modsecurity_enabled | default(false) %}
+    modsecurity on;
+    modsecurity_rules_file {{ nginx_modsecurity_conf }};
+{% endif %}
+
     # SSL certificate (Let's Encrypt)
     ssl_certificate {{ nginx_ssl_certificate }};
     ssl_certificate_key {{ nginx_ssl_certificate_key }};
@@ -65,9 +70,47 @@ server {
         log_not_found off;
     }
 
+{% if nginx_rate_limiting_enabled | default(false) %}
+    # WordPress login — 5 req/min, burst=3
+    location = /wp-login.php {
+        limit_req zone=wp_login burst=3 nodelay;
+        proxy_pass http://wordpress_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WordPress admin — 10 req/min, burst=5
+    location ^~ /wp-admin/ {
+        limit_req zone=wp_admin burst=5 nodelay;
+        proxy_pass http://wordpress_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 120s;
+    }
+
+    # XML-RPC — 2 req/min, no burst (scanner/bot blocker)
+    location = /xmlrpc.php {
+        limit_req zone=xmlrpc;
+        proxy_pass http://wordpress_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+{% endif %}
+
     # Proxy to application server (vm-app-01)
     # No trailing slash: preserves /api/ prefix so app-nginx locations match correctly.
     location /api/ {
+{% if nginx_rate_limiting_enabled | default(false) %}
+        limit_req zone=api burst=10 nodelay;
+{% endif %}
         proxy_pass http://app_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

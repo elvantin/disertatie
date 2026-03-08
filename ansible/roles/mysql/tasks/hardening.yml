@@ -1,0 +1,133 @@
+---
+# ============================================================
+# MySQL General Hardening Tasks
+# Equivalent to mysql_secure_installation + security settings
+# Included by: ansible/playbooks/5-harden-security.yml
+# ============================================================
+
+# ── Phase 1: Remove insecure defaults ────────────────────────────────────────
+
+- name: "[mysql-hardening] Remove anonymous MySQL users"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $result = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      -e "DELETE FROM mysql.user WHERE User=''; FLUSH PRIVILEGES;" 2>$null
+    Write-Output $result
+  register: remove_anon
+  changed_when: true
+  tags: [mysql_hardening]
+
+- name: "[mysql-hardening] Remove test database"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $result = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      -e "DROP DATABASE IF EXISTS test; DELETE FROM mysql.db WHERE Db='test' OR Db='test\_%'; FLUSH PRIVILEGES;" 2>$null
+    Write-Output $result
+  register: remove_test_db
+  changed_when: true
+  tags: [mysql_hardening]
+
+- name: "[mysql-hardening] Restrict root to localhost + jumphost subnet only"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $sql = "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1', '{{ mysql_jumphost_subnet }}'); FLUSH PRIVILEGES;"
+    $result = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 -e $sql 2>$null
+    Write-Output $result
+  register: restrict_root
+  changed_when: true
+  tags: [mysql_hardening]
+
+- name: "[mysql-hardening] Create root account for jumphost subnet (Workbench access)"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $sql = "CREATE USER IF NOT EXISTS 'root'@'{{ mysql_jumphost_subnet }}' IDENTIFIED BY '{{ mysql_root_password }}'; " +
+           "GRANT ALL PRIVILEGES ON *.* TO 'root'@'{{ mysql_jumphost_subnet }}' WITH GRANT OPTION; " +
+           "FLUSH PRIVILEGES;"
+    $result = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 -e $sql 2>$null
+    Write-Output "root@{{ mysql_jumphost_subnet }} configured for remote access"
+  register: root_jumphost
+  changed_when: true
+  failed_when: false
+  tags: [mysql_hardening]
+
+# ── Phase 2: Password policy ──────────────────────────────────────────────────
+
+- name: "[mysql-hardening] Enable password validation plugin"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $sql = "INSTALL PLUGIN IF NOT EXISTS validate_password SONAME 'validate_password.dll'; " +
+           "SET GLOBAL validate_password.policy = 'STRONG'; " +
+           "SET GLOBAL validate_password.length = 12; " +
+           "SET GLOBAL validate_password.mixed_case_count = 1; " +
+           "SET GLOBAL validate_password.number_count = 1; " +
+           "SET GLOBAL validate_password.special_char_count = 1;"
+    $result = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 -e $sql 2>$null
+    Write-Output $result
+  register: password_policy
+  changed_when: true
+  tags: [mysql_hardening]
+
+# ── Phase 3: Security settings ────────────────────────────────────────────────
+
+- name: "[mysql-hardening] Apply security settings via SET GLOBAL"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $sql = "SET GLOBAL local_infile = 0; " +
+           "SET GLOBAL max_connect_errors = 10; " +
+           "SET GLOBAL interactive_timeout = 1800; " +
+           "SET GLOBAL wait_timeout = 1800; " +
+           "SET GLOBAL general_log = 0; " +
+           "SET GLOBAL slow_query_log = 1; " +
+           "SET GLOBAL long_query_time = 2;"
+    $result = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 -e $sql 2>$null
+    Write-Output $result
+  register: security_settings
+  changed_when: true
+  tags: [mysql_hardening]
+
+- name: "[mysql-hardening] Add security settings to my.ini (persist across restarts)"
+  ansible.windows.win_shell: |
+    $iniPath = 'C:\ProgramData\MySQL\MySQL Server 8.0\my.ini'
+    $settings = @('local_infile=0', 'max_connect_errors=10', 'skip_name_resolve=1', 'slow_query_log=1', 'long_query_time=2')
+    $content = Get-Content $iniPath -Raw
+    foreach ($line in $settings) {
+      if ($content -notmatch [regex]::Escape($line)) {
+        $content = $content -replace '(\[mysqld\])', "`$1`r`n$line"
+        Write-Output "Added: $line"
+      } else {
+        Write-Output "Already present: $line"
+      }
+    }
+    Set-Content $iniPath -Value $content -NoNewline
+  register: myini_update
+  changed_when: "'Added:' in myini_update.stdout"
+  tags: [mysql_hardening]
+
+# ── Phase 4: Verify hardening ─────────────────────────────────────────────────
+
+- name: "[mysql-hardening] Verify anonymous users removed"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $result = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      -e "SELECT COUNT(*) AS anon_users FROM mysql.user WHERE User='';" 2>$null
+    Write-Output $result
+  register: verify_anon
+  changed_when: false
+  tags: [mysql_hardening]
+
+- name: "[mysql-hardening] Verify test database removed"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $result = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      -e "SHOW DATABASES LIKE 'test';" 2>$null
+    Write-Output $result
+  register: verify_test_db
+  changed_when: false
+  tags: [mysql_hardening]
+
+- name: "[mysql-hardening] Show hardening verification"
+  ansible.builtin.debug:
+    msg:
+      - "Anonymous users: {{ verify_anon.stdout }}"
+      - "Test database:   {{ verify_test_db.stdout | default('(none — removed)') }}"
+  tags: [mysql_hardening]

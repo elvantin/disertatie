@@ -257,9 +257,9 @@ if ($pipExists -eq 'true') {
 
 Write-Host "  1. Copiaza Ansible pe jumphost:" -ForegroundColor White
 if ($jmpIp) {
-    Write-Host "     .\scripts\deploy-ansible-to-jumphost.ps1 -JumphostIP $jmpIp" -ForegroundColor Cyan
+    Write-Host "     .\scripts\4-deploy-ansible-to-jumphost.ps1 -JumphostIP $jmpIp" -ForegroundColor Cyan
 } else {
-    Write-Host "     .\scripts\deploy-ansible-to-jumphost.ps1 -JumphostIP <IP_JUMPHOST>" -ForegroundColor Cyan
+    Write-Host "     .\scripts\4-deploy-ansible-to-jumphost.ps1 -JumphostIP <IP_JUMPHOST>" -ForegroundColor Cyan
 }
 
 Write-Host ""
@@ -280,7 +280,7 @@ if ($Environment -eq 'dev') {
 
 Write-Host ""
 Write-Host "  4. Teste infrastructura (local):" -ForegroundColor White
-Write-Host "     .\scripts\test-infrastructure.ps1" -ForegroundColor Cyan
+Write-Host "     .\scripts\5-test-infrastructure.ps1" -ForegroundColor Cyan
 Write-Host ""
 
 Write-Host "==========================================" -ForegroundColor $EnvColor

@@ -1,0 +1,78 @@
+# ============================================================
+# SSH Hardening Configuration
+# /etc/ssh/sshd_config.d/99-hardening.conf
+# Managed by Ansible (ssh-hardening role)
+# Based on: Mozilla OpenSSH Security Guide (Modern)
+#           BSI TR-02102-4
+# DO NOT EDIT MANUALLY
+# ============================================================
+
+# ── Cryptographic Algorithms ─────────────────────────────────────────────────
+
+# Key Exchange: only modern algorithms with Perfect Forward Secrecy
+KexAlgorithms {{ ssh_kex_algorithms }}
+
+# Ciphers: AEAD ciphers preferred (authenticated encryption)
+Ciphers {{ ssh_ciphers }}
+
+# MAC: Encrypt-then-MAC required (ETM suffix)
+MACs {{ ssh_macs }}
+
+# ── Authentication ────────────────────────────────────────────────────────────
+
+# Both publickey and password auth allowed (infrastructure requirement)
+PubkeyAuthentication {{ ssh_pubkey_authentication }}
+PasswordAuthentication {{ ssh_password_authentication }}
+ChallengeResponseAuthentication {{ ssh_challenge_response_authentication }}
+
+# Disable dangerous authentication methods
+PermitEmptyPasswords no
+HostbasedAuthentication no
+IgnoreRhosts yes
+
+# ── Connection Limits ─────────────────────────────────────────────────────────
+
+# Maximum authentication attempts before disconnecting
+MaxAuthTries {{ ssh_max_auth_tries }}
+
+# Time allowed for client to authenticate
+LoginGraceTime {{ ssh_login_grace_time }}
+
+# Maximum sessions per connection
+MaxSessions {{ ssh_max_sessions }}
+
+# Keep-alive: disconnect idle connections after 10 minutes
+ClientAliveInterval {{ ssh_client_alive_interval }}
+ClientAliveCountMax {{ ssh_client_alive_count_max }}
+
+# ── Access Control ────────────────────────────────────────────────────────────
+
+# Disable root login
+PermitRootLogin {{ ssh_permit_root_login }}
+
+# Allow only specific users (principle of least privilege)
+AllowUsers {{ ssh_allow_users }}
+
+# ── Forwarding / Tunneling ────────────────────────────────────────────────────
+
+# Disable X11 forwarding (GUI tunneling — not needed on servers)
+X11Forwarding {{ ssh_x11_forwarding }}
+
+# Disable TCP forwarding (port forwarding)
+AllowTcpForwarding {{ ssh_allow_tcp_forwarding }}
+
+# Disable SSH agent forwarding
+AllowAgentForwarding {{ ssh_allow_agent_forwarding }}
+
+# Disable tun/tap tunnel device
+PermitTunnel {{ ssh_permit_tunnel }}
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+
+# Verbose logging captures fingerprints of keys used
+LogLevel {{ ssh_log_level }}
+SyslogFacility {{ ssh_syslog_facility }}
+
+# ── Login Banner ──────────────────────────────────────────────────────────────
+
+Banner {{ ssh_banner }}

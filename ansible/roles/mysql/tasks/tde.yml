@@ -1,0 +1,151 @@
+---
+# ============================================================
+# MySQL Transparent Data Encryption (TDE)
+# InnoDB tablespace encryption via keyring_file plugin
+# MySQL 8.0 Community Edition — Windows Server 2022
+# Included by: ansible/playbooks/5-harden-security.yml
+# ============================================================
+
+# ── Phase 1: Configure keyring plugin in my.ini ───────────────────────────────
+
+- name: "[mysql-tde] Capture encryption status BEFORE enabling TDE"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      -e "SELECT NAME, ENCRYPTION FROM information_schema.INNODB_TABLESPACES WHERE NAME LIKE 'wordpress_db/%' OR NAME LIKE 'mediasrl_business/%' ORDER BY NAME;" 2>$null
+  register: tde_before
+  changed_when: false
+  failed_when: false
+  tags: [tde]
+
+- name: "[mysql-tde] Show encryption status BEFORE TDE"
+  ansible.builtin.debug:
+    msg: "BEFORE TDE:\n{{ tde_before.stdout | default('(no data)') }}"
+  tags: [tde]
+
+- name: "[mysql-tde] Add keyring_file plugin to my.ini"
+  ansible.windows.win_shell: |
+    $iniPath = 'C:\ProgramData\MySQL\MySQL Server 8.0\my.ini'
+    $settings = @(
+      'early-plugin-load=keyring_file.dll',
+      'keyring_file_data=C:/ProgramData/MySQL/MySQL Server 8.0/keyring',
+      'default_table_encryption=ON'
+    )
+    $content = Get-Content $iniPath -Raw
+    foreach ($line in $settings) {
+      if ($content -notmatch [regex]::Escape($line)) {
+        $content = $content -replace '(\[mysqld\])', "`$1`r`n$line"
+        Write-Output "Added: $line"
+      } else {
+        Write-Output "Already present: $line"
+      }
+    }
+    Set-Content $iniPath -Value $content -NoNewline
+  register: tde_myini_update
+  changed_when: "'Added:' in tde_myini_update.stdout"
+  notify: restart MySQL80
+  tags: [tde]
+
+# ── Phase 2: Create keyring directory ────────────────────────────────────────
+
+- name: "[mysql-tde] Create keyring directory"
+  ansible.windows.win_shell: |
+    $keyringDir = 'C:\ProgramData\MySQL\MySQL Server 8.0\keyring'
+    if (-not (Test-Path $keyringDir)) {
+      New-Item -Path $keyringDir -ItemType Directory -Force | Out-Null
+      Write-Output "Created keyring directory"
+    } else {
+      Write-Output "Keyring directory already exists"
+    }
+  register: keyring_dir
+  changed_when: "'Created' in keyring_dir.stdout"
+  tags: [tde]
+
+# ── Phase 3: Restart MySQL to load keyring plugin ────────────────────────────
+
+- name: "[mysql-tde] Restart MySQL80 service to load keyring plugin"
+  ansible.windows.win_service:
+    name: MySQL80
+    state: restarted
+  tags: [tde]
+
+- name: "[mysql-tde] Wait for MySQL to be ready after restart"
+  ansible.windows.win_wait_for:
+    port: 3306
+    host: 127.0.0.1
+    timeout: 60
+    delay: 5
+  tags: [tde]
+
+# ── Phase 4: Encrypt existing tablespaces ────────────────────────────────────
+
+- name: "[mysql-tde] Verify keyring plugin is loaded"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      -e "SELECT PLUGIN_NAME, PLUGIN_STATUS FROM information_schema.PLUGINS WHERE PLUGIN_NAME LIKE 'keyring%';" 2>$null
+  register: keyring_check
+  changed_when: false
+  failed_when: false
+  tags: [tde]
+
+- name: "[mysql-tde] Show keyring plugin status"
+  ansible.builtin.debug:
+    msg: "Keyring status:\n{{ keyring_check.stdout | default('(no data)') }}"
+  tags: [tde]
+
+- name: "[mysql-tde] Encrypt wordpress_db tablespaces"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $tables = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      --skip-column-names -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='wordpress_db' AND ENGINE='InnoDB';" 2>$null
+    foreach ($table in ($tables -split "`n" | Where-Object { $_ -match '\S' })) {
+      $table = $table.Trim()
+      Write-Output "Encrypting wordpress_db.$table ..."
+      & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+        -e "ALTER TABLE wordpress_db.``$table`` ENCRYPTION='Y';" 2>$null
+    }
+    Write-Output "wordpress_db encryption complete."
+  register: encrypt_wordpress
+  changed_when: true
+  failed_when: "'complete' not in encrypt_wordpress.stdout"
+  tags: [tde]
+
+- name: "[mysql-tde] Encrypt mediasrl_business tablespaces"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $tables = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      --skip-column-names -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='mediasrl_business' AND ENGINE='InnoDB';" 2>$null
+    foreach ($table in ($tables -split "`n" | Where-Object { $_ -match '\S' })) {
+      $table = $table.Trim()
+      Write-Output "Encrypting mediasrl_business.$table ..."
+      & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+        -e "ALTER TABLE mediasrl_business.``$table`` ENCRYPTION='Y';" 2>$null
+    }
+    Write-Output "mediasrl_business encryption complete."
+  register: encrypt_business
+  changed_when: true
+  failed_when: "'complete' not in encrypt_business.stdout"
+  tags: [tde]
+
+# ── Phase 5: Verify TDE ───────────────────────────────────────────────────────
+
+- name: "[mysql-tde] Capture encryption status AFTER enabling TDE"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      -e "SELECT NAME, ENCRYPTION FROM information_schema.INNODB_TABLESPACES WHERE NAME LIKE 'wordpress_db/%' OR NAME LIKE 'mediasrl_business/%' ORDER BY NAME;" 2>$null
+  register: tde_after
+  changed_when: false
+  failed_when: false
+  tags: [tde]
+
+- name: "[mysql-tde] Show encryption status AFTER TDE"
+  ansible.builtin.debug:
+    msg: |
+      AFTER TDE:
+      {{ tde_after.stdout | default('(no data)') }}
+
+      wordpress_db encryption: {{ encrypt_wordpress.stdout | default('') }}
+      mediasrl_business encryption: {{ encrypt_business.stdout | default('') }}
+  tags: [tde]

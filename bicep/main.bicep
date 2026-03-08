@@ -168,9 +168,9 @@ var tags = {
 
 // ----- Bootstrap Scripts (loaded at compile time, passed to Custom Script Extension) -----
 
-var jumphostBootstrapScript = loadTextContent('../scripts/bootstrap-jumphost.sh')
+var jumphostBootstrapScript = loadTextContent('../scripts/obsolete/bootstrap-jumphost.sh')
 var jumphostFinalizeScript = loadTextContent('../scripts/finalize-jumphost.sh')
-var windowsWinrmBootstrapScript = loadTextContent('../scripts/bootstrap-windows-winrm.ps1')
+var windowsWinrmBootstrapScript = loadTextContent('../scripts/3-bootstrap-windows-winrm.ps1')
 
 var galleryResourceGroupName = 'rg-mediasrl-packer-${location}'
 var galleryImageBase = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images'

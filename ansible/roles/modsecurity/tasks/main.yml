@@ -1,0 +1,223 @@
+---
+# ============================================================
+# Ansible Role: modsecurity
+# ModSecurity 3 + OWASP CRS for nginx on Ubuntu 22.04
+#
+# Strategy: nginx-module-modsecurity is NOT available as a free
+# package (nginx.org provides it only for nginx Plus).
+# We compile the modsecurity-nginx connector from source using
+# --with-compat against the installed nginx version.
+# ============================================================
+
+# ── Phase 1: Clean up nginx.org repo (not needed, causes confusion) ───────────
+
+- name: Remove nginx.org apt repo (module not available there for free)
+  ansible.builtin.file:
+    path: /etc/apt/sources.list.d/nginx.list
+    state: absent
+  tags: [modsecurity]
+
+- name: Remove nginx.org apt pin
+  ansible.builtin.file:
+    path: /etc/apt/preferences.d/99-nginx
+    state: absent
+  tags: [modsecurity]
+
+# ── Phase 2: Install build dependencies ──────────────────────────────────────
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+  tags: [modsecurity]
+
+- name: Install ModSecurity library and build dependencies
+  ansible.builtin.apt:
+    name:
+      - libmodsecurity3
+      - libmodsecurity-dev
+      - build-essential
+      - libpcre3-dev
+      - libssl-dev
+      - zlib1g-dev
+      - libgd-dev
+      - libxml2-dev
+      - git
+    state: present
+  tags: [modsecurity]
+
+# ── Phase 3: Get installed nginx version for source download ──────────────────
+
+- name: Get installed nginx version
+  ansible.builtin.shell: nginx -v 2>&1 | grep -oP '(?<=nginx/)[0-9.]+'
+  register: nginx_version
+  changed_when: false
+  tags: [modsecurity]
+
+- name: Show nginx version to compile against
+  ansible.builtin.debug:
+    msg: "Compiling ModSecurity connector for nginx {{ nginx_version.stdout }}"
+  tags: [modsecurity]
+
+# ── Phase 4: Clone ModSecurity-nginx connector ────────────────────────────────
+
+- name: Clone ModSecurity-nginx connector source
+  ansible.builtin.git:
+    repo: https://github.com/SpiderLabs/ModSecurity-nginx.git
+    dest: /tmp/ModSecurity-nginx
+    depth: 1
+    force: true
+  tags: [modsecurity]
+
+# ── Phase 5: Download matching nginx source ───────────────────────────────────
+
+- name: Download nginx source matching installed version
+  ansible.builtin.get_url:
+    url: "http://nginx.org/download/nginx-{{ nginx_version.stdout }}.tar.gz"
+    dest: "/tmp/nginx-{{ nginx_version.stdout }}.tar.gz"
+    timeout: 120
+  tags: [modsecurity]
+
+- name: Extract nginx source
+  ansible.builtin.unarchive:
+    src: "/tmp/nginx-{{ nginx_version.stdout }}.tar.gz"
+    dest: /tmp/
+    remote_src: true
+    creates: "/tmp/nginx-{{ nginx_version.stdout }}/configure"
+  tags: [modsecurity]
+
+# ── Phase 6: Compile ModSecurity dynamic module ───────────────────────────────
+# --with-compat: builds module compatible with installed nginx ABI
+# No need to pass all original configure args — --with-compat handles ABI matching
+
+- name: Compile ModSecurity nginx module
+  ansible.builtin.shell: |
+    cd /tmp/nginx-{{ nginx_version.stdout }}
+    ./configure --with-compat --add-dynamic-module=/tmp/ModSecurity-nginx
+    make modules
+  args:
+    creates: "/tmp/nginx-{{ nginx_version.stdout }}/objs/ngx_http_modsecurity_module.so"
+  register: compile_result
+  tags: [modsecurity]
+
+- name: Install compiled ModSecurity module to nginx modules dir
+  ansible.builtin.copy:
+    src: "/tmp/nginx-{{ nginx_version.stdout }}/objs/ngx_http_modsecurity_module.so"
+    dest: /usr/lib/nginx/modules/ngx_http_modsecurity_module.so
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart nginx
+  tags: [modsecurity]
+
+# ── Phase 7: (nginx.conf managed by nginx role) ───────────────────────────────
+# nginx role auto-detects the .so and adds load_module via its own template.
+# The nginx role runs after this role in 5-harden-security.yml (modsecurity play).
+
+# ── Phase 8: ModSecurity config directory ────────────────────────────────────
+
+- name: Create ModSecurity config directory
+  ansible.builtin.file:
+    path: "{{ modsecurity_conf_dir }}"
+    state: directory
+    owner: root
+    group: www-data
+    mode: '0750'
+  tags: [modsecurity]
+
+- name: Create ModSecurity tmp/data directory
+  ansible.builtin.file:
+    path: /tmp/modsecurity
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0750'
+  tags: [modsecurity]
+
+# ── Phase 9: Deploy ModSecurity configuration ─────────────────────────────────
+
+- name: Deploy ModSecurity main configuration
+  ansible.builtin.template:
+    src: modsecurity.conf.j2
+    dest: "{{ modsecurity_conf_dir }}/modsecurity.conf"
+    owner: root
+    group: www-data
+    mode: '0640'
+    backup: true
+  notify: reload nginx
+  tags: [modsecurity]
+
+# ── Phase 10: OWASP Core Rule Set ────────────────────────────────────────────
+# Remove existing CRS dir to ensure clean version switch.
+# Shallow clones (depth=1) cannot switch to an older tag without re-cloning.
+
+- name: Remove existing CRS directory (ensures clean re-clone on version change)
+  ansible.builtin.file:
+    path: "{{ modsecurity_crs_dir }}"
+    state: absent
+  tags: [modsecurity]
+
+- name: Clone OWASP CRS repository
+  ansible.builtin.git:
+    repo: "{{ modsecurity_crs_git_url }}"
+    dest: "{{ modsecurity_crs_dir }}"
+    version: "{{ modsecurity_crs_version }}"
+    depth: 1
+    force: true
+  tags: [modsecurity]
+
+- name: Copy CRS setup config from example
+  ansible.builtin.copy:
+    src: "{{ modsecurity_crs_dir }}/crs-setup.conf.example"
+    dest: "{{ modsecurity_crs_dir }}/crs-setup.conf"
+    remote_src: true
+    force: false
+    owner: root
+    group: www-data
+    mode: '0640'
+  tags: [modsecurity]
+
+# ── Phase 11: WordPress false-positive exclusions ─────────────────────────────
+
+- name: Deploy WordPress CRS exclusion rules
+  ansible.builtin.copy:
+    dest: "{{ modsecurity_crs_dir }}/rules/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf"
+    owner: root
+    group: www-data
+    mode: '0640'
+    content: |
+      # ModSecurity CRS Exclusions for WordPress — prevents false positives
+      SecRule REQUEST_URI "@beginsWith /wp-login.php" \
+        "id:9001,phase:1,pass,nolog,ctl:ruleRemoveById=941100-941999"
+      SecRule REQUEST_URI "@beginsWith /wp-admin" \
+        "id:9002,phase:1,pass,nolog,ctl:ruleRemoveByTag=attack-sqli,ctl:ruleRemoveById=920230"
+      SecRule REQUEST_URI "@beginsWith /wp-json/" \
+        "id:9003,phase:1,pass,nolog,ctl:ruleRemoveById=920230"
+  when: modsecurity_wordpress_exclusions | bool
+  notify: reload nginx
+  tags: [modsecurity]
+
+# ── Phase 12: nginx include for ModSecurity rules ─────────────────────────────
+
+- name: Deploy nginx ModSecurity include file (main.conf)
+  ansible.builtin.template:
+    src: modsecurity-nginx.conf.j2
+    dest: "{{ modsecurity_conf_dir }}/main.conf"
+    owner: root
+    group: www-data
+    mode: '0640'
+  notify: reload nginx
+  tags: [modsecurity]
+
+# nginx.conf + mediasrl.conf are managed by the nginx role (runs after this role).
+# Validation and reload also happen via nginx role + post_tasks in the playbook.
+
+- name: Show ModSecurity activation status
+  ansible.builtin.debug:
+    msg: |
+      ModSecurity WAF active on nginx {{ nginx_version.stdout }}
+      Module:    /usr/lib/nginx/modules/ngx_http_modsecurity_module.so
+      Config:    {{ modsecurity_conf_dir }}/modsecurity.conf
+      OWASP CRS: {{ modsecurity_crs_dir }}
+      Audit log: {{ modsecurity_audit_log }}
+  tags: [modsecurity]

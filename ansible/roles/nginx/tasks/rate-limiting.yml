@@ -1,0 +1,22 @@
+---
+# ============================================================
+# nginx Rate Limiting tasks
+# Deploys zone definitions and updates site config
+# Called from main.yml when nginx_rate_limiting_enabled=true
+# ============================================================
+
+- name: Deploy rate limiting zone definitions
+  ansible.builtin.template:
+    src: rate-limiting.conf.j2
+    dest: /etc/nginx/conf.d/rate-limiting.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+  tags: [nginx, rate_limiting]
+
+- name: Validate nginx config after rate limiting zones
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  register: nginx_validate_rl
+  tags: [nginx, rate_limiting]

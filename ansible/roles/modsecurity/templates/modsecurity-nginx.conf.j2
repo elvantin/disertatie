@@ -1,0 +1,8 @@
+# ============================================================
+# ModSecurity nginx include — main.conf
+# /etc/nginx/modsecurity/main.conf
+# Managed by Ansible (modsecurity role)
+# ============================================================
+
+# Load ModSecurity configuration and OWASP CRS
+Include {{ modsecurity_conf_dir }}/modsecurity.conf

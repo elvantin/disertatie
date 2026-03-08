@@ -27,8 +27,8 @@
 
 - name: Verify vm-web-01 — Nginx Reverse Proxy
   hosts: webserver
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   tags: [verify, web]
 
   tasks:
@@ -46,7 +46,7 @@
         timeout: 5
       register: web_port_80
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[web] Check port 443 listening"
       ansible.builtin.wait_for:
@@ -55,7 +55,7 @@
         timeout: 5
       register: web_port_443
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[web] Check HTTP endpoint responds (200 or 301)"
       ansible.builtin.uri:
@@ -65,7 +65,7 @@
         timeout: 10
       register: web_http_check
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[web] Check HTTPS endpoint responds (200)"
       ansible.builtin.uri:
@@ -75,7 +75,7 @@
         timeout: 10
       register: web_https_check
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[web] Check SSL certificate on disk"
       ansible.builtin.stat:
@@ -132,8 +132,8 @@
 
 - name: Verify vm-app-01 — Backend API Server
   hosts: appserver
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   tags: [verify, app]
 
   tasks:
@@ -151,7 +151,7 @@
         timeout: 5
       register: app_port_8080
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[app] Check API root endpoint (/api/)"
       ansible.builtin.uri:
@@ -160,7 +160,7 @@
         timeout: 10
       register: app_api_root
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[app] Check individual API endpoints"
       ansible.builtin.uri:
@@ -175,7 +175,7 @@
         - stats
       register: app_api_endpoints
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[app] Check API JSON files on disk"
       ansible.builtin.stat:
@@ -230,8 +230,8 @@
 
 - name: Verify vm-cms-01 — WordPress CMS + Postfix
   hosts: cmsserver
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   tags: [verify, cms]
 
   tasks:
@@ -261,7 +261,7 @@
         timeout: 5
       register: cms_port_80
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[cms] Check port 25 listening (SMTP)"
       ansible.builtin.wait_for:
@@ -270,7 +270,7 @@
         timeout: 5
       register: cms_port_25
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[cms] Check WordPress HTTP response"
       ansible.builtin.uri:
@@ -280,7 +280,7 @@
         timeout: 15
       register: cms_wp_http
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[cms] Check wp-config.php exists"
       ansible.builtin.stat:
@@ -307,7 +307,7 @@
 
     - name: "[cms] Check PHP-FPM socket exists"
       ansible.builtin.stat:
-        path: /run/php/php8.1-fpm.sock
+        path: /run/php/wordpress.sock
       register: cms_phpfpm_sock
 
     - name: "[cms] Check nginx config syntax"
@@ -352,7 +352,7 @@
 
 - name: Verify vm-db-01 — MySQL Community Server
   hosts: database
-  gather_facts: yes
+  gather_facts: true
   tags: [verify, database]
 
   vars:
@@ -362,6 +362,9 @@
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
     ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
+    mysql_install_dir: "C:\\Program Files\\MySQL\\MySQL Server 8.0"
+    mysql_root_password: "Str0ng_MySQL_R00t_2026!"
+    mysql_backup_dir: "C:\\MySQL\\Backups"
 
   tasks:
 
@@ -378,12 +381,13 @@
         timeout: 10
       register: db_port_3306
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[db] Check wordpress_db database exists"
       ansible.windows.win_shell: |
-        $result = & 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' `
-          -u root -e "SHOW DATABASES LIKE 'wordpress_db';" 2>&1
+        $result = & '{{ mysql_install_dir }}\bin\mysql.exe' `
+          -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+          -e "SHOW DATABASES LIKE 'wordpress_db';" 2>&1
         if ($result -match 'wordpress_db') { exit 0 } else { exit 1 }
       register: db_wordpress_db
       changed_when: false
@@ -391,8 +395,9 @@
 
     - name: "[db] Check mediasrl_business database exists"
       ansible.windows.win_shell: |
-        $result = & 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' `
-          -u root -e "SHOW DATABASES LIKE 'mediasrl_business';" 2>&1
+        $result = & '{{ mysql_install_dir }}\bin\mysql.exe' `
+          -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+          -e "SHOW DATABASES LIKE 'mediasrl_business';" 2>&1
         if ($result -match 'mediasrl_business') { exit 0 } else { exit 1 }
       register: db_business_db
       changed_when: false
@@ -400,8 +405,9 @@
 
     - name: "[db] Check wp_user exists"
       ansible.windows.win_shell: |
-        $result = & 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' `
-          -u root -e "SELECT User FROM mysql.user WHERE User='wp_user';" 2>&1
+        $result = & '{{ mysql_install_dir }}\bin\mysql.exe' `
+          -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+          -e "SELECT User FROM mysql.user WHERE User='wp_user';" 2>&1
         if ($result -match 'wp_user') { exit 0 } else { exit 1 }
       register: db_wp_user
       changed_when: false
@@ -409,8 +415,9 @@
 
     - name: "[db] Check api_user exists"
       ansible.windows.win_shell: |
-        $result = & 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe' `
-          -u root -e "SELECT User FROM mysql.user WHERE User='api_user';" 2>&1
+        $result = & '{{ mysql_install_dir }}\bin\mysql.exe' `
+          -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+          -e "SELECT User FROM mysql.user WHERE User='api_user';" 2>&1
         if ($result -match 'api_user') { exit 0 } else { exit 1 }
       register: db_api_user
       changed_when: false
@@ -418,13 +425,13 @@
 
     - name: "[db] Check backup directory exists"
       ansible.windows.win_stat:
-        path: 'C:\Backup\MySQL'
+        path: '{{ mysql_backup_dir }}'
       register: db_backup_dir
       failed_when: false
 
     - name: "[db] Check Windows Firewall rule for MySQL"
       ansible.windows.win_shell: |
-        $rule = Get-NetFirewallRule -DisplayName 'MySQL Server' -ErrorAction SilentlyContinue
+        $rule = Get-NetFirewallRule -DisplayName 'MySQL Server (TCP 3306)' -ErrorAction SilentlyContinue
         if ($rule) { exit 0 } else { exit 1 }
       register: db_firewall_rule
       changed_when: false
@@ -462,7 +469,7 @@
 
 - name: Verify vm-fs-01 — Windows File Server (SMB)
   hosts: fileserver
-  gather_facts: yes
+  gather_facts: true
   tags: [verify, fileserver]
 
   vars:
@@ -551,7 +558,7 @@
         timeout: 10
       register: fs_port_445
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[fs] Compile verification results"
       ansible.builtin.set_fact:
@@ -586,8 +593,8 @@
 
 - name: Verify vm-jmp-01 — Jumphost
   hosts: jumphost
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   tags: [verify, jumphost]
 
   tasks:
@@ -605,7 +612,7 @@
         timeout: 5
       register: jmp_port_3389
       failed_when: false
-      ignore_errors: yes
+      ignore_errors: true
 
     - name: "[jmp] Check MySQL Workbench connections.xml exists"
       ansible.builtin.stat:
@@ -641,12 +648,14 @@
       register: jmp_ssh_web
       changed_when: false
       failed_when: false
+      become: false
 
     - name: "[jmp] Check SSH connectivity to vm-cms-01"
       ansible.builtin.command: "ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes azureadmin@{{ hostvars['vm-cms-01']['ansible_host'] }} echo ok"
       register: jmp_ssh_cms
       changed_when: false
       failed_when: false
+      become: false
 
     - name: "[jmp] Compile verification results"
       ansible.builtin.set_fact:
@@ -681,7 +690,7 @@
 - name: Generate Final Verification Report
   hosts: localhost
   connection: local
-  gather_facts: yes
+  gather_facts: true
   tags: [verify, report, always]
 
   tasks:

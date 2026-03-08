@@ -47,9 +47,9 @@ nginx_ssl_protocols: "TLSv1.2 TLSv1.3"
 nginx_ssl_ciphers: "ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
 
 # HSTS (HTTP Strict Transport Security)
-# Set to 0 when using self-signed certificates (avoids Chrome blocking the site).
-# Set to 31536000 (1 year) only after a valid Let's Encrypt certificate is in place.
-nginx_hsts_max_age: 0
+# 0 = disabled (use only with self-signed certs to avoid Chrome blocking the site).
+# 31536000 = 1 year (use after valid Let's Encrypt certificate is confirmed active).
+nginx_hsts_max_age: 31536000
 
 # Security headers
 nginx_security_headers:
@@ -57,6 +57,15 @@ nginx_security_headers:
   - "X-Content-Type-Options \"nosniff\" always"
   - "X-XSS-Protection \"1; mode=block\" always"
   - "Referrer-Policy \"no-referrer-when-downgrade\" always"
+
+# ── Rate Limiting ──────────────────────────────────────────────────────────────
+# Disabled by default. Enabled by 5-harden-security.yml (--tags rate_limiting)
+nginx_rate_limiting_enabled: false
+
+# ── ModSecurity WAF ────────────────────────────────────────────────────────────
+# Disabled by default. Set to true by modsecurity role after module is compiled.
+nginx_modsecurity_enabled: false
+nginx_modsecurity_conf: /etc/nginx/modsecurity/main.conf
 
 # Company information
 company_name: "SC MEDIA SRL"

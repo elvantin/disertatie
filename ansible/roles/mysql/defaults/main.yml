@@ -37,5 +37,9 @@ mysql_business_db: "mediasrl_business"
 mysql_api_user: "api_user"
 mysql_api_password: "Api_P@ssw0rd_2026!"
 
+# Remote management access
+# Allow root MySQL login from jumphost (management subnet 10.10.12.0/24)
+mysql_jumphost_subnet: "10.10.12.%"
+
 # Backup settings
 mysql_backup_retention_days: 7

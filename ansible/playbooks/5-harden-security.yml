@@ -1,0 +1,214 @@
+---
+# ============================================================
+# Ansible Playbook: 5-harden-security.yml
+# Security hardening for SC MEDIA SRL infrastructure
+#
+# Hardenings applied:
+#   1. nginx Rate Limiting      (vm-web-01)        --tags rate_limiting
+#   2. Fail2ban                 (all Linux VMs)    --tags fail2ban
+#   3. SSH Hardening            (all Linux VMs)    --tags ssh_hardening
+#   4. ModSecurity WAF          (vm-web-01)        --tags modsecurity
+#   5. MySQL Hardening + TDE    (vm-db-01)         --tags mysql_hardening
+#
+# Usage (run from ~/ansible/ on jumphost):
+#   # All hardenings at once:
+#   ansible-playbook playbooks/5-harden-security.yml
+#
+#   # Single hardening:
+#   ansible-playbook playbooks/5-harden-security.yml --tags rate_limiting
+#   ansible-playbook playbooks/5-harden-security.yml --tags fail2ban
+#   ansible-playbook playbooks/5-harden-security.yml --tags ssh_hardening
+#   ansible-playbook playbooks/5-harden-security.yml --tags modsecurity
+#   ansible-playbook playbooks/5-harden-security.yml --tags mysql_hardening
+#
+# Demo scripts (before/after with diff):
+#   ./scripts/demo-1-rate-limiting.sh
+#   ./scripts/demo-2-fail2ban.sh
+#   ./scripts/demo-3-ssh-hardening.sh
+#   ./scripts/demo-4-modsecurity.sh
+#   ./scripts/demo-5-mysql-hardening.sh
+#   ./scripts/demo-all-hardenings.sh
+# ============================================================
+
+# =============================================================================
+# HARDENING 1: nginx Rate Limiting (vm-web-01)
+# Protects /wp-login.php, /wp-admin/, /xmlrpc.php and /api/
+# =============================================================================
+
+- name: "Hardening 1 — nginx Rate Limiting"
+  hosts: webserver
+  become: true
+  gather_facts: true
+  tags: [security, rate_limiting]
+
+  vars:
+    nginx_rate_limiting_enabled: true
+
+  roles:
+    - role: nginx
+      tags: [nginx, rate_limiting]
+
+  post_tasks:
+    - name: "Validate nginx config after rate limiting"
+      ansible.builtin.command: nginx -t
+      changed_when: false
+      register: nginx_validate
+
+    - name: "Reload nginx"
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+      when: nginx_validate.rc == 0
+
+    - name: "Rate limiting summary"
+      ansible.builtin.debug:
+        msg: |
+          [DONE] nginx Rate Limiting applied:
+            - /wp-login.php  → 5 req/min, burst=3
+            - /wp-admin/     → 10 req/min, burst=5
+            - /xmlrpc.php    → 2 req/min, burst=0 (no burst — blocks scanners)
+            - /api/          → 60 req/min, burst=10
+          HTTP 429 Too Many Requests returned when limit exceeded.
+
+# =============================================================================
+# HARDENING 2: Fail2ban (all Linux VMs)
+# Auto-bans IPs after repeated failed SSH and nginx auth attempts
+# =============================================================================
+
+- name: "Hardening 2 — Fail2ban"
+  hosts: webserver:appserver:cmsserver:jumphost
+  become: true
+  gather_facts: true
+  tags: [security, fail2ban]
+
+  roles:
+    - role: fail2ban
+      tags: [fail2ban]
+
+  post_tasks:
+    - name: "Fail2ban summary"
+      ansible.builtin.debug:
+        msg: |
+          [DONE] Fail2ban deployed on {{ inventory_hostname }}:
+            - SSH jail: max 5 attempts, ban 1 hour
+            - nginx-http-auth jail: max 5 attempts
+            - nginx-req-limit jail: auto-ban on 429 flood
+          Commands:
+            fail2ban-client status
+            fail2ban-client status sshd
+            fail2ban-client set sshd unbanip <IP>
+
+# =============================================================================
+# HARDENING 3: SSH Hardening (all Linux VMs)
+# Strong ciphers, MACs, KexAlgorithms — removes legacy/weak algorithms
+# =============================================================================
+
+- name: "Hardening 3 — SSH Hardening"
+  hosts: webserver:appserver:cmsserver
+  become: true
+  gather_facts: true
+  tags: [security, ssh_hardening]
+  # NOTE: jumphost excluded intentionally — it is the primary access point.
+  # Modifying SSH on the jumphost risks losing all remote access.
+
+  roles:
+    - role: ssh-hardening
+      tags: [ssh_hardening]
+
+  post_tasks:
+    - name: "SSH hardening summary"
+      ansible.builtin.debug:
+        msg: |
+          [DONE] SSH hardened on {{ inventory_hostname }}:
+            - Only curve25519 + ECDH key exchange
+            - Only AES-256-GCM + ChaCha20 ciphers
+            - Only ETM MACs (SHA-256/512)
+            - MaxAuthTries: 3, LoginGraceTime: 30s
+            - PermitRootLogin: no, X11Forwarding: no
+          Verify: ssh-audit {{ ansible_host }}
+
+# =============================================================================
+# HARDENING 4: ModSecurity WAF (vm-web-01)
+# OWASP Core Rule Set — blocks SQLi, XSS, path traversal, etc.
+# =============================================================================
+
+- name: "Hardening 4 — ModSecurity WAF"
+  hosts: webserver
+  become: true
+  gather_facts: true
+  tags: [security, modsecurity, waf]
+
+  vars:
+    nginx_modsecurity_enabled: true
+
+  roles:
+    - role: modsecurity
+      tags: [modsecurity]
+    # nginx role runs AFTER modsecurity to deploy nginx.conf + mediasrl.conf
+    # with load_module and modsecurity on; directives via its own templates.
+    - role: nginx
+      tags: [nginx, modsecurity]
+
+  post_tasks:
+    - name: "Validate nginx config after ModSecurity"
+      ansible.builtin.command: nginx -t
+      changed_when: false
+
+    - name: "Reload nginx with ModSecurity"
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+
+    - name: "ModSecurity summary"
+      ansible.builtin.debug:
+        msg: |
+          [DONE] ModSecurity WAF deployed:
+            - Mode: Enforcement (SecRuleEngine On)
+            - OWASP CRS active (SQLi, XSS, LFI, RFI, RCE detection)
+            - Audit log: /var/log/nginx/modsec_audit.log
+          Test: curl "https://{{ hostvars[inventory_hostname]['ansible_host'] }}/?id=1+UNION+SELECT+1--"
+          Expected: 403 Forbidden
+
+# =============================================================================
+# HARDENING 5: MySQL Hardening + TDE (vm-db-01)
+# Removes anonymous users, restricts root, enables tablespace encryption
+# =============================================================================
+
+- name: "Hardening 5 — MySQL Hardening + TDE"
+  hosts: database
+  gather_facts: true
+  tags: [security, mysql_hardening, tde]
+
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: ntlm
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become: false
+    ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
+    mysql_root_password: "Str0ng_MySQL_R00t_2026!"
+    mysql_install_dir: "C:\\Program Files\\MySQL\\MySQL Server 8.0"
+    mysql_data_dir: "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data"
+    mysql_jumphost_subnet: "10.10.12.%"
+
+  tasks:
+    - name: "Include MySQL general hardening tasks"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/mysql/tasks/hardening.yml"
+      tags: [mysql_hardening]
+
+    - name: "Include MySQL TDE tasks"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/mysql/tasks/tde.yml"
+      tags: [tde]
+
+    - name: "MySQL hardening summary"
+      ansible.builtin.debug:
+        msg: |
+          [DONE] MySQL Hardening + TDE applied:
+            - Anonymous users removed
+            - Test database removed
+            - Root login restricted to localhost only
+            - Password policy: complexity + 90-day expiry
+            - local_infile=OFF, require_secure_transport=ON
+            - TDE: InnoDB tablespace encryption enabled (keyring_file)
+            - wordpress_db and mediasrl_business tablespaces encrypted
+          Verify: SELECT NAME, ENCRYPTION FROM information_schema.INNODB_TABLESPACES;

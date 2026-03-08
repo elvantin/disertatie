@@ -69,6 +69,21 @@
 # Phase 3: Initial HTTP-only configuration (needed for certbot)
 # ============================================================
 
+# Auto-detect if ModSecurity module was compiled and installed.
+# This ensures nginx templates stay consistent when the nginx role re-runs
+# after the modsecurity role has already deployed the module.
+- name: Check if ModSecurity nginx module is installed
+  stat:
+    path: /usr/lib/nginx/modules/ngx_http_modsecurity_module.so
+  register: _modsecurity_module_stat
+  tags: [nginx, config, modsecurity]
+
+- name: Auto-enable ModSecurity in nginx templates if module is present
+  set_fact:
+    nginx_modsecurity_enabled: true
+  when: _modsecurity_module_stat.stat.exists
+  tags: [nginx, config, modsecurity]
+
 - name: Configure nginx main configuration
   template:
     src: nginx.conf.j2
@@ -76,10 +91,12 @@
     owner: root
     group: root
     mode: '0644'
-    validate: 'nginx -t -c %s'
     backup: yes
   notify: restart nginx
   tags: [nginx, config]
+  # NOTE: validate removed — inline nginx -t validates a temp file against LIVE
+  # site configs (modsecurity, CRS), causing false failures when external modules
+  # are active. The explicit "Validate nginx configuration" task below is sufficient.
 
 - name: Check if SSL certificate already exists
   stat:
@@ -124,6 +141,24 @@
     state: link
   notify: reload nginx
   tags: [nginx, vhost]
+
+# Deploy rate limiting zones BEFORE validate (site config references these zones)
+- name: Deploy rate limiting zone definitions
+  template:
+    src: rate-limiting.conf.j2
+    dest: /etc/nginx/conf.d/rate-limiting.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: nginx_rate_limiting_enabled | default(false)
+  tags: [nginx, config, rate_limiting]
+
+- name: Remove rate limiting zone definitions (when disabled)
+  file:
+    path: /etc/nginx/conf.d/rate-limiting.conf
+    state: absent
+  when: not (nginx_rate_limiting_enabled | default(false))
+  tags: [nginx, config, rate_limiting]
 
 - name: Validate nginx configuration
   command: nginx -t

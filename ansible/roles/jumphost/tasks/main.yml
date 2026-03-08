@@ -19,11 +19,22 @@
 # Firefox — install + pre-configured bookmarks via policy
 # ============================================================
 
+# Wait for unattended-upgrades / apt lock to be released before installing
+- name: Wait for apt lock to be released
+  ansible.builtin.shell: |
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+      echo "Waiting for apt lock..."
+      sleep 5
+    done
+  changed_when: false
+  timeout: 300
+  tags: [jumphost, firefox]
+
 - name: Install Firefox
   ansible.builtin.apt:
     name: firefox
     state: present
-    update_cache: yes
+    update_cache: false
   tags: [jumphost, firefox]
 
 - name: Create Firefox system policy directory
