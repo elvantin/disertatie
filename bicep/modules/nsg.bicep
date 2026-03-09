@@ -195,6 +195,20 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
         }
       }
       {
+        name: 'Allow-SMB-Internal'
+        properties: {
+          description: 'Allow SMB from VNet CIDR 10.10.0.0/20 (file server access from all subnets)'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '445'
+          sourceAddressPrefix: '10.10.0.0/20'
+          destinationAddressPrefix: '10.10.10.0/24'
+          access: 'Allow'
+          priority: 225
+          direction: 'Inbound'
+        }
+      }
+      {
         name: 'Deny-All-Inbound'
         properties: {
           description: 'Deny all other inbound traffic'
@@ -213,8 +227,7 @@ resource nsgProd 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
 }
 
 // ----- NSG: Development Subnet (snet-dev) -----
-// Reguli similare cu nsg-prod, adaptate pentru snet-dev (10.10.11.0/24).
-// Nu are acces HTTPS/HTTP extern (dev nu e public facing).
+// Reguli identice cu nsg-prod, adaptate pentru snet-dev (10.10.11.0/24).
 
 resource nsgDev 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
   name: 'nsg-dev'
@@ -261,6 +274,34 @@ resource nsgDev 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
           destinationAddressPrefix: '*'
           access: 'Allow'
           priority: 115
+          direction: 'Inbound'
+        }
+      }
+      {
+        name: 'Allow-HTTPS-To-Web'
+        properties: {
+          description: 'Allow HTTPS from any source to web server in dev subnet'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '443'
+          sourceAddressPrefix: '*'
+          destinationAddressPrefix: '10.10.11.0/24'
+          access: 'Allow'
+          priority: 120
+          direction: 'Inbound'
+        }
+      }
+      {
+        name: 'Allow-HTTP-To-Web'
+        properties: {
+          description: 'Allow HTTP from VNet only (internal traffic + HTTP->HTTPS redirect)'
+          protocol: 'Tcp'
+          sourcePortRange: '*'
+          destinationPortRange: '80'
+          sourceAddressPrefix: '10.10.0.0/20'
+          destinationAddressPrefix: '10.10.11.0/24'
+          access: 'Allow'
+          priority: 121
           direction: 'Inbound'
         }
       }
@@ -312,11 +353,11 @@ resource nsgDev 'Microsoft.Network/networkSecurityGroups@2023-09-01' = {
       {
         name: 'Allow-SMB-Internal'
         properties: {
-          description: 'Allow SMB traffic within dev subnet (file server)'
+          description: 'Allow SMB from VNet CIDR 10.10.0.0/20 (file server access from all subnets)'
           protocol: 'Tcp'
           sourcePortRange: '*'
           destinationPortRange: '445'
-          sourceAddressPrefix: '10.10.11.0/24'
+          sourceAddressPrefix: '10.10.0.0/20'
           destinationAddressPrefix: '10.10.11.0/24'
           access: 'Allow'
           priority: 225

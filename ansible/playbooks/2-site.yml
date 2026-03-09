@@ -296,14 +296,11 @@
   gather_facts: false
   tags: [ssl, certbot]
 
-  vars:
-    website_domain: "mediasrl.swedencentral.cloudapp.azure.com"
-
   tasks:
     # certbot certificates is the authoritative source: reads from /etc/letsencrypt/renewal/
     # and shows (VALID: X days) only for real LE certs — unaffected by live/ symlink state.
     - name: Query certbot for certificate status
-      ansible.builtin.command: certbot certificates --domain {{ website_domain }}
+      ansible.builtin.command: certbot certificates
       register: certbot_certs
       changed_when: false
       failed_when: false
@@ -372,9 +369,6 @@
   gather_facts: true
   become: false
 
-  vars:
-    env_name: "productie"
-
   tasks:
     - name: Display final status
       debug:
@@ -383,7 +377,7 @@
           ANSIBLE DEPLOYMENT COMPLETED!
           ============================================================
           Infrastructure:  SC MEDIA SRL
-          Environment:     {{ env_name }}
+          Domain:          {{ hostvars['vm-web-01']['website_domain'] | default('mediasrl.swedencentral.cloudapp.azure.com') }}
           Date/Time:       {{ ansible_date_time.date }}  {{ ansible_date_time.time }}
 
           VMs Deployed:
@@ -394,8 +388,8 @@
           {% endfor %}
 
           Access Points (via Azure public IP / jumphost):
-            Website:    https://mediasrl.swedencentral.cloudapp.azure.com
-            API:        https://mediasrl.swedencentral.cloudapp.azure.com/api/
+            Website:    https://{{ hostvars['vm-web-01']['website_domain'] | default('mediasrl.swedencentral.cloudapp.azure.com') }}
+            API:        https://{{ hostvars['vm-web-01']['website_domain'] | default('mediasrl.swedencentral.cloudapp.azure.com') }}/api/
             WordPress:  http://{{ hostvars['vm-cms-01']['ansible_host'] | default('vm-cms-01') }}  (via jumphost)
             Jumphost:   ssh azureadmin@{{ hostvars['vm-jmp-01']['ansible_host'] | default('vm-jmp-01') }}
 

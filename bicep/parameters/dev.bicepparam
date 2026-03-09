@@ -69,7 +69,7 @@ param vms = [
   {
     name: 'vm-jmp-01'
     osType: 'Linux'
-    size: 'Standard_B4as_v2'
+    size: 'Standard_B4ls_v2'
     subnet: 'mgmt'                // snet-mgmt (10.10.12.0/24) — jumphost, nsg-mgmt
     createPublicIp: false
     imageDefinition: 'jumphost'

@@ -102,7 +102,11 @@ if ($LASTEXITCODE -ne 0) {
 # STEP 2: Permisiuni + activeaza inventory + verificare
 # =============================================================================
 
+# Compute deploy domain as a PowerShell variable so it expands correctly inside the @"..."@ here-string
+$DeployDomain = if ($Environment -eq 'dev') { 'mediasrl-dev.swedencentral.cloudapp.azure.com' } else { 'mediasrl.swedencentral.cloudapp.azure.com' }
+
 Write-Host "[2/2] Permisiuni, activare inventory ($SourceInventory -> $ActiveInventory), verificare..."
+Write-Host "      Domain: $DeployDomain"
 
 ssh @SSHOpts $SSHTarget @"
 echo '========================================='
@@ -131,6 +135,19 @@ if [ "$SourceInventory" != "$ActiveInventory" ]; then
 else
     echo '  Nicio copiere necesara ($SourceInventory este deja $ActiveInventory)'
 fi
+
+echo ''
+echo '--- Scriere fisier environment (.deploy_env) ---'
+printf 'DEPLOY_ENV=$Environment\nDEPLOY_DOMAIN=$DeployDomain\n' > ${RemotePath}/.deploy_env
+chmod 644 ${RemotePath}/.deploy_env
+echo '  Scris: ${RemotePath}/.deploy_env'
+echo '  DEPLOY_ENV=$Environment  DEPLOY_DOMAIN=$DeployDomain'
+
+echo ''
+echo '--- Configurare website_domain in group_vars/linux.yml ---'
+sed -i 's|^website_domain:.*|website_domain: "$DeployDomain"|' ${RemotePath}/group_vars/linux.yml
+echo -n '  Verificare: '
+grep '^website_domain:' ${RemotePath}/group_vars/linux.yml || echo '  WARN: linia website_domain nu a fost gasita in group_vars/linux.yml!'
 
 echo ''
 echo '--- Inventory activ in ansible.cfg ---'

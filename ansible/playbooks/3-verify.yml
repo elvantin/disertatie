@@ -79,7 +79,7 @@
 
     - name: "[web] Check SSL certificate on disk"
       ansible.builtin.stat:
-        path: "/etc/letsencrypt/live/mediasrl.swedencentral.cloudapp.azure.com/fullchain.pem"
+        path: "/etc/letsencrypt/live/{{ website_domain | default('mediasrl.swedencentral.cloudapp.azure.com') }}/fullchain.pem"
       register: web_ssl_cert
 
     - name: "[web] Check nginx config syntax"

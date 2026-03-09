@@ -46,6 +46,10 @@ nginx_ssl_certificate_key: "{{ certbot_key_path }}"
 nginx_ssl_protocols: "TLSv1.2 TLSv1.3"
 nginx_ssl_ciphers: "ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384"
 
+# OCSP Stapling — requires a valid Let's Encrypt cert with full chain.
+# Set to false for self-signed certs (dev) to suppress nginx [warn] on startup.
+nginx_ssl_stapling_enabled: false
+
 # HSTS (HTTP Strict Transport Security)
 # 0 = disabled (use only with self-signed certs to avoid Chrome blocking the site).
 # 31536000 = 1 year (use after valid Let's Encrypt certificate is confirmed active).

@@ -6,6 +6,34 @@
 # ============================================================
 
 # ============================================================
+# SSH — ensure password authentication is enabled
+# common role excludes jumphost, so SSH config must be set here.
+# Azure cloud-init (50-cloud-init.conf) may set PasswordAuthentication no —
+# we override it explicitly so users can connect with password from Windows.
+# ============================================================
+
+- name: Ensure PasswordAuthentication yes in sshd_config (main file)
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PasswordAuthentication'
+    line: 'PasswordAuthentication yes'
+    state: present
+    validate: '/usr/sbin/sshd -t -f %s'
+  notify: restart sshd
+  tags: [jumphost, ssh]
+
+- name: Disable PasswordAuthentication override from cloud-init drop-in (if present)
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+    regexp: '^#?PasswordAuthentication'
+    line: 'PasswordAuthentication yes'
+    state: present
+    create: false
+  notify: restart sshd
+  failed_when: false
+  tags: [jumphost, ssh]
+
+# ============================================================
 # Timezone — Europe/Bucharest
 # (common role excludes jumphost, so we set it here directly)
 # ============================================================
@@ -16,26 +44,9 @@
   tags: [jumphost, timezone]
 
 # ============================================================
-# Firefox — install + pre-configured bookmarks via policy
+# Firefox — pre-configured bookmarks via policy
+# Firefox is pre-installed in the Packer image; only deploy policy here.
 # ============================================================
-
-# Wait for unattended-upgrades / apt lock to be released before installing
-- name: Wait for apt lock to be released
-  ansible.builtin.shell: |
-    while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
-      echo "Waiting for apt lock..."
-      sleep 5
-    done
-  changed_when: false
-  timeout: 300
-  tags: [jumphost, firefox]
-
-- name: Install Firefox
-  ansible.builtin.apt:
-    name: firefox
-    state: present
-    update_cache: false
-  tags: [jumphost, firefox]
 
 - name: Create Firefox system policy directory
   ansible.builtin.file:

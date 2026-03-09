@@ -12,50 +12,86 @@
 #   cd ~/ansible
 #   ./scripts/certbot-letsencrypt.sh
 #
+# Supported environments:
+#   prod: domain = mediasrl.swedencentral.cloudapp.azure.com, NSG = nsg-prod
+#   dev:  domain = mediasrl-dev.swedencentral.cloudapp.azure.com, NSG = nsg-dev
+#   Domain is read from ~/ansible/.deploy_env (written by 4-deploy-ansible-to-jumphost.ps1).
+#
 # Prerequisites on jumphost:
 #   - az cli authenticated (az login --identity)
 #   - ansible configured (inventory/azure_rm.yml reachable)
-#   - MSI needs Network Contributor role on nsg-prod
+#   - MSI needs Network Contributor role on nsg-prod / nsg-dev (per environment)
 #     Grant: az role assignment create --assignee <managed-identity-id>
 #            --role "Network Contributor"
-#            --scope /subscriptions/<sub>/resourceGroups/rg-mediasrl-productie-swedencentral
+#            --scope /subscriptions/<sub>/resourceGroups/<RG>
 # ============================================================
 
 set -euo pipefail
 
 # ── Environment argument ───────────────────────────────────────────────────────
 # Usage: ./certbot-letsencrypt.sh [--env prod|dev]
-# Default: prod (Let's Encrypt is only meaningful for the public prod environment)
-ENV="prod"
+# Default: auto-detect from deployed Azure resource groups
+ENV="auto"
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --env|-e) ENV="${2:-prod}"; shift 2 ;;
+        --env|-e) ENV="${2:-auto}"; shift 2 ;;
         *) echo "Usage: $0 [--env prod|dev]" >&2; exit 1 ;;
     esac
 done
+
+# ── Auto-detect environment if not specified ───────────────────────────────────
+if [[ "$ENV" == "auto" ]]; then
+    # Primary: read .deploy_env written by 4-deploy-ansible-to-jumphost.ps1
+    DEPLOY_ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/.deploy_env"
+    if [[ -f "$DEPLOY_ENV_FILE" ]]; then
+        source "$DEPLOY_ENV_FILE"
+        ENV="${DEPLOY_ENV:-auto}"
+        echo "INFO: Environment from .deploy_env: $ENV"
+        # DEPLOY_DOMAIN is also available from .deploy_env (used below in case block)
+    fi
+
+    # Fallback: query Azure if .deploy_env not present or unset
+    if [[ "$ENV" == "auto" ]]; then
+        PROD_RG="rg-mediasrl-productie-swedencentral"
+        DEV_RG="rg-mediasrl-dezvoltare-swedencentral"
+        PROD_EXISTS=$(az group show --name "$PROD_RG" --output none 2>/dev/null && echo true || echo false)
+        DEV_EXISTS=$(az group show  --name "$DEV_RG"  --output none 2>/dev/null && echo true || echo false)
+
+        if [[ "$PROD_EXISTS" == "true" && "$DEV_EXISTS" == "false" ]]; then
+            ENV="prod"
+        elif [[ "$DEV_EXISTS" == "true" && "$PROD_EXISTS" == "false" ]]; then
+            ENV="dev"
+        elif [[ "$PROD_EXISTS" == "true" && "$DEV_EXISTS" == "true" ]]; then
+            echo "Both prod and dev resource groups exist. Specify: $0 --env prod|dev" >&2
+            exit 1
+        else
+            echo "ERROR: No known resource group found. Deploy infrastructure first." >&2
+            exit 1
+        fi
+    fi
+fi
 
 # ── Configuration per environment ─────────────────────────────────────────────
 case "$ENV" in
     prod|productie)
         RG="rg-mediasrl-productie-swedencentral"
+        NSG="nsg-prod"
         INVENTORY="inventory/azure_rm.yml"
-        DOMAIN="mediasrl.swedencentral.cloudapp.azure.com"
+        # Use domain from .deploy_env if available, otherwise use the default prod domain
+        DOMAIN="${DEPLOY_DOMAIN:-mediasrl.swedencentral.cloudapp.azure.com}"
         ;;
     dev|dezvoltare)
         RG="rg-mediasrl-dezvoltare-swedencentral"
-        INVENTORY="inventory/azure_rm_dev.yml"
-        # Dev does not have a public domain — Let's Encrypt will not work.
-        echo "WARNING: Let's Encrypt is only for the prod environment with a public domain." >&2
-        echo "         Dev VMs are not publicly accessible. Aborting." >&2
-        exit 1
+        NSG="nsg-dev"
+        INVENTORY="inventory/azure_rm.yml"
+        # Use domain from .deploy_env if available, otherwise use the default dev domain
+        DOMAIN="${DEPLOY_DOMAIN:-mediasrl-dev.swedencentral.cloudapp.azure.com}"
         ;;
     *)
         echo "ERROR: Unknown environment '$ENV'. Use: --env prod|dev" >&2
         exit 1
         ;;
 esac
-
-NSG="nsg-prod"
 RULE="Allow-HTTP-To-Web"
 EMAIL="admin@media-srl.ro"
 CERTBOT_WEBROOT="/var/www/letsencrypt"

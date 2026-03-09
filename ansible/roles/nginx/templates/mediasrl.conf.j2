@@ -46,11 +46,13 @@ server {
     ssl_certificate {{ nginx_ssl_certificate }};
     ssl_certificate_key {{ nginx_ssl_certificate_key }};
 
-    # OCSP stapling
+    # OCSP stapling (only with valid Let's Encrypt cert — disabled for self-signed certs)
+{% if nginx_ssl_stapling_enabled | default(false) %}
     ssl_stapling on;
     ssl_stapling_verify on;
     resolver 8.8.8.8 8.8.4.4 valid=300s;
     resolver_timeout 5s;
+{% endif %}
 
     # HSTS: max-age=0 disables HSTS (safe for self-signed certs).
     # Set nginx_hsts_max_age=31536000 in group_vars after obtaining a valid LE certificate.

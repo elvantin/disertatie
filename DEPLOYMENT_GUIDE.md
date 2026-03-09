@@ -253,6 +253,27 @@ ssh azureadmin@vm-web-01
 ansible-inventory -i inventory/azure_rm.yml --list
 ```
 
+### SSH: "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED"
+
+Apare dupa re-deployment (VM nou = chei host noi). Sterge cheia veche din cache:
+
+**OpenSSH (Windows / Linux / macOS):**
+```powershell
+ssh-keygen -R <IP>
+# ex: ssh-keygen -R 51.12.82.4
+```
+Apoi reconecteaza si confirma noua cheie cu `yes`.
+
+**PuTTY** — cheia este stocata separat in registry-ul Windows:
+```powershell
+# Listeaza cheile salvate pentru a gasi intrarea corecta
+reg query "HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\SshHostKeys"
+
+# Sterge cheia veche (inlocuieste portul si IP-ul corespunzator)
+reg delete "HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\SshHostKeys" /v "ssh-ed25519@22:51.12.82.4" /f
+```
+Alternativ, la reconectare PuTTY afiseaza un dialog de avertizare — click **Accept** / **Update** pentru a accepta noua cheie.
+
 ### Ansible: conectivitate WinRM
 
 ```bash

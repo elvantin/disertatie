@@ -8,8 +8,8 @@ fail2ban_bantime: 3600          # Ban duration in seconds (1 hour)
 fail2ban_findtime: 600          # Window for counting failures (10 minutes)
 fail2ban_maxretry: 5            # Failures before ban
 fail2ban_backend: systemd       # Log backend (systemd for Ubuntu 22.04)
-fail2ban_destemail: "admin@mediasrl.swedencentral.cloudapp.azure.com"
-fail2ban_sender: "fail2ban@mediasrl.swedencentral.cloudapp.azure.com"
+fail2ban_destemail: "admin@{{ website_domain | default('mediasrl.swedencentral.cloudapp.azure.com') }}"
+fail2ban_sender: "fail2ban@{{ website_domain | default('mediasrl.swedencentral.cloudapp.azure.com') }}"
 
 # SSH jail
 fail2ban_ssh_enabled: true

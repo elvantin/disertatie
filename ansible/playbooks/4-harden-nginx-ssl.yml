@@ -54,8 +54,7 @@
     # Security headers config file path
     security_headers_file: "/etc/nginx/snippets/security-headers.conf"
 
-    # Website domain (used in CSP header)
-    website_domain: "mediasrl.swedencentral.cloudapp.azure.com"
+    # website_domain comes from group_vars/linux.yml (patched per-environment by deploy script)
 
   tasks:
 
@@ -300,8 +299,8 @@
             9. Backups saved: *.pre-hardening
 
           Test your grade:
-            - SSL Labs: https://www.ssllabs.com/ssltest/analyze.html?d={{ website_domain }}
-            - Security Headers: https://securityheaders.com/?q={{ website_domain }}
+            - SSL Labs: https://www.ssllabs.com/ssltest/analyze.html?d={{ website_domain | default('mediasrl.swedencentral.cloudapp.azure.com') }}
+            - Security Headers: https://securityheaders.com/?q={{ website_domain | default('mediasrl.swedencentral.cloudapp.azure.com') }}
 
           Expected improvement:
             Before hardening: Grade A- or B
