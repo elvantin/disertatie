@@ -1,0 +1,50 @@
+---
+# ============================================================
+# monitoring role — Windows tasks
+# Deploys check-health.ps1 and schedules it as a Scheduled Task
+# ============================================================
+
+- name: Ensure C:\Scripts directory exists
+  ansible.windows.win_file:
+    path: C:\Scripts
+    state: directory
+
+- name: Deploy health check PowerShell script
+  ansible.windows.win_template:
+    src: check-health.ps1.j2
+    dest: "{{ monitoring_ps_script_path }}"
+
+- name: Register mediasrl-health Event Log source
+  ansible.windows.win_shell: |
+    if (-not [System.Diagnostics.EventLog]::SourceExists('{{ monitoring_event_source }}')) {
+        New-EventLog -LogName Application -Source '{{ monitoring_event_source }}'
+        Write-Host "Event source created."
+    } else {
+        Write-Host "Event source already exists."
+    }
+  changed_when: "'Event source created' in result.stdout"
+  register: result
+
+- name: Create Scheduled Task for health check
+  community.windows.win_scheduled_task:
+    name: "{{ monitoring_task_name }}"
+    description: "SC MEDIA SRL health monitoring — runs every 5 minutes, logs to Application Event Log"
+    actions:
+      - path: powershell.exe
+        arguments: "-NonInteractive -ExecutionPolicy Bypass -File {{ monitoring_ps_script_path }}"
+    triggers:
+      - type: daily
+        start_boundary: "2026-01-01T00:00:00"
+        repetition:
+          interval: "PT{{ monitoring_cron_interval }}M"
+          duration: "P1D"
+          stop_at_duration_end: false
+    username: SYSTEM
+    run_level: highest
+    state: present
+    enabled: true
+
+- name: Run health check immediately (first-time validation)
+  ansible.windows.win_shell: "powershell -NonInteractive -ExecutionPolicy Bypass -File {{ monitoring_ps_script_path }}"
+  changed_when: false
+  failed_when: false

@@ -1,0 +1,27 @@
+---
+# ============================================================
+# monitoring role — Linux tasks
+# Deploys check-health.sh and schedules it via cron every 5 min
+# ============================================================
+
+- name: Deploy health check script
+  ansible.builtin.template:
+    src: check-health.sh.j2
+    dest: "{{ monitoring_script_path }}"
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Schedule health check via cron
+  ansible.builtin.cron:
+    name: mediasrl-health-check
+    minute: "*/{{ monitoring_cron_interval }}"
+    hour: "*"
+    job: "{{ monitoring_script_path }} >> /var/log/mediasrl-health.log 2>&1"
+    user: root
+    state: present
+
+- name: Run health check immediately (first-time validation)
+  ansible.builtin.command: "{{ monitoring_script_path }}"
+  changed_when: false
+  failed_when: false

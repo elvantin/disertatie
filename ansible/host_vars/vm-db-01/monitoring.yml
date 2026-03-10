@@ -1,0 +1,10 @@
+---
+# vm-db-01 — Windows Database Server (MySQL 8.0)
+monitoring_windows_services:
+  - MySQL80
+
+monitoring_ports:
+  - { port: 3306, description: "MySQL" }
+
+# Runs mysqladmin ping to verify MySQL accepts connections
+monitoring_mysql_check: true

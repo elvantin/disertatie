@@ -1,0 +1,8 @@
+---
+# vm-app-01 — Linux Application Server (nginx API backend)
+# Listens on port 8080 internally, proxied by vm-web-01 at /api/
+monitoring_linux_services:
+  - nginx
+
+monitoring_ports:
+  - { port: 8080, description: "API-nginx-backend" }

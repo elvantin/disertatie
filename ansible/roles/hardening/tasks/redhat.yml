@@ -35,7 +35,7 @@
     line: "{{ item.line }}"
     state: present
   loop:
-    - { regexp: '^deny', line: 'deny = 5' }
+    - { regexp: '^deny', line: 'deny = 10' }
     - { regexp: '^unlock_time', line: 'unlock_time = 900' }
     - { regexp: '^fail_interval', line: 'fail_interval = 900' }
   tags: [hardening, lockout]

@@ -1,0 +1,84 @@
+---
+# ============================================================
+# Playbook 6: Deploy Health Check Monitoring
+# SC MEDIA SRL — Azure Monitor Agent health scripts
+#
+# Linux VMs: cron la fiecare 5 min, log via logger -t mediasrl-health
+# Windows VMs: Scheduled Task la fiecare 5 min, log via Write-EventLog
+# AMA colecteaza logurile prin DCR -> Log Analytics -> 6 KQL Alert Rules
+#
+# Fiecare play apeleaza direct task-urile corespunzatoare OS-ului,
+# fara dispatcher cu when: ansible_os_family (evita probleme cu import_tasks).
+#
+# Usage:
+#   ansible-playbook playbooks/6-monitoring.yml
+#   ansible-playbook playbooks/6-monitoring.yml --limit vm-web-01
+# ============================================================
+
+# ============================================================
+# Play 1: Linux VMs -- SSH + become
+# ============================================================
+
+- name: Deploy health monitoring on Linux VMs
+  hosts: linux
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Verify Linux connectivity
+      ansible.builtin.ping:
+
+  tasks:
+    - name: Include monitoring Linux tasks
+      ansible.builtin.include_role:
+        name: monitoring
+        tasks_from: linux.yml
+
+  post_tasks:
+    - name: Show monitoring status (Linux)
+      ansible.builtin.debug:
+        msg: >
+          [OK] {{ inventory_hostname }}: check-health.sh deployed,
+          cron activ (*/5 min), syslog tag=mediasrl-health
+
+# ============================================================
+# Play 2: Windows VMs -- WinRM (NTLM, port 5985)
+# Connection vars sunt fortat setate EXPLICIT in play
+# (suplimentar fata de group_vars/windows.yml)
+# ============================================================
+
+- name: Deploy health monitoring on Windows VMs
+  hosts: windows
+  gather_facts: false
+
+  vars:
+    ansible_connection: winrm
+    ansible_winrm_transport: ntlm
+    ansible_port: 5985
+    ansible_winrm_server_cert_validation: ignore
+    ansible_user: azureadmin
+    ansible_password: "Str0ng_P@ssw0rd_2026!"
+    ansible_become: false
+
+  pre_tasks:
+    - name: Verify Windows WinRM connectivity
+      ansible.windows.win_ping:
+
+  tasks:
+    - name: Include monitoring Windows tasks
+      ansible.builtin.include_role:
+        name: monitoring
+        tasks_from: windows.yml
+
+  post_tasks:
+    - name: Show monitoring status (Windows)
+      ansible.windows.win_shell: |
+        $task = Get-ScheduledTask -TaskName 'MediaSRL-HealthCheck' -ErrorAction SilentlyContinue
+        if ($task) { "OK: Scheduled Task '$($task.TaskName)' State=$($task.State)" }
+        else { "WARN: Scheduled Task not found" }
+      register: task_status
+      changed_when: false
+
+    - name: Print task status
+      ansible.builtin.debug:
+        msg: "{{ task_status.stdout | trim }}"

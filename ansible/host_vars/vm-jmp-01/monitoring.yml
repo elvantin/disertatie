@@ -1,0 +1,7 @@
+---
+# vm-jmp-01 — Linux Jumphost (Ansible control node)
+monitoring_linux_services:
+  - sshd
+
+monitoring_ports:
+  - { port: 22, description: "SSH" }

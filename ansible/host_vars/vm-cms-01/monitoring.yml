@@ -1,0 +1,11 @@
+---
+# vm-cms-01 — Linux CMS Server (WordPress + PHP-FPM + Postfix mail)
+monitoring_linux_services:
+  - nginx
+  - php8.1-fpm
+  - postfix
+
+monitoring_ports:
+  - { port: 80,  description: "HTTP-nginx" }
+  - { port: 443, description: "HTTPS-nginx" }
+  - { port: 25,  description: "SMTP-postfix" }

@@ -1,0 +1,92 @@
+#!/bin/bash
+# ============================================================
+# SC MEDIA SRL — Linux Health Check Script
+# Host: {{ inventory_hostname }}
+# Managed by Ansible (monitoring role). Do not edit manually.
+#
+# Checks: CPU, Memory, Disk, Network, Services, Ports
+# Logs via: logger -t {{ monitoring_syslog_tag }} "LEVEL KEY=VALUE ..."
+# AMA collects via DCR (Syslog facility: user)
+# KQL queries ProcessName == "{{ monitoring_syslog_tag }}"
+# ============================================================
+
+TAG="{{ monitoring_syslog_tag }}"
+CPU_THRESHOLD={{ monitoring_cpu_threshold }}
+DISK_THRESHOLD={{ monitoring_disk_threshold }}
+MEM_THRESHOLD={{ monitoring_mem_threshold }}
+HOSTNAME=$(hostname)
+
+log_ok()    { logger -t "$TAG" "OK $*"; }
+log_warn()  { logger -t "$TAG" "WARN $*"; }
+log_alert() { logger -t "$TAG" "ALERT $*"; }
+
+# ==============================================================
+# CPU
+# vmstat 1 2: takes 2 samples 1 second apart — far more accurate than top -bn1
+# Column 15 = idle %; column order: r b swpd free buff cache si so bi bo in cs us sy id wa st
+# ==============================================================
+CPU_IDLE=$(vmstat 1 2 | tail -1 | awk '{print $15}')
+CPU_USED=$(( 100 - ${CPU_IDLE:-100} ))
+CPU_INT=${CPU_USED}
+
+if [ "${CPU_INT:-0}" -ge "$CPU_THRESHOLD" ] 2>/dev/null; then
+    log_alert "CPU=${CPU_INT} THRESHOLD=${CPU_THRESHOLD} HOST=${HOSTNAME}"
+else
+    log_ok "CPU=${CPU_INT} HOST=${HOSTNAME}"
+fi
+
+# ==============================================================
+# Memory
+# ==============================================================
+MEM_TOTAL=$(grep MemTotal     /proc/meminfo | awk '{print $2}')
+MEM_AVAIL=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
+if [ -n "$MEM_TOTAL" ] && [ "$MEM_TOTAL" -gt 0 ]; then
+    MEM_USED_PCT=$(( (MEM_TOTAL - MEM_AVAIL) * 100 / MEM_TOTAL ))
+    if [ "$MEM_USED_PCT" -ge "$MEM_THRESHOLD" ]; then
+        log_alert "MEM=${MEM_USED_PCT} THRESHOLD=${MEM_THRESHOLD} HOST=${HOSTNAME}"
+    else
+        log_ok "MEM=${MEM_USED_PCT} HOST=${HOSTNAME}"
+    fi
+fi
+
+# ==============================================================
+# Disk (skip tmpfs and udev virtual filesystems)
+# ==============================================================
+while IFS= read -r line; do
+    USE=$(echo "$line"   | awk '{print $5}' | tr -d '%')
+    MOUNT=$(echo "$line" | awk '{print $6}')
+    [ -z "$USE" ] && continue
+    if [ "${USE}" -ge "$DISK_THRESHOLD" ] 2>/dev/null; then
+        log_alert "DISK=${USE} PATH=${MOUNT} THRESHOLD=${DISK_THRESHOLD} HOST=${HOSTNAME}"
+    else
+        log_ok "DISK=${USE} PATH=${MOUNT} HOST=${HOSTNAME}"
+    fi
+done < <(df -h --output=source,size,used,avail,pcent,target 2>/dev/null \
+         | tail -n +2 \
+         | grep -v tmpfs \
+         | grep -v udev \
+         | grep -v "^overlay")
+
+# ==============================================================
+# Services (systemd)
+# ==============================================================
+{% for svc in monitoring_linux_services %}
+if systemctl is-active --quiet "{{ svc }}" 2>/dev/null; then
+    log_ok "SERVICE={{ svc }} STATUS=active HOST=${HOSTNAME}"
+else
+    log_alert "SERVICE={{ svc }} STATUS=inactive HOST=${HOSTNAME}"
+fi
+{% endfor %}
+
+# ==============================================================
+# Ports (TCP listening on localhost)
+# ==============================================================
+{% for p in monitoring_ports %}
+if ss -tlnp 2>/dev/null | grep -qE ":{{ p.port }}\b"; then
+    log_ok "PORT={{ p.port }} DESC={{ p.description }} STATUS=listening HOST=${HOSTNAME}"
+else
+    log_alert "PORT={{ p.port }} DESC={{ p.description }} STATUS=not_listening HOST=${HOSTNAME}"
+fi
+{% endfor %}
+
+exit 0

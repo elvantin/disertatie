@@ -1,0 +1,9 @@
+---
+# vm-web-01 — Linux Web Server (nginx reverse proxy)
+# Serves HTTPS traffic on 443, redirects HTTP on 80
+monitoring_linux_services:
+  - nginx
+
+monitoring_ports:
+  - { port: 80,  description: "HTTP-redirect" }
+  - { port: 443, description: "HTTPS-nginx" }

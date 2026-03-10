@@ -1,0 +1,16 @@
+---
+# ============================================================
+# Ansible Role: monitoring — Main Tasks
+# Called directly from OS-specific plays in 6-monitoring.yml.
+# This file is NOT used directly — the playbook includes
+# linux.yml or windows.yml explicitly via include_role + tasks_from.
+# Kept as fallback dispatcher only.
+# ============================================================
+
+- name: Deploy health check (Linux)
+  include_tasks: linux.yml
+  when: ansible_os_family in ('Debian', 'RedHat')
+
+- name: Deploy health check (Windows)
+  include_tasks: windows.yml
+  when: ansible_os_family == 'Windows'

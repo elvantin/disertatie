@@ -1,0 +1,11 @@
+---
+# vm-fs-01 — Windows File Server (SMB shares via FS-FileServer feature)
+monitoring_windows_services:
+  - LanmanServer
+  - LanmanWorkstation
+
+monitoring_ports:
+  - { port: 445, description: "SMB" }
+
+# Verifies SMB shares are present and LanmanServer is running
+monitoring_smb_check: true

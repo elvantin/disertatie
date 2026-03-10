@@ -90,6 +90,12 @@ param assignManagedIdentity bool = false
 @description('Data disks to attach (array of {lun, diskSizeGB, storageType}). Empty = no data disks.')
 param dataDisks array = []
 
+@description('Auto-shutdown time in HHMM format (e.g. "2359"). Empty string = disabled.')
+param autoShutdownTime string = ''
+
+@description('Timezone for auto-shutdown schedule')
+param autoShutdownTimezone string = 'E. Europe Standard Time'
+
 @description('Tags to apply to resources')
 param tags object = {}
 
@@ -331,6 +337,26 @@ resource roleAssignmentReader 'Microsoft.Authorization/roleAssignments@2022-04-0
     principalId: vm.identity.principalId
     principalType: 'ServicePrincipal'
     description: 'Ansible dynamic inventory: ${vmName} MSI reads Azure resources in this RG'
+  }
+}
+
+// ----- Auto-shutdown Schedule -----
+
+resource autoShutdown 'Microsoft.DevTestLab/schedules@2018-09-15' = if (autoShutdownTime != '') {
+  name: 'shutdown-computevm-${vmName}'
+  location: location
+  tags: tags
+  properties: {
+    status: 'Enabled'
+    taskType: 'ComputeVmShutdownTask'
+    dailyRecurrence: {
+      time: autoShutdownTime
+    }
+    timeZoneId: autoShutdownTimezone
+    targetResourceId: vm.id
+    notificationSettings: {
+      status: 'Disabled'
+    }
   }
 }
 

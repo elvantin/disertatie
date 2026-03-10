@@ -77,6 +77,18 @@ param adminPassword string
 @description('Use Marketplace images instead of Gallery (set to false once Packer images are built)')
 param useMarketplaceImages bool = true
 
+@description('Deploy Azure Monitor Agent on all VMs (requires Managed Identity on every VM)')
+param deployAMA bool = true
+
+@description('Alert email address for Azure Monitor notifications')
+param alertEmail string = 'valentin.tita@qubitform.ro'
+
+@description('Daily auto-shutdown time for all VMs in HHMM format (e.g. "2359"). Empty = disabled.')
+param autoShutdownTime string = '2359'
+
+@description('Timezone for auto-shutdown (Windows timezone ID)')
+param autoShutdownTimezone string = 'E. Europe Standard Time'
+
 @description('Persistent Resource Group name (survives az group delete on main RG)')
 param persistentResourceGroupName string = 'rg-mediasrl-persistent'
 
@@ -364,13 +376,16 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     dataDisks: vm.?dataDisks ?? []
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     deployMonitoringAgent: false // Disable to avoid package manager lock issues during deployment
-    assignManagedIdentity: vm.name == 'vm-jmp-01' // SystemAssigned MSI for Ansible auth_source: msi
+    // jumphost needs MSI for Ansible auth_source: msi; all VMs need MSI when AMA is enabled
+    assignManagedIdentity: vm.name == 'vm-jmp-01' || deployAMA
     // vm-jmp-01: marketplace -> bootstrap complet; gallery -> finalizare minima (auth fix)
     // Alte VM-uri Linux: fara CSE (configurate de Ansible)
     // VM-uri Windows: WinRM bootstrap (doar marketplace)
     customScriptContent: vm.name == 'vm-jmp-01'
       ? (useMarketplaceImages ? jumphostBootstrapScript : jumphostFinalizeScript)
       : (useMarketplaceImages && vm.osType == 'Windows' ? windowsWinrmBootstrapScript : '')
+    autoShutdownTime: autoShutdownTime
+    autoShutdownTimezone: autoShutdownTimezone
     tags: tags
   }
 }]
@@ -414,6 +429,28 @@ module jumphostMsiPersistentRgReader 'modules/role-assignment.bicep' = {
     roleDefinitionId: 'acdd72a7-3385-48ef-bd42-f606fba81ae7' // Reader
     roleDescription: 'Ansible MSI: vm-jmp-01 reads persistent RG (static public IPs for inventory)'
   }
+}
+
+// ----- Module: Azure Monitor Agent (AMA) — deployed after all VMs -----
+// Installs AMA extension, creates DCRs, DCR Associations, Action Group, and Alert Rules.
+// Requires Managed Identity on all VMs (enabled above when deployAMA = true).
+
+var linuxVmNames  = map(filter(vms, vm => vm.osType == 'Linux'),  vm => vm.name)
+var windowsVmNames = map(filter(vms, vm => vm.osType == 'Windows'), vm => vm.name)
+
+module ama 'modules/ama.bicep' = if (deployAMA) {
+  name: 'deploy-ama'
+  scope: az.resourceGroup(resourceGroupName)
+  params: {
+    location: location
+    environment: environment
+    linuxVmNames: linuxVmNames
+    windowsVmNames: windowsVmNames
+    workspaceResourceId: monitoring.outputs.workspaceResourceId
+    alertEmail: alertEmail
+    tags: tags
+  }
+  dependsOn: [virtualMachines]
 }
 
 // NOTE: Bootstrap/CSE strategy:

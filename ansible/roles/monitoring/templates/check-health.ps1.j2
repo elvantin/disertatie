@@ -1,0 +1,173 @@
+# ============================================================
+# SC MEDIA SRL — Windows Health Check Script
+# Host: {{ inventory_hostname }}
+# Managed by Ansible (monitoring role). Do not edit manually.
+#
+# Checks: CPU, Memory, Disk, Network, Services, Ports
+# Writes to Application Event Log, Source: {{ monitoring_event_source }}
+# AMA collects via DCR (Windows Event Log xPath)
+# KQL queries EventLog == "Application" and Source == "{{ monitoring_event_source }}"
+# ============================================================
+
+$Source        = '{{ monitoring_event_source }}'
+$CpuThreshold  = {{ monitoring_cpu_threshold }}
+$DiskThreshold = {{ monitoring_disk_threshold }}
+$MemThreshold  = {{ monitoring_mem_threshold }}
+$Hostname      = $env:COMPUTERNAME
+
+function Write-HealthEvent {
+    param(
+        [string]$Message,
+        [string]$Level = 'Information',
+        [int]$EventId  = 1000
+    )
+    $entryType = switch ($Level) {
+        'Warning' { [System.Diagnostics.EventLogEntryType]::Warning }
+        'Error'   { [System.Diagnostics.EventLogEntryType]::Error   }
+        default   { [System.Diagnostics.EventLogEntryType]::Information }
+    }
+    try {
+        Write-EventLog -LogName Application -Source $Source `
+            -EventId $EventId -EntryType $entryType -Message $Message
+    } catch {
+        Write-Host "EventLog write failed: $_"
+    }
+}
+
+# ==============================================================
+# CPU
+# ==============================================================
+try {
+    $CpuLoad = [int](Get-WmiObject Win32_Processor `
+        | Measure-Object -Property LoadPercentage -Average).Average
+    if ($CpuLoad -ge $CpuThreshold) {
+        Write-HealthEvent "ALERT CPU=$CpuLoad THRESHOLD=$CpuThreshold HOST=$Hostname" `
+            -Level Warning -EventId 1001
+    } else {
+        Write-HealthEvent "OK CPU=$CpuLoad HOST=$Hostname"
+    }
+} catch {
+    Write-HealthEvent "WARN CPU check failed: $_" -Level Warning
+}
+
+# ==============================================================
+# Memory
+# ==============================================================
+try {
+    $OS      = Get-WmiObject Win32_OperatingSystem
+    $UsedPct = [int](($OS.TotalVisibleMemorySize - $OS.FreePhysicalMemory) `
+                     / $OS.TotalVisibleMemorySize * 100)
+    if ($UsedPct -ge $MemThreshold) {
+        Write-HealthEvent "ALERT MEM=$UsedPct THRESHOLD=$MemThreshold HOST=$Hostname" `
+            -Level Warning -EventId 1002
+    } else {
+        Write-HealthEvent "OK MEM=$UsedPct HOST=$Hostname"
+    }
+} catch {
+    Write-HealthEvent "WARN Memory check failed: $_" -Level Warning
+}
+
+# ==============================================================
+# Disk
+# ==============================================================
+try {
+    $Drives = Get-PSDrive -PSProvider FileSystem `
+        | Where-Object { $_.Used -ne $null -and ($_.Used + $_.Free) -gt 0 }
+    foreach ($Drive in $Drives) {
+        $Total   = $Drive.Used + $Drive.Free
+        $UsedPct = [int]($Drive.Used / $Total * 100)
+        $DriveLetter = "$($Drive.Name):"
+        if ($UsedPct -ge $DiskThreshold) {
+            Write-HealthEvent "ALERT DISK=$UsedPct PATH=$DriveLetter THRESHOLD=$DiskThreshold HOST=$Hostname" `
+                -Level Warning -EventId 1003
+        } else {
+            Write-HealthEvent "OK DISK=$UsedPct PATH=$DriveLetter HOST=$Hostname"
+        }
+    }
+} catch {
+    Write-HealthEvent "WARN Disk check failed: $_" -Level Warning
+}
+
+# ==============================================================
+# Services
+# ==============================================================
+{% for svc in monitoring_windows_services %}
+try {
+    $svcObj = Get-Service -Name '{{ svc }}' -ErrorAction Stop
+    if ($svcObj.Status -eq 'Running') {
+        Write-HealthEvent "OK SERVICE={{ svc }} STATUS=Running HOST=$Hostname"
+    } else {
+        Write-HealthEvent "ALERT SERVICE={{ svc }} STATUS=$($svcObj.Status) HOST=$Hostname" `
+            -Level Warning -EventId 1005
+    }
+} catch {
+    Write-HealthEvent "ALERT SERVICE={{ svc }} STATUS=NotFound HOST=$Hostname" `
+        -Level Error -EventId 1005
+}
+{% endfor %}
+
+# ==============================================================
+# Ports (TCP listening on localhost)
+# ==============================================================
+{% for p in monitoring_ports %}
+try {
+    $conn = Test-NetConnection -ComputerName localhost -Port {{ p.port }} `
+        -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+    if ($conn) {
+        Write-HealthEvent "OK PORT={{ p.port }} DESC={{ p.description }} STATUS=listening HOST=$Hostname"
+    } else {
+        Write-HealthEvent "ALERT PORT={{ p.port }} DESC={{ p.description }} STATUS=not_listening HOST=$Hostname" `
+            -Level Warning -EventId 1006
+    }
+} catch {
+    Write-HealthEvent "WARN PORT={{ p.port }} check failed: $_" -Level Warning
+}
+{% endfor %}
+
+# ==============================================================
+# MySQL connectivity check (vm-db-01 only)
+# ==============================================================
+{% if monitoring_mysql_check %}
+try {
+    $mysqlPath = 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqladmin.exe'
+    if (Test-Path $mysqlPath) {
+        $result = & $mysqlPath ping --host=127.0.0.1 2>&1
+        if ($LASTEXITCODE -eq 0 -or ($result -join '') -match 'mysqld is alive') {
+            Write-HealthEvent "OK MYSQL=alive HOST=$Hostname"
+        } else {
+            Write-HealthEvent "ALERT MYSQL=unreachable DETAIL=$result HOST=$Hostname" `
+                -Level Error -EventId 1007
+        }
+    } else {
+        Write-HealthEvent "WARN MYSQL=mysqladmin_not_found HOST=$Hostname" -Level Warning
+    }
+} catch {
+    Write-HealthEvent "WARN MYSQL check failed: $_" -Level Warning
+}
+{% endif %}
+
+# ==============================================================
+# SMB shares check (vm-fs-01 only)
+# ==============================================================
+{% if monitoring_smb_check %}
+try {
+    $shares = Get-SmbShare | Where-Object { $_.Name -notlike '*$' }
+    $count  = ($shares | Measure-Object).Count
+    if ($count -gt 0) {
+        $names = ($shares | Select-Object -ExpandProperty Name) -join ','
+        Write-HealthEvent "OK SMB=available SHARES=$names COUNT=$count HOST=$Hostname"
+    } else {
+        Write-HealthEvent "WARN SMB=no_public_shares HOST=$Hostname" -Level Warning -EventId 1008
+    }
+    # Verify LanmanServer (File Server service)
+    $lanman = Get-Service -Name LanmanServer -ErrorAction SilentlyContinue
+    if ($lanman.Status -eq 'Running') {
+        Write-HealthEvent "OK SMB_SERVICE=LanmanServer STATUS=Running HOST=$Hostname"
+    } else {
+        Write-HealthEvent "ALERT SMB_SERVICE=LanmanServer STATUS=$($lanman.Status) HOST=$Hostname" `
+            -Level Error -EventId 1008
+    }
+} catch {
+    Write-HealthEvent "WARN SMB check failed: $_" -Level Warning
+}
+{% endif %}
