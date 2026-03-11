@@ -278,8 +278,8 @@ Syslog
 }
 
 // Alert Rule 2: Service/Port Down — Linux
-// Confirmat jos >= 5 min: 2 evaluari consecutive cu ALERT SERVICE/PORT.
-// Cron ruleaza la fiecare 5 min => 2 citiri = serviciu down cel putin 5 min.
+// Declansat la prima evaluare (1/1) care gaseste ALERT SERVICE/PORT.
+// windowSize PT10M acopera 2 rulari de cron pentru robustete la delay-ul de ingestie AMA.
 
 resource alertServiceDown 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' = {
   name: 'alert-service-down-${environment}'
@@ -312,8 +312,8 @@ Syslog
             { name: 'Computer', operator: 'Include', values: ['*'] }
           ]
           failingPeriods: {
-            numberOfEvaluationPeriods: 2
-            minFailingPeriodsToAlert: 2
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
           }
         }
       ]
@@ -322,7 +322,7 @@ Syslog
       actionGroups: [actionGroup.id]
       customProperties: {}
     }
-    muteActionsDuration: 'PT15M'
+    muteActionsDuration: 'PT5M'
     autoMitigate: false
   }
 }
@@ -371,7 +371,7 @@ Syslog
       actionGroups: [actionGroup.id]
       customProperties: {}
     }
-    muteActionsDuration: 'PT15M'
+    muteActionsDuration: 'PT5M'
     autoMitigate: false
   }
 }
@@ -385,7 +385,7 @@ resource alertDiskFull 'Microsoft.Insights/scheduledQueryRules@2023-03-15-previe
   tags: tags
   properties: {
     displayName: '[MediaSRL] Disk Space Critical — Linux'
-    description: 'Spatiu disk >= 90% confirmat pe {Computer} (2 citiri consecutive).'
+    description: 'Spatiu disk >= 90% confirmat (2 citiri consecutive). VM afectat: vezi Dimensions → Computer din email.'
     severity: 1
     enabled: true
     evaluationFrequency: 'PT5M'
@@ -420,7 +420,7 @@ Syslog
       actionGroups: [actionGroup.id]
       customProperties: {}
     }
-    muteActionsDuration: 'PT30M'
+    muteActionsDuration: 'PT5M'
     autoMitigate: false
   }
 }
@@ -475,7 +475,9 @@ Event
 }
 
 // Alert Rule 6: Windows Health Alert — Service/Port/MySQL/SMB
-// Confirmat jos >= 5 min: 2 evaluari consecutive cu ALERT.
+// Declansat la prima evaluare (1/1) care gaseste ALERT.
+// windowSize PT15M: AMA Windows ingesteaza mai rar decat Linux (~10-15 min),
+// fereastra mai mare garanteaza ca fiecare evaluare prinde cel putin un ciclu.
 // Acoperire: vm-db-01 (MySQL80, port 3306, mysqladmin ping)
 //            vm-fs-01 (LanmanServer, port 445, SMB shares)
 
@@ -485,11 +487,11 @@ resource alertWindowsHealth 'Microsoft.Insights/scheduledQueryRules@2023-03-15-p
   tags: tags
   properties: {
     displayName: '[MediaSRL] Windows Health Alert — Service/Port/MySQL/SMB'
-    description: 'Serviciu, port, MySQL sau SMB in stare critica >= 5 min. VM afectat: vezi Dimensions → Computer din email.'
+    description: 'Serviciu, port, MySQL sau SMB in stare critica. VM afectat: vezi Dimensions → Computer din email.'
     severity: 1
     enabled: true
     evaluationFrequency: 'PT5M'
-    windowSize: 'PT10M'
+    windowSize: 'PT15M'
     scopes: [workspaceResourceId]
     criteria: {
       allOf: [
@@ -511,8 +513,8 @@ Event
             { name: 'Computer', operator: 'Include', values: ['*'] }
           ]
           failingPeriods: {
-            numberOfEvaluationPeriods: 2
-            minFailingPeriodsToAlert: 2
+            numberOfEvaluationPeriods: 1
+            minFailingPeriodsToAlert: 1
           }
         }
       ]
@@ -521,7 +523,7 @@ Event
       actionGroups: [actionGroup.id]
       customProperties: {}
     }
-    muteActionsDuration: 'PT15M'
+    muteActionsDuration: 'PT5M'
     autoMitigate: false
   }
 }

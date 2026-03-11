@@ -3,10 +3,15 @@
 # Host: {{ inventory_hostname }}
 # Managed by Ansible (monitoring role). Do not edit manually.
 #
-# Checks: CPU, Memory, Disk, Network, Services, Ports
+# Checks: CPU, Memory, Disk, Services, Ports
 # Writes to Application Event Log, Source: {{ monitoring_event_source }}
 # AMA collects via DCR (Windows Event Log xPath)
 # KQL queries EventLog == "Application" and Source == "{{ monitoring_event_source }}"
+#
+# SERVICE/PORT failure flow:
+#   Check -> fail -> sleep 30s -> recheck -> fail -> sleep 30s -> recheck -> ALERT
+#   All 3 checks must fail before logging ALERT (confirmed ~60s outage)
+# CPU/Disk/Memory: logged immediately, Azure Monitor failingPeriods handles confirmation
 # ============================================================
 
 $Source        = '{{ monitoring_event_source }}'
@@ -34,9 +39,9 @@ function Write-HealthEvent {
     }
 }
 
-# ==============================================================
+# ============================================================
 # CPU
-# ==============================================================
+# ============================================================
 try {
     $CpuLoad = [int](Get-WmiObject Win32_Processor `
         | Measure-Object -Property LoadPercentage -Average).Average
@@ -50,9 +55,9 @@ try {
     Write-HealthEvent "WARN CPU check failed: $_" -Level Warning
 }
 
-# ==============================================================
+# ============================================================
 # Memory
-# ==============================================================
+# ============================================================
 try {
     $OS      = Get-WmiObject Win32_OperatingSystem
     $UsedPct = [int](($OS.TotalVisibleMemorySize - $OS.FreePhysicalMemory) `
@@ -67,15 +72,15 @@ try {
     Write-HealthEvent "WARN Memory check failed: $_" -Level Warning
 }
 
-# ==============================================================
+# ============================================================
 # Disk
-# ==============================================================
+# ============================================================
 try {
     $Drives = Get-PSDrive -PSProvider FileSystem `
         | Where-Object { $_.Used -ne $null -and ($_.Used + $_.Free) -gt 0 }
     foreach ($Drive in $Drives) {
-        $Total   = $Drive.Used + $Drive.Free
-        $UsedPct = [int]($Drive.Used / $Total * 100)
+        $Total       = $Drive.Used + $Drive.Free
+        $UsedPct     = [int]($Drive.Used / $Total * 100)
         $DriveLetter = "$($Drive.Name):"
         if ($UsedPct -ge $DiskThreshold) {
             Write-HealthEvent "ALERT DISK=$UsedPct PATH=$DriveLetter THRESHOLD=$DiskThreshold HOST=$Hostname" `
@@ -88,45 +93,113 @@ try {
     Write-HealthEvent "WARN Disk check failed: $_" -Level Warning
 }
 
-# ==============================================================
-# Services
-# ==============================================================
+{% if monitoring_windows_services or monitoring_ports %}
+# ============================================================
+# Services and Ports — with 3-check retry confirmation
+# Phase 1: check all, log OK immediately, collect failures
+# Phase 2 (if failures): sleep 30s, recheck failures only
+# Phase 3 (if still failures): sleep 30s, final check, log ALERT
+# ============================================================
+
+# --- Phase 1: initial check ---
+$svcFailures  = [System.Collections.Generic.List[hashtable]]::new()
+$portFailures = [System.Collections.Generic.List[hashtable]]::new()
+
 {% for svc in monitoring_windows_services %}
 try {
-    $svcObj = Get-Service -Name '{{ svc }}' -ErrorAction Stop
-    if ($svcObj.Status -eq 'Running') {
+    $s = Get-Service -Name '{{ svc }}' -ErrorAction Stop
+    if ($s.Status -eq 'Running') {
         Write-HealthEvent "OK SERVICE={{ svc }} STATUS=Running HOST=$Hostname"
     } else {
-        Write-HealthEvent "ALERT SERVICE={{ svc }} STATUS=$($svcObj.Status) HOST=$Hostname" `
-            -Level Warning -EventId 1005
+        $svcFailures.Add(@{ Name = '{{ svc }}'; Status = $s.Status.ToString() })
     }
 } catch {
-    Write-HealthEvent "ALERT SERVICE={{ svc }} STATUS=NotFound HOST=$Hostname" `
-        -Level Error -EventId 1005
+    $svcFailures.Add(@{ Name = '{{ svc }}'; Status = 'NotFound' })
 }
 {% endfor %}
 
-# ==============================================================
-# Ports (TCP listening on localhost)
-# ==============================================================
 {% for p in monitoring_ports %}
 try {
-    $conn = Test-NetConnection -ComputerName localhost -Port {{ p.port }} `
+    $ok = Test-NetConnection -ComputerName localhost -Port {{ p.port }} `
         -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
-    if ($conn) {
+    if ($ok) {
         Write-HealthEvent "OK PORT={{ p.port }} DESC={{ p.description }} STATUS=listening HOST=$Hostname"
     } else {
-        Write-HealthEvent "ALERT PORT={{ p.port }} DESC={{ p.description }} STATUS=not_listening HOST=$Hostname" `
-            -Level Warning -EventId 1006
+        $portFailures.Add(@{ Port = {{ p.port }}; Desc = '{{ p.description }}' })
     }
 } catch {
-    Write-HealthEvent "WARN PORT={{ p.port }} check failed: $_" -Level Warning
+    $portFailures.Add(@{ Port = {{ p.port }}; Desc = '{{ p.description }}' })
 }
 {% endfor %}
 
-# ==============================================================
+if ($svcFailures.Count -gt 0 -or $portFailures.Count -gt 0) {
+
+    # --- Phase 2: recheck after 30s ---
+    Start-Sleep -Seconds 30
+
+    $svcFailures2  = [System.Collections.Generic.List[hashtable]]::new()
+    $portFailures2 = [System.Collections.Generic.List[hashtable]]::new()
+
+    foreach ($sf in $svcFailures) {
+        try {
+            $s = Get-Service -Name $sf.Name -ErrorAction Stop
+            if ($s.Status -ne 'Running') {
+                $svcFailures2.Add(@{ Name = $sf.Name; Status = $s.Status.ToString() })
+            }
+        } catch {
+            $svcFailures2.Add(@{ Name = $sf.Name; Status = 'NotFound' })
+        }
+    }
+
+    foreach ($pf in $portFailures) {
+        try {
+            $ok = Test-NetConnection -ComputerName localhost -Port $pf.Port `
+                -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+            if (-not $ok) { $portFailures2.Add($pf) }
+        } catch {
+            $portFailures2.Add($pf)
+        }
+    }
+
+    if ($svcFailures2.Count -gt 0 -or $portFailures2.Count -gt 0) {
+
+        # --- Phase 3: final check after another 30s -> ALERT if still failing ---
+        Start-Sleep -Seconds 30
+
+        foreach ($sf in $svcFailures2) {
+            try {
+                $s = Get-Service -Name $sf.Name -ErrorAction Stop
+                if ($s.Status -ne 'Running') {
+                    Write-HealthEvent "ALERT SERVICE=$($sf.Name) STATUS=$($s.Status) HOST=$Hostname" `
+                        -Level Warning -EventId 1005
+                }
+            } catch {
+                Write-HealthEvent "ALERT SERVICE=$($sf.Name) STATUS=NotFound HOST=$Hostname" `
+                    -Level Error -EventId 1005
+            }
+        }
+
+        foreach ($pf in $portFailures2) {
+            try {
+                $ok = Test-NetConnection -ComputerName localhost -Port $pf.Port `
+                    -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+                if (-not $ok) {
+                    Write-HealthEvent "ALERT PORT=$($pf.Port) DESC=$($pf.Desc) STATUS=not_listening HOST=$Hostname" `
+                        -Level Warning -EventId 1006
+                }
+            } catch {
+                Write-HealthEvent "ALERT PORT=$($pf.Port) DESC=$($pf.Desc) STATUS=not_listening HOST=$Hostname" `
+                    -Level Warning -EventId 1006
+            }
+        }
+
+    }  # Phase 3
+}  # Phase 2
+{% endif %}
+
+# ============================================================
 # MySQL connectivity check (vm-db-01 only)
-# ==============================================================
+# ============================================================
 {% if monitoring_mysql_check %}
 try {
     $mysqlPath = 'C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqladmin.exe'
@@ -146,9 +219,9 @@ try {
 }
 {% endif %}
 
-# ==============================================================
+# ============================================================
 # SMB shares check (vm-fs-01 only)
-# ==============================================================
+# ============================================================
 {% if monitoring_smb_check %}
 try {
     $shares = Get-SmbShare | Where-Object { $_.Name -notlike '*$' }
@@ -158,14 +231,6 @@ try {
         Write-HealthEvent "OK SMB=available SHARES=$names COUNT=$count HOST=$Hostname"
     } else {
         Write-HealthEvent "WARN SMB=no_public_shares HOST=$Hostname" -Level Warning -EventId 1008
-    }
-    # Verify LanmanServer (File Server service)
-    $lanman = Get-Service -Name LanmanServer -ErrorAction SilentlyContinue
-    if ($lanman.Status -eq 'Running') {
-        Write-HealthEvent "OK SMB_SERVICE=LanmanServer STATUS=Running HOST=$Hostname"
-    } else {
-        Write-HealthEvent "ALERT SMB_SERVICE=LanmanServer STATUS=$($lanman.Status) HOST=$Hostname" `
-            -Level Error -EventId 1008
     }
 } catch {
     Write-HealthEvent "WARN SMB check failed: $_" -Level Warning

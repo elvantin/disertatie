@@ -3,12 +3,13 @@
 # Playbook 6: Deploy Health Check Monitoring
 # SC MEDIA SRL — Azure Monitor Agent health scripts
 #
+# Config per-VM definita INLINE in acest playbook (pre_tasks set_fact).
+# Nu depinde de host_vars pentru variabilele de monitoring —
+# evita probleme de sincronizare a fisierelor pe jumphost.
+#
 # Linux VMs: cron la fiecare 5 min, log via logger -t mediasrl-health
 # Windows VMs: Scheduled Task la fiecare 5 min, log via Write-EventLog
-# AMA colecteaza logurile prin DCR -> Log Analytics -> 6 KQL Alert Rules
-#
-# Fiecare play apeleaza direct task-urile corespunzatoare OS-ului,
-# fara dispatcher cu when: ansible_os_family (evita probleme cu import_tasks).
+# AMA colecteaza logurile prin DCR -> Log Analytics -> KQL Alert Rules
 #
 # Usage:
 #   ansible-playbook playbooks/6-monitoring.yml
@@ -28,23 +29,57 @@
     - name: Verify Linux connectivity
       ansible.builtin.ping:
 
+    # Per-VM monitoring config defined inline — no host_vars dependency.
+    # Each VM monitors only the services/ports relevant to its role.
+    - name: Set per-VM monitoring variables
+      ansible.builtin.set_fact:
+        monitoring_linux_services: "{{ _cfg.services | default([]) }}"
+        monitoring_ports:          "{{ _cfg.ports    | default([]) }}"
+      vars:
+        _vm_map:
+          vm-jmp-01:
+            services: [sshd, xrdp]
+            ports:
+              - { port: 22,   description: "SSH" }
+              - { port: 3389, description: "xRDP" }
+
+          vm-web-01:
+            services: [nginx]
+            ports:
+              - { port: 80,  description: "HTTP-redirect" }
+              - { port: 443, description: "HTTPS-nginx" }
+
+          vm-app-01:
+            services: [nginx]
+            ports:
+              - { port: 8080, description: "API-nginx-backend" }
+
+          vm-cms-01:
+            # nginx (HTTP:80) + php8.1-fpm (WordPress FastCGI) + postfix (SMTP relay)
+            # Port 443 is NOT on cms-01 — TLS terminates on vm-web-01 (reverse proxy)
+            services: [nginx, php8.1-fpm, postfix]
+            ports:
+              - { port: 80,  description: "HTTP-nginx-wordpress" }
+              - { port: 25,  description: "SMTP-postfix" }
+
+        _cfg: "{{ _vm_map[inventory_hostname] | default({}) }}"
+
   tasks:
-    - name: Include monitoring Linux tasks
+    - name: Deploy health check script and cron (Linux)
       ansible.builtin.include_role:
         name: monitoring
         tasks_from: linux.yml
 
   post_tasks:
-    - name: Show monitoring status (Linux)
+    - name: Show monitoring deployment status (Linux)
       ansible.builtin.debug:
         msg: >
           [OK] {{ inventory_hostname }}: check-health.sh deployed,
-          cron activ (*/5 min), syslog tag=mediasrl-health
+          services={{ monitoring_linux_services }},
+          ports={{ monitoring_ports | map(attribute='port') | list }}
 
 # ============================================================
 # Play 2: Windows VMs -- WinRM (NTLM, port 5985)
-# Connection vars sunt fortat setate EXPLICIT in play
-# (suplimentar fata de group_vars/windows.yml)
 # ============================================================
 
 - name: Deploy health monitoring on Windows VMs
@@ -64,18 +99,49 @@
     - name: Verify Windows WinRM connectivity
       ansible.windows.win_ping:
 
+    # Per-VM monitoring config defined inline.
+    - name: Set per-VM monitoring variables
+      ansible.builtin.set_fact:
+        monitoring_windows_services: "{{ _cfg.services     | default([]) }}"
+        monitoring_ports:            "{{ _cfg.ports        | default([]) }}"
+        monitoring_mysql_check:      "{{ _cfg.mysql_check  | default(false) }}"
+        monitoring_smb_check:        "{{ _cfg.smb_check    | default(false) }}"
+      vars:
+        _vm_map:
+          vm-db-01:
+            services: [MySQL80]
+            ports:
+              - { port: 3306, description: "MySQL" }
+            mysql_check: true
+            smb_check: false
+
+          vm-fs-01:
+            # LanmanServer = File Server service (server-side SMB)
+            # LanmanWorkstation = SMB client — NOT monitored (not a server role)
+            services: [LanmanServer]
+            ports:
+              - { port: 445, description: "SMB" }
+            mysql_check: false
+            smb_check: true
+
+        _cfg: "{{ _vm_map[inventory_hostname] | default({}) }}"
+
   tasks:
-    - name: Include monitoring Windows tasks
+    - name: Deploy health check script and scheduled task (Windows)
       ansible.builtin.include_role:
         name: monitoring
         tasks_from: windows.yml
 
   post_tasks:
-    - name: Show monitoring status (Windows)
+    - name: Verify scheduled task exists and last run result
       ansible.windows.win_shell: |
         $task = Get-ScheduledTask -TaskName 'MediaSRL-HealthCheck' -ErrorAction SilentlyContinue
-        if ($task) { "OK: Scheduled Task '$($task.TaskName)' State=$($task.State)" }
-        else { "WARN: Scheduled Task not found" }
+        $info = Get-ScheduledTaskInfo -TaskName 'MediaSRL-HealthCheck' -ErrorAction SilentlyContinue
+        if ($task) {
+            "OK: Task=$($task.TaskName) State=$($task.State) LastRun=$($info.LastRunTime) Result=$($info.LastTaskResult)"
+        } else {
+            "WARN: Scheduled Task not found"
+        }
       register: task_status
       changed_when: false
 
