@@ -20,7 +20,7 @@ param subnetProdPrefix = '10.10.10.0/24'
 param subnetDevPrefix = '10.10.11.0/24'
 param subnetMgmtPrefix = '10.10.12.0/24'
 
-param adminIpAddress = '79.119.44.61/32' // TODO: Update if IP changes (az ip show: curl https://api.ipify.org)
+param adminIpAddress = '82.78.49.150/32'
 
 // ----- Azure AD Configuration -----
 
@@ -41,7 +41,10 @@ param imageVersion = 'latest'  // Auto-selecteaza ultima versiune Packer din gal
 // ----- VM Authentication -----
 
 param adminUsername = 'azureadmin'
-param adminPassword = 'Str0ng_P@ssw0rd_2026!' // TODO: Use secure parameter or Key Vault
+// Secret fetched from persistent Key Vault at deployment time (never stored in plaintext).
+// Requires kv-mediasrl-persistent to exist in rg-mediasrl-persistent.
+// Run scripts/0-bootstrap-keyvault.ps1 once before deploying.
+param adminPassword = az.getSecret('7a0255bf-d664-4920-afb0-c523b49c1908', 'rg-mediasrl-persistent', 'kv-mediasrl-persistent', 'vm-admin-password')
 
 // ----- Persistent Public IPs (DEV-specific, separate from prod) -----
 // Resource Group: rg-mediasrl-persistent-dev (survives teardown of main dev RG)

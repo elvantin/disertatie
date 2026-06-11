@@ -16,16 +16,17 @@ mysql_data_dir: "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data"
 mysql_log_dir: "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Logs"
 mysql_backup_dir: "C:\\MySQL\\Backups"
 
-# MySQL root password (PRODUCTION: Store in Ansible Vault!)
-mysql_root_password: "Str0ng_MySQL_R00t_2026!"
+# MySQL passwords — from Ansible Vault (group_vars/all/vault.yml).
+# Values are fetched from kv-mediasrl-persistent by scripts/create-ansible-vault.sh.
+mysql_root_password: "{{ vault_mysql_root_password }}"
 
 # WordPress database
 mysql_wordpress_db: "wordpress_db"
 mysql_wordpress_user: "wp_user"
-mysql_wordpress_password: "Wp_P@ssw0rd_2026!"
+mysql_wordpress_password: "{{ vault_mysql_wordpress_password }}"
 
 # Monitoring user
-mysql_monitoring_password: "Mon_P@ssw0rd_2026!"
+mysql_monitoring_password: "{{ vault_mysql_monitoring_password }}"
 
 # Network settings
 mysql_port: 3306
@@ -35,7 +36,7 @@ mysql_max_connections: 200
 # Business database (CRM data for API)
 mysql_business_db: "mediasrl_business"
 mysql_api_user: "api_user"
-mysql_api_password: "Api_P@ssw0rd_2026!"
+mysql_api_password: "{{ vault_mysql_api_password }}"
 
 # Remote management access
 # Allow root MySQL login from jumphost (management subnet 10.10.12.0/24)

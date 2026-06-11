@@ -12,21 +12,16 @@ param(
 $ErrorActionPreference = "Continue"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 
-# ----- Logging setup -----
 $LogDir = Join-Path $ProjectRoot "logs"
-if (-not (Test-Path $LogDir)) {
-    New-Item -ItemType Directory -Path $LogDir | Out-Null
-}
-$LogTimestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$LogFile = Join-Path $LogDir "test-infrastructure_$LogTimestamp.log"
-Start-Transcript -Path $LogFile -Append | Out-Null
-Write-Host "Log saved to: $LogFile" -ForegroundColor DarkGray
 
-# Counters
-$script:passed = 0
-$script:failed = 0
+. "$PSScriptRoot\lib\Write-Log.ps1"
+Start-LogSession -ScriptTitle "Infrastructure Test Suite" -LogDirectory $LogDir
+
+# Counters for test results (separate from Write-Log counters)
+$script:passed  = 0
+$script:failed  = 0
 $script:warnings = 0
-$script:results = @()
+$script:results  = @()
 
 # ----- Helper Functions -----
 
@@ -40,16 +35,16 @@ function Test-Check {
     try {
         $result = & $Test
         if ($result) {
-            Write-Host "  [PASS] $TestName" -ForegroundColor Green
+            Write-Log-OK $TestName -Detail $Category
             $script:passed++
             $script:results += @{ Category = $Category; Test = $TestName; Status = "PASS" }
         } else {
-            Write-Host "  [FAIL] $TestName" -ForegroundColor Red
+            Write-Log-Fail $TestName -Detail $Category
             $script:failed++
             $script:results += @{ Category = $Category; Test = $TestName; Status = "FAIL" }
         }
     } catch {
-        Write-Host "  [FAIL] $TestName — $($_.Exception.Message)" -ForegroundColor Red
+        Write-Log-Fail "$TestName — $($_.Exception.Message)" -Detail $Category
         $script:failed++
         $script:results += @{ Category = $Category; Test = $TestName; Status = "FAIL" }
     }
@@ -57,28 +52,19 @@ function Test-Check {
 
 function Test-Warn {
     param([string]$Category, [string]$Message)
-    Write-Host "  [WARN] $Message" -ForegroundColor Yellow
+    Write-Log-Warn $Message -Detail $Category
     $script:warnings++
     $script:results += @{ Category = $Category; Test = $Message; Status = "WARN" }
 }
 
-Write-Host ""
-Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host " SC MEDIA SRL — Infrastructure Test Suite"
-Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host ""
-
-# ----- Verificare Azure CLI -----
-
-Write-Host "[CHECK] Verificare Azure CLI..." -ForegroundColor Yellow
+Write-Log-Header "Verificare Azure CLI"
 az account show 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[FAIL] Nu esti autentificat in Azure CLI. Ruleaza 'az login'." -ForegroundColor Red
-    exit 1
+    Write-Log-Fail "Nu ești autentificat în Azure CLI" -Detail "Rulează: az login"
+    Stop-LogSession; exit 1
 }
 $SubscriptionId = az account show --query id -o tsv
-Write-Host "  Subscription: $SubscriptionId" -ForegroundColor Gray
-Write-Host ""
+Write-Log-OK "Azure CLI autentificat" -Detail $SubscriptionId
 
 # ============================================================
 # CATEGORIA 1: RESURSE AZURE (exista si sunt corect configurate?)
@@ -88,10 +74,7 @@ $RgMain = "rg-mediasrl-productie-swedencentral"
 $RgPacker = "rg-mediasrl-packer-swedencentral"
 $RgPersistent = "rg-mediasrl-persistent"
 
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " 1. TESTE RESURSE AZURE"
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host ""
+Write-Log-Header "1. Teste Resurse Azure" -Step 1 -Total 6
 
 # Resource Groups
 Test-Check "Azure Resources" "Resource Group '$RgMain' exists" {
@@ -164,10 +147,7 @@ Write-Host ""
 # CATEGORIA 2: VIRTUAL MACHINES (exista, pornite, cu IP-uri corecte?)
 # ============================================================
 
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " 2. TESTE VIRTUAL MACHINES"
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host ""
+Write-Log-Header "2. Teste Virtual Machines" -Step 2 -Total 6
 
 $ExpectedVMs = @("vm-jmp-01", "vm-web-01", "vm-app-01", "vm-cms-01", "vm-db-01", "vm-fs-01")
 
@@ -190,16 +170,20 @@ Test-Check "Virtual Machines" "Webserver has persistent public IP" {
     $LASTEXITCODE -eq 0 -and $ip -match '^\d+\.\d+\.\d+\.\d+$'
 }
 
+$vmDetailLines = [System.Collections.Generic.List[string]]::new()
+az vm list -g $RgMain -d -o table `
+    --query "[].{VM:name, State:powerState, OS:storageProfile.osDisk.osType, PrivateIP:privateIps}" 2>$null | ForEach-Object { [void]$vmDetailLines.Add([string]$_) }
+if ($vmDetailLines.Count -gt 0) {
+    Write-Log-Block -Label "Stare VM-uri — $RgMain" -Content ($vmDetailLines -join "`n")
+}
+
 Write-Host ""
 
 # ============================================================
 # CATEGORIA 3: SECURITATE (NSG rules, policies, tags)
 # ============================================================
 
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " 3. TESTE SECURITATE"
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host ""
+Write-Log-Header "3. Teste Securitate" -Step 3 -Total 6
 
 # NSG nsg-mgmt: RDP si SSH doar de la admin IP
 Test-Check "Security" "NSG-mgmt: RDP allowed only from admin IP" {
@@ -248,10 +232,7 @@ Write-Host ""
 # CATEGORIA 4: CONECTIVITATE (pot ajunge la VM-uri?)
 # ============================================================
 
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " 4. TESTE CONECTIVITATE"
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host ""
+Write-Log-Header "4. Teste Conectivitate" -Step 4 -Total 6
 
 # Jumphost SSH reachability (port 22)
 $JumphostIp = az network public-ip show -g $RgPersistent -n pip-vm-jmp-01 --query ipAddress -o tsv 2>$null
@@ -322,31 +303,28 @@ Write-Host ""
 # CATEGORIA 5: IDEMPOTENTA (re-deploy nu schimba nimic)
 # ============================================================
 
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " 5. TESTE IDEMPOTENTA"
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host ""
+Write-Log-Header "5. Teste Idempotență" -Step 5 -Total 6
 
 if ($SkipIdempotency) {
     Write-Host "  [SKIP] Idempotency tests skipped (-SkipIdempotency)" -ForegroundColor Yellow
 } else {
     Test-Check "Idempotency" "Bicep what-if shows no Create/Delete changes" {
-        Write-Host "    Running what-if (this may take 1-2 minutes)..." -ForegroundColor Gray
+        Write-Log-Info "Rulare what-if (poate dura 1-2 minute)..."
         # Only flag Create/Delete as unexpected — Modify is a known ARM what-if false positive
         # (policy assignments, NICs, public IPs always show Modify due to internal ARM properties)
         $whatif = az deployment sub what-if --location swedencentral --template-file "$ProjectRoot\bicep\main.bicep" --parameters "$ProjectRoot\bicep\parameters\prod.bicepparam" --no-pretty-print --query "changes[?changeType=='Create' || changeType=='Delete'].{Name:resourceId, Change:changeType}" -o json 2>$null
         $changes = $whatif | ConvertFrom-Json
         $modifyOnly = az deployment sub what-if --location swedencentral --template-file "$ProjectRoot\bicep\main.bicep" --parameters "$ProjectRoot\bicep\parameters\prod.bicepparam" --no-pretty-print --query "changes[?changeType=='Modify'].resourceId" -o json 2>$null | ConvertFrom-Json
         if ($null -ne $modifyOnly -and $modifyOnly.Count -gt 0) {
-            Write-Host "    Modify-only changes (ARM false positives, not blocking): $($modifyOnly.Count)" -ForegroundColor Gray
-            foreach ($r in $modifyOnly) { Write-Host "      Modify: $r" -ForegroundColor DarkGray }
+            Write-Log-Info "Modify-only changes (ARM false positives, not blocking): $($modifyOnly.Count)"
+            foreach ($r in $modifyOnly) { Write-Log-Info "  Modify: $r" }
         }
         if ($null -eq $changes -or $changes.Count -eq 0) {
             $true
         } else {
-            Write-Host "    Unexpected Create/Delete changes detected:" -ForegroundColor Yellow
+            Write-Log-Warn "Unexpected Create/Delete changes detected:"
             foreach ($c in $changes) {
-                Write-Host "      $($c.Change): $($c.Name)" -ForegroundColor Yellow
+                Write-Log-Warn "  $($c.Change): $($c.Name)"
             }
             $false
         }
@@ -359,10 +337,7 @@ Write-Host ""
 # CATEGORIA 6: PERFORMANTA (response time)
 # ============================================================
 
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " 6. TESTE PERFORMANTA"
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host ""
+Write-Log-Header "6. Teste Performanță" -Step 6 -Total 6
 
 if ($WebIp) {
     Test-Check "Performance" "Webserver HTTPS responds within 5 seconds" {
@@ -372,10 +347,10 @@ if ($WebIp) {
             $response = Invoke-WebRequest -Uri "https://$WebIp" -TimeoutSec 5 -UseBasicParsing -SkipCertificateCheck -ErrorAction SilentlyContinue
             $stopwatch.Stop()
             $ms = $stopwatch.ElapsedMilliseconds
-            Write-Host "    Response time: ${ms}ms (HTTPS $($response.StatusCode))" -ForegroundColor Gray
+            Write-Log-Info "Response time: ${ms}ms (HTTPS $($response.StatusCode))"
             $ms -lt 5000
         } catch {
-            Write-Host "    Webserver did not respond (may not be configured yet by Ansible)" -ForegroundColor Yellow
+            Write-Log-Warn "Webserver did not respond (may not be configured yet by Ansible)"
             $false
         }
     }
@@ -392,7 +367,7 @@ if ($JumphostIp) {
             $stopwatch.Stop()
             $ms = $stopwatch.ElapsedMilliseconds
             $tcp.Close()
-            Write-Host "    SSH connect time: ${ms}ms" -ForegroundColor Gray
+            Write-Log-Info "SSH connect time: ${ms}ms"
             $ms -lt 3000
         } catch {
             $stopwatch.Stop()
@@ -407,35 +382,26 @@ Write-Host ""
 # REZUMAT
 # ============================================================
 
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host " REZUMAT TESTE"
-Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  Passed:   $($script:passed)" -ForegroundColor Green
-Write-Host "  Failed:   $($script:failed)" -ForegroundColor $(if ($script:failed -gt 0) { "Red" } else { "Green" })
-Write-Host "  Warnings: $($script:warnings)" -ForegroundColor $(if ($script:warnings -gt 0) { "Yellow" } else { "Green" })
-Write-Host "  Total:    $($script:passed + $script:failed + $script:warnings)" -ForegroundColor White
-Write-Host ""
+Write-Log-Header "Rezumat Teste"
 
-# Detailed results table
-Write-Host "  Detalii per categorie:" -ForegroundColor White
+$total = $script:passed + $script:failed + $script:warnings
+Write-Log-Info "Total  : $total   PASS: $($script:passed)   FAIL: $($script:failed)   WARN: $($script:warnings)"
+
 $categories = $script:results | Group-Object -Property Category
 foreach ($cat in $categories) {
     $catPassed = @($cat.Group | Where-Object { $_.Status -eq "PASS" }).Count
-    $catTotal = $cat.Group.Count
-    $color = if ($catPassed -eq $catTotal) { "Green" } else { "Yellow" }
-    Write-Host "    $($cat.Name): $catPassed/$catTotal" -ForegroundColor $color
+    $catTotal  = $cat.Group.Count
+    if ($catPassed -eq $catTotal) {
+        Write-Log-OK "$($cat.Name)" -Detail "$catPassed/$catTotal teste trecute"
+    } else {
+        Write-Log-Warn "$($cat.Name)" -Detail "$catPassed/$catTotal teste trecute"
+    }
 }
 
-Write-Host ""
 if ($script:failed -eq 0) {
-    Write-Host "  [OK] Toate testele au trecut cu succes!" -ForegroundColor Green
+    Write-Log-OK "Toate testele au trecut cu succes" -Detail "$($script:passed) PASS · $($script:warnings) WARN"
 } else {
-    Write-Host "  [WARN] $($script:failed) test(e) au esuat. Verifica detaliile de mai sus." -ForegroundColor Red
+    Write-Log-Fail "$($script:failed) test(e) au eșuat" -Detail "Verifică detaliile din log"
 }
-Write-Host ""
-Write-Host "  Log complet: $LogFile" -ForegroundColor DarkGray
-Write-Host ""
-Write-Host "==========================================" -ForegroundColor Cyan
 
-Stop-Transcript | Out-Null
+Stop-LogSession

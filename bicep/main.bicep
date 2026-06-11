@@ -46,6 +46,9 @@ param keyVaultName string = 'kv-mediasrl-${environment}'
 @description('Log Analytics Workspace name')
 param logAnalyticsWorkspaceName string = 'log-mediasrl-${environment}'
 
+@description('Recovery Services Vault name for Azure Backup')
+param backupVaultName string = 'rsv-mediasrl-${environment}'
+
 @description('Azure AD Tenant ID')
 param tenantId string
 
@@ -181,7 +184,11 @@ var tags = {
 // ----- Bootstrap Scripts (loaded at compile time, passed to Custom Script Extension) -----
 
 var jumphostBootstrapScript = loadTextContent('../scripts/obsolete/bootstrap-jumphost.sh')
-var jumphostFinalizeScript = loadTextContent('../scripts/finalize-jumphost.sh')
+// Replace placeholder with actual password at compile time.
+// Password comes from az.getSecret() in .bicepparam — never in plaintext in any file.
+// The substituted script goes into CSE protectedSettings (encrypted by Azure).
+var jumphostFinalizeScriptRaw = loadTextContent('../scripts/finalize-jumphost.sh')
+var jumphostFinalizeScript = replace(jumphostFinalizeScriptRaw, '__ADMIN_PASSWORD_PLACEHOLDER__', adminPassword)
 var windowsWinrmBootstrapScript = loadTextContent('../scripts/3-bootstrap-windows-winrm.ps1')
 
 var galleryResourceGroupName = 'rg-mediasrl-packer-${location}'
@@ -322,11 +329,8 @@ module monitoring 'modules/monitoring.bicep' = {
   ]
 }
 
-// ----- Module: Azure Backup (Recovery Services Vault) -----
-// DISABLED: Uncomment when ready to enable backup
-// Recovery Services Vault is time-consuming to delete, so disabled for development
+// ----- Module: Azure Backup (Recovery Services Vault + Daily Policy 1AM, 14-day retention) -----
 
-/*
 module backup 'modules/backup.bicep' = {
   name: 'deploy-backup'
   scope: az.resourceGroup(resourceGroupName)
@@ -342,7 +346,6 @@ module backup 'modules/backup.bicep' = {
     resourceGroup
   ]
 }
-*/
 
 // ----- Module: Virtual Machines (Loop) -----
 
@@ -391,9 +394,8 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
 }]
 
 // ----- Module: VM Backup Protection (Loop) -----
-// DISABLED: Uncomment when ready to enable backup
+// Registers every VM with DailyBackupPolicy — backup at 1AM UTC, 14-day retention
 
-/*
 module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
   name: 'deploy-backup-${vm.name}'
   scope: az.resourceGroup(resourceGroupName)
@@ -408,7 +410,6 @@ module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
     virtualMachines
   ]
 }]
-*/
 
 // ----- MSI: Reader on Persistent RG (for azure_rm inventory plugin) -----
 // The jumphost MSI (assigned above) needs Reader on rg-mediasrl-persistent so the

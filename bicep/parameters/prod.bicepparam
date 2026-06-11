@@ -17,7 +17,7 @@ param subnetDevPrefix = '10.10.11.0/24'
 param subnetMgmtPrefix = '10.10.12.0/24'
 
 // IMPORTANT: Replace with your actual admin IP address
-param adminIpAddress = '79.119.44.61/32' // TODO: Set to actual admin IP (e.g., "203.0.113.5/32")
+param adminIpAddress = '82.78.49.150/32'
 
 // ----- Azure AD Configuration -----
 
@@ -39,8 +39,10 @@ param imageVersion = 'latest'  // Auto-selecteaza ultima versiune Packer din gal
 
 param adminUsername = 'azureadmin'
 
-// IMPORTANT: Replace with secure values (use Key Vault references in production)
-param adminPassword = 'Str0ng_P@ssw0rd_2026!' // TODO: Use secure parameter or Key Vault
+// Secret fetched from persistent Key Vault at deployment time (never stored in plaintext).
+// Requires kv-mediasrl-persistent to exist in rg-mediasrl-persistent.
+// Run scripts/0-bootstrap-keyvault.ps1 once before deploying.
+param adminPassword = az.getSecret('7a0255bf-d664-4920-afb0-c523b49c1908', 'rg-mediasrl-persistent', 'kv-mediasrl-persistent', 'vm-admin-password')
 
 // ----- Persistent Resource Group (IP-uri statice care supravietuiesc teardown-ului) -----
 

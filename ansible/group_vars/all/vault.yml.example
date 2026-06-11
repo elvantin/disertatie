@@ -1,0 +1,19 @@
+---
+# ============================================================
+# Ansible Vault — structure example (NOT the real file)
+#
+# The real vault.yml is created on the jumphost by:
+#   bash scripts/create-ansible-vault.sh
+#
+# That script fetches each value from kv-mediasrl-persistent
+# and produces an encrypted file at group_vars/all/vault.yml.
+#
+# vault.yml is in .gitignore — never committed to the repo.
+# ============================================================
+
+vault_admin_password: "<fetched from KV: vm-admin-password>"
+vault_mysql_root_password: "<fetched from KV: mysql-root-password>"
+vault_mysql_wordpress_password: "<fetched from KV: mysql-wordpress-password>"
+vault_mysql_monitoring_password: "<fetched from KV: mysql-monitoring-password>"
+vault_mysql_api_password: "<fetched from KV: mysql-api-password>"
+vault_wordpress_admin_password: "<fetched from KV: wordpress-admin-password>"

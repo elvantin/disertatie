@@ -21,7 +21,7 @@ wordpress_group: "www-data"
 wordpress_db_type: "mysql"
 wordpress_db_name: "wordpress_db"
 wordpress_db_user: "wp_user"
-wordpress_db_password: "Wp_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
+wordpress_db_password: "{{ vault_mysql_wordpress_password }}"
 wordpress_db_host: "{{ hostvars['vm-db-01']['ansible_host'] }}"  # resolved dynamically from inventory (works for both dev/prod)
 wordpress_db_port: 3306
 wordpress_db_charset: "utf8mb4"
@@ -39,7 +39,7 @@ wordpress_site_title: "SC MEDIA SRL"
 # Public URL — built from website_domain above (override website_domain per-env)
 wordpress_site_url: "https://{{ website_domain }}"
 wordpress_admin_user: "admin"
-wordpress_admin_password: "Admin_P@ssw0rd_2026!"  # PRODUCTION: Store in Ansible Vault!
+wordpress_admin_password: "{{ vault_wordpress_admin_password }}"
 wordpress_admin_email: "admin@media-srl.ro"
 
 # WordPress Authentication Keys

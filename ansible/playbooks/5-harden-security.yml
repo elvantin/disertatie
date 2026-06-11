@@ -185,8 +185,8 @@
     ansible_winrm_transport: ntlm
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
-    ansible_password: "{{ vault_windows_password | default('Str0ng_P@ssw0rd_2026!') }}"
-    mysql_root_password: "Str0ng_MySQL_R00t_2026!"
+    ansible_password: "{{ vault_admin_password }}"
+    mysql_root_password: "{{ vault_mysql_root_password }}"
     mysql_install_dir: "C:\\Program Files\\MySQL\\MySQL Server 8.0"
     mysql_data_dir: "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data"
     mysql_jumphost_subnet: "10.10.12.%"

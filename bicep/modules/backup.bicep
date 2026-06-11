@@ -62,7 +62,7 @@ resource backupPolicy 'Microsoft.RecoveryServices/vaults/backupPolicies@2024-04-
       schedulePolicyType: 'SimpleSchedulePolicy'
       scheduleRunFrequency: 'Daily'
       scheduleRunTimes: [
-        '${backupTime}:00Z'
+        '2000-01-01T${backupTime}:00Z'
       ]
       scheduleWeeklyFrequency: 0
     }
@@ -70,7 +70,7 @@ resource backupPolicy 'Microsoft.RecoveryServices/vaults/backupPolicies@2024-04-
       retentionPolicyType: 'LongTermRetentionPolicy'
       dailySchedule: {
         retentionTimes: [
-          '${backupTime}:00Z'
+          '2000-01-01T${backupTime}:00Z'
         ]
         retentionDuration: {
           count: retentionDays

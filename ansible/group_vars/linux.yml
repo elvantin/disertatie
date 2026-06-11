@@ -18,10 +18,9 @@ ansible_ssh_common_args: >-
   -o PreferredAuthentications=keyboard-interactive,password
   -o PasswordAuthentication=yes
 
-# SSH Authentication (before SSH keys are deployed)
-# Use --ask-pass or uncomment below temporarily
-# PRODUCTION: Remove password, use SSH keys only!
-ansible_password: "Str0ng_P@ssw0rd_2026!"
+# SSH Authentication — password from Ansible Vault (group_vars/all/vault.yml).
+# Vault is created on the jumphost by: bash scripts/create-ansible-vault.sh
+ansible_password: "{{ vault_admin_password }}"
 
 # Privilege escalation
 ansible_become: yes

@@ -10,15 +10,32 @@
 # ============================================================
 
 ADMIN_USER="azureadmin"
-ADMIN_PASSWORD="Str0ng_P@ssw0rd_2026!"
+# Placeholder replaced by bicep/main.bicep replace() at deployment time.
+# The real value comes from az.getSecret() in .bicepparam -> kv-mediasrl-persistent.
+ADMIN_PASSWORD="__ADMIN_PASSWORD_PLACEHOLDER__"
 LOGFILE="/tmp/finalize-jumphost-$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$LOGFILE") 2>&1
 
 ERRORS=0
+_TS=$(date +%s)
+_OK=0; _FAIL=0; _WARN=0
 
-echo "========================================="
-echo "SC MEDIA SRL - Jumphost Finalization"
-echo "========================================="
+# Inline log helpers (no lib available in CSE context)
+_C_CYAN='\033[0;36m'; _C_GREEN='\033[0;32m'; _C_RED='\033[0;31m'
+_C_YELLOW='\033[1;33m'; _C_GRAY='\033[0;37m'; _C_BOLD='\033[1m'; _C_RST='\033[0m'
+_log_ok()   { echo -e "${_C_GREEN}  [OK] $*${_C_RST}";   _OK=$((_OK+1)); }
+_log_warn() { echo -e "${_C_YELLOW}  [!]  $*${_C_RST}";  _WARN=$((_WARN+1)); }
+_log_fail() { echo -e "${_C_RED}  [!!] $*${_C_RST}";     _FAIL=$((_FAIL+1)); ERRORS=$((ERRORS+1)); }
+_log_step() { echo -e "${_C_YELLOW}  [>>] $*${_C_RST}"; }
+_log_info() { echo -e "${_C_GRAY}       $*${_C_RST}"; }
+
+_SEP=$(printf '%.0s=' {1..58})
+echo ""
+echo -e "${_C_CYAN}  ${_SEP}${_C_RST}"
+echo -e "${_C_BOLD}  SC MEDIA SRL — Jumphost Finalization${_C_RST}"
+echo -e "${_C_GRAY}  $(date '+%Y-%m-%d %H:%M:%S')  ·  CSE post-boot script${_C_RST}"
+echo -e "${_C_GRAY}  Log: $LOGFILE${_C_RST}"
+echo -e "${_C_CYAN}  ${_SEP}${_C_RST}"
 
 # =============================================================================
 # STEP 0: Asteapta cloud-init sa termine provisioningul
@@ -26,32 +43,31 @@ echo "========================================="
 # CSE poate porni INAINTE ca cloud-init sa termine de creat userul azureadmin.
 # cloud-init status --wait blocheaza pana la finalizarea tuturor fazelor cloud-init.
 
-echo "[0/4] Waiting for cloud-init to finish provisioning..."
+echo ""
+_log_step "[0/4] Așteptare cloud-init..."
 if command -v cloud-init >/dev/null 2>&1; then
     cloud-init status --wait --long 2>/dev/null \
-        && echo "  OK: cloud-init finished" \
-        || echo "  WARN: cloud-init status --wait returned non-zero (ignorat)"
+        && _log_ok "cloud-init finalizat" \
+        || _log_warn "cloud-init --wait returned non-zero (ignorat)"
 else
-    echo "  WARN: cloud-init not found, sleeping 30s as fallback..."
+    _log_warn "cloud-init nu există, sleep 30s ca fallback..."
     sleep 30
 fi
 
-# Verificare suplimentara: daca userul tot nu exista, il cream manual
 if ! id "${ADMIN_USER}" >/dev/null 2>&1; then
-    echo "  WARN: ${ADMIN_USER} inca nu exista dupa cloud-init, il cream manual..."
+    _log_warn "${ADMIN_USER} nu există după cloud-init — creare manuală..."
     useradd -m -s /bin/bash "${ADMIN_USER}" 2>/dev/null || true
     usermod -aG sudo "${ADMIN_USER}"         2>/dev/null || true
     echo "  ${ADMIN_USER} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${ADMIN_USER}"
     chmod 440 "/etc/sudoers.d/${ADMIN_USER}"
-    echo "  OK: user creat manual"
+    _log_ok "User ${ADMIN_USER} creat manual"
 fi
 
-# Asigura-te ca home dir exista (poate useradd a fost apelat fara -m)
 if [ ! -d "/home/${ADMIN_USER}" ]; then
     mkdir -p "/home/${ADMIN_USER}"
     chown "${ADMIN_USER}:${ADMIN_USER}" "/home/${ADMIN_USER}"
     chmod 750 "/home/${ADMIN_USER}"
-    echo "  OK: home dir creat"
+    _log_ok "Home dir creat: /home/${ADMIN_USER}"
 fi
 
 # =============================================================================
@@ -63,18 +79,17 @@ fi
 # openssl passwd -6 + usermod -p scrie hash-ul SHA-512 DIRECT in /etc/shadow,
 # fara PAM. passwd -u elimina eventualul prefix ! (cont blocat).
 
-echo "[1/4] Setting password and unlocking account..."
+echo ""
+_log_step "[1/4] Setare parolă și deblocare cont..."
 if HASH=$(openssl passwd -6 "${ADMIN_PASSWORD}" 2>/dev/null); then
     if usermod -p "${HASH}" "${ADMIN_USER}" 2>/dev/null; then
         passwd -u "${ADMIN_USER}" 2>/dev/null || true
-        echo "  OK: password set via usermod (bypass PAM), account unlocked"
+        _log_ok "Parolă setată via usermod (bypass PAM), cont deblocat"
     else
-        echo "  ERROR: usermod -p failed"
-        ERRORS=$((ERRORS + 1))
+        _log_fail "usermod -p a eșuat"
     fi
 else
-    echo "  ERROR: openssl passwd failed"
-    ERRORS=$((ERRORS + 1))
+    _log_fail "openssl passwd a eșuat"
 fi
 
 # =============================================================================
@@ -83,16 +98,17 @@ fi
 # Inserare INAINTE de Include — prima aparitie castiga in sshd(8),
 # bate orice fisier din sshd_config.d/ (inclusiv cel scris de cloud-init).
 
-echo "[2/4] Enforcing SSH password authentication..."
+echo ""
+_log_step "[2/4] Activare SSH password authentication..."
 
 sed -i '/^PasswordAuthentication /d' /etc/ssh/sshd_config 2>/dev/null || true
 
 if grep -q '^Include /etc/ssh/sshd_config.d' /etc/ssh/sshd_config 2>/dev/null; then
     sed -i '/^Include \/etc\/ssh\/sshd_config\.d/i PasswordAuthentication yes' /etc/ssh/sshd_config
-    echo "  Inserted PasswordAuthentication yes before Include"
+    _log_info "PasswordAuthentication yes inserat înainte de Include"
 else
     sed -i '1i PasswordAuthentication yes' /etc/ssh/sshd_config
-    echo "  Inserted PasswordAuthentication yes at top of sshd_config"
+    _log_info "PasswordAuthentication yes inserat la începutul sshd_config"
 fi
 
 for f in /etc/ssh/sshd_config.d/*.conf; do
@@ -106,10 +122,9 @@ PermitRootLogin no
 SSHDCONF
 
 if systemctl restart ssh 2>/dev/null; then
-    echo "  OK: sshd restarted"
+    _log_ok "sshd restartat cu PasswordAuthentication=yes, PermitRootLogin=no"
 else
-    echo "  WARN: sshd restart failed"
-    ERRORS=$((ERRORS + 1))
+    _log_warn "sshd restart eșuat"
 fi
 
 # =============================================================================
@@ -118,36 +133,47 @@ fi
 # azureadmin e creat de cloud-init la first boot, dupa Packer build.
 # .xsession trebuie creat dupa ce /home/azureadmin/ exista.
 
-echo "[3/4] Configuring xRDP session for ${ADMIN_USER}..."
+echo ""
+_log_step "[3/4] Configurare sesiune xRDP/XFCE4 pentru ${ADMIN_USER}..."
 if [ -d "/home/${ADMIN_USER}" ]; then
     echo "xfce4-session" > "/home/${ADMIN_USER}/.xsession"
     chmod +x "/home/${ADMIN_USER}/.xsession"
     chown "${ADMIN_USER}:${ADMIN_USER}" "/home/${ADMIN_USER}/.xsession"
-    echo "  OK: .xsession created"
+    _log_ok ".xsession creat (xfce4-session)"
 
     mkdir -p "/home/${ADMIN_USER}/ansible-workspace"
     chown -R "${ADMIN_USER}:${ADMIN_USER}" "/home/${ADMIN_USER}/ansible-workspace" 2>/dev/null || true
-    echo "  OK: ansible-workspace created"
+    _log_ok "ansible-workspace pregătit"
 else
-    echo "  WARN: /home/${ADMIN_USER} not found — skipping .xsession"
-    ERRORS=$((ERRORS + 1))
+    _log_warn "/home/${ADMIN_USER} nu există — .xsession sărit"
 fi
 
-systemctl restart xrdp 2>/dev/null && echo "  OK: xrdp restarted" || echo "  WARN: xrdp restart skipped"
+systemctl restart xrdp 2>/dev/null \
+    && _log_ok "xrdp restartat" \
+    || _log_warn "xrdp restart sărit (poate nu e instalat)"
 
 # =============================================================================
 # STEP 4: Verifica servicii
 # =============================================================================
 
-echo "[4/4] Verifying services..."
-systemctl is-active ssh  2>/dev/null && echo "  OK: ssh  running" || echo "  WARN: ssh  not active"
-systemctl is-active xrdp 2>/dev/null && echo "  OK: xrdp running" || echo "  WARN: xrdp not active"
+echo ""
+_log_step "[4/4] Verificare servicii..."
+systemctl is-active ssh  2>/dev/null && _log_ok "ssh  activ" || _log_warn "ssh  nu este activ"
+systemctl is-active xrdp 2>/dev/null && _log_ok "xrdp activ" || _log_warn "xrdp nu este activ"
 
-echo "========================================="
-echo "Finalization complete (errors: ${ERRORS})"
-echo "  Log saved: ${LOGFILE}"
-echo "========================================="
+# ── Rezumat final ────────────────────────────────────────────
+_DUR=$(( $(date +%s) - _TS ))
+echo ""
+_STATUS_CLR=$([ "$_FAIL" -gt 0 ] && echo "$_C_RED" || ([ "$_WARN" -gt 0 ] && echo "$_C_YELLOW" || echo "$_C_GREEN"))
+echo -e "${_STATUS_CLR}${_C_BOLD}  ${_SEP}${_C_RST}"
+[ "$_FAIL" -gt 0 ] \
+    && echo -e "${_C_RED}${_C_BOLD}  FINALIZARE CU ERORI (${ERRORS} erori critice)${_C_RST}" \
+    || echo -e "${_C_GREEN}${_C_BOLD}  JUMPHOST FINALIZAT CU SUCCES${_C_RST}"
+echo -e "  Durată : $((_DUR/60))m $((_DUR%60))s   |   OK: $_OK   FAIL: $_FAIL   WARN: $_WARN"
+echo -e "${_C_GRAY}  Log: ${LOGFILE}${_C_RST}"
+echo -e "${_STATUS_CLR}${_C_BOLD}  ${_SEP}${_C_RST}"
+echo ""
 
-# Intotdeauna exit 0 — CSE trebuie sa raporteze success catre Azure
-# chiar daca unele operatii au esuat intern (logate mai sus).
+# Întotdeauna exit 0 — CSE trebuie să raporteze success către Azure
+# chiar dacă unele operații au eșuat intern (logate mai sus).
 exit 0

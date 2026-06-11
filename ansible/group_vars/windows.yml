@@ -13,6 +13,6 @@ ansible_port: 5985
 # Disable sudo become for Windows (incompatible with PowerShell)
 ansible_become: no
 
-# WinRM Authentication
-# PRODUCTION: Move to Ansible Vault!
-ansible_password: "Str0ng_P@ssw0rd_2026!"
+# WinRM Authentication — password from Ansible Vault (group_vars/all/vault.yml).
+# Vault is created on the jumphost by: bash scripts/create-ansible-vault.sh
+ansible_password: "{{ vault_admin_password }}"

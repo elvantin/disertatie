@@ -4,10 +4,15 @@
 # Host: {{ inventory_hostname }}
 # Managed by Ansible (monitoring role). Do not edit manually.
 #
-# Checks: CPU, Memory, Disk, Network, Services, Ports
+# Checks: CPU, Memory, Disk, Services, Ports
 # Logs via: logger -t {{ monitoring_syslog_tag }} "LEVEL KEY=VALUE ..."
 # AMA collects via DCR (Syslog facility: user)
 # KQL queries ProcessName == "{{ monitoring_syslog_tag }}"
+#
+# SERVICE/PORT failure flow:
+#   Check -> fail -> sleep 30s -> recheck -> fail -> sleep 30s -> recheck -> ALERT
+#   All 3 checks must fail before logging ALERT (confirmed ~60s outage)
+# CPU/Disk/Memory: logged immediately, Azure Monitor failingPeriods handles confirmation
 # ============================================================
 
 TAG="{{ monitoring_syslog_tag }}"
@@ -17,27 +22,23 @@ MEM_THRESHOLD={{ monitoring_mem_threshold }}
 HOSTNAME=$(hostname)
 
 log_ok()    { logger -t "$TAG" "OK $*"; }
-log_warn()  { logger -t "$TAG" "WARN $*"; }
 log_alert() { logger -t "$TAG" "ALERT $*"; }
 
-# ==============================================================
-# CPU
-# vmstat 1 2: takes 2 samples 1 second apart — far more accurate than top -bn1
-# Column 15 = idle %; column order: r b swpd free buff cache si so bi bo in cs us sy id wa st
-# ==============================================================
+# ============================================================
+# CPU (vmstat 1 2: 2 samples 1s apart — accurate baseline)
+# ============================================================
 CPU_IDLE=$(vmstat 1 2 | tail -1 | awk '{print $15}')
 CPU_USED=$(( 100 - ${CPU_IDLE:-100} ))
-CPU_INT=${CPU_USED}
 
-if [ "${CPU_INT:-0}" -ge "$CPU_THRESHOLD" ] 2>/dev/null; then
-    log_alert "CPU=${CPU_INT} THRESHOLD=${CPU_THRESHOLD} HOST=${HOSTNAME}"
+if [ "${CPU_USED:-0}" -ge "$CPU_THRESHOLD" ] 2>/dev/null; then
+    log_alert "CPU=${CPU_USED} THRESHOLD=${CPU_THRESHOLD} HOST=${HOSTNAME}"
 else
-    log_ok "CPU=${CPU_INT} HOST=${HOSTNAME}"
+    log_ok "CPU=${CPU_USED} HOST=${HOSTNAME}"
 fi
 
-# ==============================================================
+# ============================================================
 # Memory
-# ==============================================================
+# ============================================================
 MEM_TOTAL=$(grep MemTotal     /proc/meminfo | awk '{print $2}')
 MEM_AVAIL=$(grep MemAvailable /proc/meminfo | awk '{print $2}')
 if [ -n "$MEM_TOTAL" ] && [ "$MEM_TOTAL" -gt 0 ]; then
@@ -49,9 +50,9 @@ if [ -n "$MEM_TOTAL" ] && [ "$MEM_TOTAL" -gt 0 ]; then
     fi
 fi
 
-# ==============================================================
-# Disk (skip tmpfs and udev virtual filesystems)
-# ==============================================================
+# ============================================================
+# Disk (skip tmpfs / udev / overlay virtual filesystems)
+# ============================================================
 while IFS= read -r line; do
     USE=$(echo "$line"   | awk '{print $5}' | tr -d '%')
     MOUNT=$(echo "$line" | awk '{print $6}')
@@ -67,26 +68,109 @@ done < <(df -h --output=source,size,used,avail,pcent,target 2>/dev/null \
          | grep -v udev \
          | grep -v "^overlay")
 
-# ==============================================================
-# Services (systemd)
-# ==============================================================
+{% if monitoring_linux_services or monitoring_ports %}
+# ============================================================
+# Services and Ports — with 3-check retry confirmation
+# Phase 1: check all, log OK immediately, collect failures
+# Phase 2 (if failures): sleep 30s, recheck failures only
+# Phase 3 (if still failures): sleep 30s, final check, log ALERT
+# ============================================================
+
+# --- Phase 1: initial check ---
+# NOTE: 'failed' state (service crashed) alerts immediately — no retry needed.
+# 'inactive' state goes through retry confirmation (might be intentional stop or restart).
 {% for svc in monitoring_linux_services %}
-if systemctl is-active --quiet "{{ svc }}" 2>/dev/null; then
+_SVC_STATE_{{ loop.index }}=$(systemctl is-active "{{ svc }}" 2>/dev/null)
+if [ "${_SVC_STATE_{{ loop.index }}}" = "active" ]; then
     log_ok "SERVICE={{ svc }} STATUS=active HOST=${HOSTNAME}"
+    SVC_FAIL_{{ loop.index }}=0
+elif [ "${_SVC_STATE_{{ loop.index }}}" = "failed" ]; then
+    log_alert "SERVICE={{ svc }} STATUS=failed HOST=${HOSTNAME}"
+    SVC_FAIL_{{ loop.index }}=0  # already alerted, skip retry
 else
-    log_alert "SERVICE={{ svc }} STATUS=inactive HOST=${HOSTNAME}"
+    SVC_FAIL_{{ loop.index }}=1  # inactive/unknown — confirm via retry
 fi
 {% endfor %}
 
-# ==============================================================
-# Ports (TCP listening on localhost)
-# ==============================================================
 {% for p in monitoring_ports %}
-if ss -tlnp 2>/dev/null | grep -qE ":{{ p.port }}\b"; then
+if ss -tlnp 2>/dev/null | grep -qE ":{{ p.port }}(\s|$)"; then
     log_ok "PORT={{ p.port }} DESC={{ p.description }} STATUS=listening HOST=${HOSTNAME}"
+    PORT_FAIL_{{ loop.index }}=0
 else
-    log_alert "PORT={{ p.port }} DESC={{ p.description }} STATUS=not_listening HOST=${HOSTNAME}"
+    PORT_FAIL_{{ loop.index }}=1
 fi
 {% endfor %}
+
+# Check if any failure was detected
+NEED_RETRY=0
+{% for svc in monitoring_linux_services %}
+[ "$SVC_FAIL_{{ loop.index }}" -eq 1 ] && NEED_RETRY=1
+{% endfor %}
+{% for p in monitoring_ports %}
+[ "$PORT_FAIL_{{ loop.index }}" -eq 1 ] && NEED_RETRY=1
+{% endfor %}
+
+if [ "$NEED_RETRY" -eq 1 ]; then
+
+    # --- Phase 2: recheck after 30s ---
+    sleep 30
+
+{% for svc in monitoring_linux_services %}
+    if [ "$SVC_FAIL_{{ loop.index }}" -eq 1 ]; then
+        if systemctl is-active --quiet "{{ svc }}" 2>/dev/null; then
+            SVC_FAIL2_{{ loop.index }}=0   # recovered
+        else
+            SVC_FAIL2_{{ loop.index }}=1
+        fi
+    else
+        SVC_FAIL2_{{ loop.index }}=0
+    fi
+{% endfor %}
+
+{% for p in monitoring_ports %}
+    if [ "$PORT_FAIL_{{ loop.index }}" -eq 1 ]; then
+        if ss -tlnp 2>/dev/null | grep -qE ":{{ p.port }}(\s|$)"; then
+            PORT_FAIL2_{{ loop.index }}=0  # recovered
+        else
+            PORT_FAIL2_{{ loop.index }}=1
+        fi
+    else
+        PORT_FAIL2_{{ loop.index }}=0
+    fi
+{% endfor %}
+
+    NEED_RETRY2=0
+{% for svc in monitoring_linux_services %}
+    [ "$SVC_FAIL2_{{ loop.index }}" -eq 1 ] && NEED_RETRY2=1
+{% endfor %}
+{% for p in monitoring_ports %}
+    [ "$PORT_FAIL2_{{ loop.index }}" -eq 1 ] && NEED_RETRY2=1
+{% endfor %}
+
+    if [ "$NEED_RETRY2" -eq 1 ]; then
+
+        # --- Phase 3: final check after another 30s -> ALERT if still failing ---
+        sleep 30
+
+{% for svc in monitoring_linux_services %}
+        if [ "$SVC_FAIL2_{{ loop.index }}" -eq 1 ]; then
+            if ! systemctl is-active --quiet "{{ svc }}" 2>/dev/null; then
+                FINAL_STATUS=$(systemctl is-active "{{ svc }}" 2>/dev/null)
+                log_alert "SERVICE={{ svc }} STATUS=${FINAL_STATUS:-inactive} HOST=${HOSTNAME}"
+            fi
+        fi
+{% endfor %}
+
+{% for p in monitoring_ports %}
+        if [ "$PORT_FAIL2_{{ loop.index }}" -eq 1 ]; then
+            if ! ss -tlnp 2>/dev/null | grep -qE ":{{ p.port }}(\s|$)"; then
+                log_alert "PORT={{ p.port }} DESC={{ p.description }} STATUS=not_listening HOST=${HOSTNAME}"
+            fi
+        fi
+{% endfor %}
+
+    fi  # NEED_RETRY2
+fi  # NEED_RETRY
+{% endif %}
 
 exit 0

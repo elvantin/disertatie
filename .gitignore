@@ -50,6 +50,14 @@ ansible/*.retry
 ansible/**/*.retry
 *.retry
 
+# Ansible Vault — generated on jumphost by scripts/create-ansible-vault.sh
+# Contains encrypted secrets fetched from kv-mediasrl-persistent.
+ansible/group_vars/all/vault.yml
+.vault-pass
+
+# Secrets CSV — real file with passwords, only .example committed
+scripts/secrets.csv
+
 # ----- Python -----
 __pycache__/
 *.py[cod]
@@ -107,6 +115,7 @@ $RECYCLE.BIN/
 # ----- Logs -----
 *.log
 logs/
+!logs/.gitkeep
 
 # ----- Terraform (in case of accidental usage) -----
 .terraform/

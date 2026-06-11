@@ -19,7 +19,8 @@ AFTER_FILE="${DEMO_DIR}/mysql-hardening-after.txt"
 
 DB_HOST="vm-db-01"
 MYSQL_BIN="C:/Program Files/MySQL/MySQL Server 8.0/bin/mysql.exe"
-ROOT_PASS="Str0ng_MySQL_R00t_2026!"
+# Fetch MySQL root password from Key Vault via MSI (jumphost must be logged in)
+ROOT_PASS="$(az keyvault secret show --vault-name kv-mediasrl-persistent --name mysql-root-password --query value -o tsv)"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
