@@ -1,266 +1,193 @@
-# Windows WinRM Bootstrap Instructions
+# Windows WinRM Bootstrap — vm-db-01 / vm-fs-01
 
-## Overview
-After deploying Windows Server VMs with Bicep, they need WinRM (Windows Remote Management) configured to allow Ansible connectivity from the jumphost.
+## Rezumat
 
-**Target VMs:**
-- vm-db-01 (Windows Server 2022 - SQL Server)
-- vm-fs-01 (Windows Server 2022 - File Server)
+**WinRM este configurat AUTOMAT** la deployment-ul Bicep — nu este nevoie de nicio interventie manuala.
 
-**What WinRM Enables:**
-- Remote PowerShell execution
-- Ansible configuration management via `ansible_connection=winrm`
-- Remote management from jumphost without RDP
+Scriptul `bicep/scripts/windows-winrm-bootstrap.ps1` ruleaza pe Windows VMs la deployment
+via resursa `Microsoft.Compute/virtualMachines/runCommands` din `bicep/modules/compute.bicep`.
 
-## Prerequisites
+---
 
-- ✅ Infrastructure deployed via Bicep
-- ✅ Windows VMs are running
-- ✅ Azure CLI installed on your local machine
-- ✅ Network connectivity to VMs (NSG rules allow management)
+## VM-uri afectate
 
-## Quick Bootstrap (Windows PowerShell)
+| VM | OS | Rol |
+|----|-----|-----|
+| vm-db-01 | Windows Server 2022 | MySQL Community Server 8.0 |
+| vm-fs-01 | Windows Server 2022 | SMB File Server |
 
-Run this command from your **local machine** (not jumphost) to configure WinRM on Windows VMs:
+---
 
-### For vm-db-01 (Database Server)
+## Ce face scriptul de bootstrap (automat)
+
+Scriptul `bicep/scripts/windows-winrm-bootstrap.ps1` ruleaza la prima pornire a VM-ului:
+
+1. Activeaza PowerShell Remoting (`Enable-PSRemoting -Force`)
+2. Configureaza serviciul WinRM (pornire automata)
+3. Creeaza listener HTTP pe portul 5985
+4. Configureaza metodele de autentificare (Basic, Negotiate, Kerberos, CredSSP)
+5. Permite trafic neencriptat pe HTTP (retea privata, acces restrictionat NSG)
+6. Configureaza Windows Firewall (deschide portul 5985)
+7. Seteaza profilul de retea la Private
+8. Activeaza CredSSP pentru autentificare delegata
+9. Testeaza configuratia WinRM local
+10. Salveaza logul la `C:\Logs\mediasrl\winrm-bootstrap-*.log`
+
+**Durata:** ~2-3 minute per VM (fara reboot)
+
+---
+
+## Unde se afla scriptul
+
+```
+bicep/scripts/windows-winrm-bootstrap.ps1
+```
+
+Scriptul este injectat in VM ca resursa Bicep in `bicep/modules/compute.bicep`:
+
+```bicep
+resource winrmRunCommand 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' = if (osType == 'Windows' && customScriptContent != '') {
+  parent: vm
+  name: 'WinRMBootstrap'
+  properties: {
+    source: {
+      script: customScriptContent  // continutul windows-winrm-bootstrap.ps1
+    }
+    asyncExecution: false
+    timeoutInSeconds: 600
+  }
+}
+```
+
+---
+
+## Verificare dupa deployment
+
+### Din jumphost (Ansible)
+
+```bash
+cd ~/ansible
+
+# Test conectivitate WinRM
+ansible windows -m win_ping
+
+# Verbose (debug conectivitate)
+ansible windows -m win_ping -vvv
+```
+
+### Pe VM (daca e necesar debug via RDP)
 
 ```powershell
+# Verifica serviciul WinRM
+Get-Service WinRM
+
+# Verifica configuratia
+Test-WSMan -ComputerName localhost
+winrm get winrm/config
+
+# Verifica listener-ul
+Get-ChildItem WSMan:\localhost\Listener
+
+# Verifica regula firewall
+Get-NetFirewallRule -DisplayGroup 'Windows Remote Management'
+```
+
+### Log bootstrap
+
+```powershell
+# Via az run-command (de pe masina locala)
 az vm run-command invoke `
   --resource-group rg-mediasrl-productie-swedencentral `
   --name vm-db-01 `
   --command-id RunPowerShellScript `
-  --scripts '@scripts/bootstrap-windows-winrm.ps1'
+  --scripts "Get-Content C:\Logs\mediasrl\winrm-bootstrap-*.log -Tail 50"
 ```
 
-### For vm-fs-01 (File Server)
+Log salvat la: `C:\Logs\mediasrl\winrm-bootstrap-YYYYMMDD-HHMMSS.log`
 
-```powershell
-az vm run-command invoke `
-  --resource-group rg-mediasrl-productie-swedencentral `
-  --name vm-fs-01 `
-  --command-id RunPowerShellScript `
-  --scripts '@scripts/bootstrap-windows-winrm.ps1'
+---
+
+## Configuratie Ansible Inventory (group_vars/windows.yml)
+
+```yaml
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5985
+ansible_user: azureadmin
+ansible_password: "{{ vault_admin_password }}"  # din Ansible Vault (kv-mediasrl-persistent)
 ```
 
-## Quick Bootstrap (Linux/macOS Bash)
+**Portul 5985 (WinRM HTTP) este restrictionat via NSG la snet-mgmt** — accesibil doar din jumphost.
 
-```bash
-# Database Server
-az vm run-command invoke \
-  --resource-group rg-mediasrl-productie-swedencentral \
-  --name vm-db-01 \
-  --command-id RunPowerShellScript \
-  --scripts @scripts/bootstrap-windows-winrm.ps1
-
-# File Server
-az vm run-command invoke \
-  --resource-group rg-mediasrl-productie-swedencentral \
-  --name vm-fs-01 \
-  --command-id RunPowerShellScript \
-  --scripts @scripts/bootstrap-windows-winrm.ps1
-```
-
-## What the Bootstrap Script Does
-
-1. ✅ Enables PowerShell Remoting (`Enable-PSRemoting -Force`)
-2. ✅ Configures WinRM service (Automatic startup)
-3. ✅ Creates HTTP listener on port 5985
-4. ✅ Configures authentication methods (Basic, Negotiate, Kerberos, CredSSP)
-5. ✅ Allows unencrypted traffic (for HTTP - use HTTPS in production)
-6. ✅ Configures Windows Firewall rules (opens port 5985)
-7. ✅ Sets network profile to Private
-8. ✅ Enables CredSSP for delegated authentication
-9. ✅ Tests WinRM configuration locally
-10. ✅ Logs all output to `C:\Temp\winrm-bootstrap-YYYYMMDD-HHMMSS.log`
-
-## Expected Duration
-
-- Script execution: ~2-3 minutes per VM
-- No reboot required
-
-## After Bootstrap
-
-### Verify WinRM from Local Machine
-
-```powershell
-# Test WinRM connectivity (requires PSRemoting)
-Enter-PSSession -ComputerName <vm-private-ip> -Credential azureadmin
-
-# Or using Test-WSMan
-Test-WSMan -ComputerName <vm-private-ip> -Port 5985
-```
-
-### Test from Jumphost (Ansible)
-
-From jumphost via SSH:
-
-```bash
-# Test WinRM connectivity with Ansible
-ansible windows -m win_ping
-
-# If inventory is not configured yet, test manually:
-ansible vm-db-01 -i "vm-db-01," -m win_ping \
-  -e "ansible_connection=winrm" \
-  -e "ansible_winrm_transport=ntlm" \
-  -e "ansible_winrm_server_cert_validation=ignore" \
-  -e "ansible_port=5985" \
-  -e "ansible_user=azureadmin" \
-  -e "ansible_password=Str0ng_P@ssw0rd_2026!"
-```
-
-## WinRM Configuration Details
-
-### Ports Opened:
-- **5985** (HTTP) - Unencrypted WinRM
-- **5986** (HTTPS) - Encrypted WinRM (not configured by default)
-
-### Authentication Methods Enabled:
-- **Basic** - Username/password (use with caution, requires HTTPS in production)
-- **Negotiate** - NTLM or Kerberos (automatic selection)
-- **Kerberos** - Active Directory authentication
-- **CredSSP** - Credential delegation (for multi-hop scenarios)
-
-### Ansible Inventory Variables:
-
-```ini
-[database]
-vm-db-01 ansible_host=10.10.10.7
-
-[fileserver]
-vm-fs-01 ansible_host=10.10.10.8
-
-[windows:children]
-database
-fileserver
-
-[windows:vars]
-ansible_connection=winrm
-ansible_winrm_transport=ntlm
-ansible_winrm_server_cert_validation=ignore
-ansible_port=5985
-ansible_user=azureadmin
-ansible_password=Str0ng_P@ssw0rd_2026!
-```
-
-## Security Notes
-
-⚠️ **IMPORTANT:** This configuration uses **HTTP (port 5985)** for simplicity. For production environments:
-
-1. **Use HTTPS (port 5986)** with valid SSL certificates
-2. **Disable Basic authentication** over HTTP
-3. **Use Kerberos or CredSSP** instead of NTLM
-4. **Store passwords in Ansible Vault**, not plaintext inventory
-5. **Restrict WinRM access** to jumphost IP only (NSG rules)
-
-### Hardening WinRM (Post-Deployment)
-
-```powershell
-# Disable HTTP listener (use HTTPS only)
-Remove-Item -Path WSMan:\localhost\Listener -Recurse -Force
-
-# Create HTTPS listener with certificate
-New-Item -Path WSMan:\localhost\Listener -Transport HTTPS -Address * -CertificateThumbprint <thumbprint>
-
-# Disable unencrypted traffic
-Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $false
-
-# Disable Basic authentication
-Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $false
-```
+---
 
 ## Troubleshooting
 
-### WinRM Not Responding
+### WinRM nu raspunde
 
-Check if WinRM service is running:
-
-```powershell
-az vm run-command invoke `
-  --resource-group rg-mediasrl-productie-swedencentral `
-  --name vm-db-01 `
-  --command-id RunPowerShellScript `
-  --scripts "Get-Service WinRM"
-```
-
-### Firewall Blocking WinRM
-
-Check firewall rules:
+Verifica serviciul:
 
 ```powershell
 az vm run-command invoke `
   --resource-group rg-mediasrl-productie-swedencentral `
   --name vm-db-01 `
   --command-id RunPowerShellScript `
-  --scripts "Get-NetFirewallRule -DisplayGroup 'Windows Remote Management'"
+  --scripts "Get-Service WinRM | Select-Object Name,Status,StartType"
 ```
 
-### Test WinRM Locally on VM
+### Firewall blocheaza portul 5985
 
-Via RDP (if needed for debugging):
-
-```powershell
-# Test WinRM locally
-Test-WSMan -ComputerName localhost
-
-# View WinRM configuration
-winrm get winrm/config
-
-# Check listeners
-Get-ChildItem WSMan:\localhost\Listener
-```
-
-### Ansible Connection Fails
-
-Common errors and solutions:
-
-**Error:** `winrm or requests is not installed: No module named 'winrm'`
-- **Solution:** Install python3-winrm on jumphost: `sudo apt install -y python3-winrm`
-
-**Error:** `401 Unauthorized`
-- **Solution:** Check username/password in inventory, verify Basic auth is enabled
-
-**Error:** `Connection timeout`
-- **Solution:** Check NSG rules allow jumphost → Windows VMs on port 5985
-
-**Error:** `SSL certificate validation failed`
-- **Solution:** Add `ansible_winrm_server_cert_validation=ignore` to inventory
-
-## Manual Configuration (Alternative)
-
-If `az vm run-command` doesn't work, use Azure Portal Serial Console or RDP:
-
-1. Azure Portal → vm-db-01 → Serial Console (or RDP)
-2. Login as `azureadmin`
-3. Open PowerShell as Administrator
-4. Copy/paste commands from `scripts/bootstrap-windows-winrm.ps1`
-
-## Verification Checklist
-
-- [ ] WinRM service is running on Windows VMs
-- [ ] Port 5985 is open in Windows Firewall
-- [ ] NSG allows jumphost → Windows VMs on port 5985
-- [ ] `Test-WSMan -ComputerName localhost` succeeds on Windows VMs
-- [ ] `ansible windows -m win_ping` succeeds from jumphost
-- [ ] Bootstrap log exists in `C:\Temp\winrm-bootstrap-*.log`
-
-## Next Steps After WinRM Bootstrap
-
-1. Configure Ansible inventory with Windows VMs
-2. Test connectivity: `ansible windows -m win_ping`
-3. Run Ansible playbooks to configure SQL Server and File Server
-4. Harden WinRM configuration (HTTPS, disable Basic auth)
-
-## Bootstrap Log File
-
-All bootstrap output is saved to `C:\Temp\winrm-bootstrap-YYYYMMDD-HHMMSS.log` on the Windows VM for troubleshooting.
-
-To view the log:
+Verifica:
 
 ```powershell
 az vm run-command invoke `
   --resource-group rg-mediasrl-productie-swedencentral `
   --name vm-db-01 `
   --command-id RunPowerShellScript `
-  --scripts "Get-Content C:\Temp\winrm-bootstrap-*.log -Tail 50"
+  --scripts "Get-NetFirewallRule -DisplayGroup 'Windows Remote Management' | Select-Object DisplayName,Enabled,Direction"
 ```
+
+### Ansible: erori comune
+
+| Eroare | Cauza | Solutie |
+|--------|-------|---------|
+| `No module named 'winrm'` | pywinrm nu e instalat pe jumphost | `sudo pip3 install pywinrm` |
+| `401 Unauthorized` | Credentiale gresite | Verifica vault Ansible |
+| `Connection timeout` | NSG blocheaza portul 5985 | Verifica `nsg-prod` permite mgmt→prod:5985 |
+| `SSL certificate validation failed` | TLS mismatch | Adauga `ansible_winrm_server_cert_validation: ignore` |
+
+### Resetare WinRM manuala (caz extrem)
+
+Daca WinRM nu a fost configurat corect la deployment si VM-ul ruleaza deja,
+poti rula scriptul manual via `az vm run-command`:
+
+```powershell
+$script = Get-Content -Path 'bicep\scripts\windows-winrm-bootstrap.ps1' -Raw
+
+az vm run-command invoke `
+  --resource-group rg-mediasrl-productie-swedencentral `
+  --name vm-db-01 `
+  --command-id RunPowerShellScript `
+  --scripts $script
+```
+
+---
+
+## Note de securitate
+
+- WinRM HTTP (5985) este protejat la nivel NSG — accesibil **exclusiv** din `snet-mgmt` (10.10.12.0/24)
+- Parola admin este stocata in Ansible Vault (`vault_admin_password`), preluata din `kv-mediasrl-persistent`
+- Nu exista parole hardcodate in niciun fisier din repository
+- Hardening WinRM (HTTPS, dezactivare Basic auth) se aplica via rolul Ansible `hardening`
+
+---
+
+## Fisiere relevante
+
+| Fisier | Scop |
+|--------|------|
+| `bicep/scripts/windows-winrm-bootstrap.ps1` | Scriptul PowerShell de bootstrap WinRM |
+| `bicep/modules/compute.bicep` | Resursa `runCommands` care ruleaza scriptul |
+| `ansible/group_vars/windows.yml` | Variabile WinRM pentru Ansible |
+| `ansible/inventory/azure_rm.yml` | Inventar dinamic (include Windows VMs) |

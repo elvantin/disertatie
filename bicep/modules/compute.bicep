@@ -301,28 +301,22 @@ resource customScriptLinux 'Microsoft.Compute/virtualMachines/extensions@2023-09
   }
 }
 
-// ----- VM Extension: Custom Script (Windows) -----
+// ----- VM Run Command: WinRM Bootstrap (Windows) -----
+// runCommands accepts the script content directly — no cmd.exe command-line length limit.
+// Custom Script Extension (CSE) was replaced because the base64-encoded script exceeded
+// the 8191-char cmd.exe limit when passed via commandToExecute.
 
-// Build the PowerShell command using multi-line string + replace() to avoid Bicep quote escaping issues
-var windowsScriptB64 = customScriptContent != '' ? base64(customScriptContent) : ''
-var windowsCmdTemplate = '''
-powershell -ExecutionPolicy Bypass -Command "$d=[Convert]::FromBase64String('__B64__');$t=[Text.Encoding]::UTF8.GetString($d);Set-Content -Path C:/Temp/bootstrap.ps1 -Value $t;& C:/Temp/bootstrap.ps1"
-'''
-var windowsBootstrapCmd = replace(windowsCmdTemplate, '__B64__', windowsScriptB64)
-
-resource customScriptWindows 'Microsoft.Compute/virtualMachines/extensions@2023-09-01' = if (osType == 'Windows' && customScriptContent != '') {
+resource winrmRunCommand 'Microsoft.Compute/virtualMachines/runCommands@2023-09-01' = if (osType == 'Windows' && customScriptContent != '') {
   parent: vm
-  name: 'CustomScriptExtension'
+  name: 'WinRMBootstrap'
   location: location
   tags: tags
   properties: {
-    publisher: 'Microsoft.Compute'
-    type: 'CustomScriptExtension'
-    typeHandlerVersion: '1.10'
-    autoUpgradeMinorVersion: true
-    protectedSettings: {
-      commandToExecute: windowsBootstrapCmd
+    source: {
+      script: customScriptContent
     }
+    asyncExecution: false
+    timeoutInSeconds: 600
   }
 }
 

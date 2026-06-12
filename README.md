@@ -1,4 +1,4 @@
-# Infrastructura Cloud Automatizata - SC MEDIA SRL
+# Infrastructura Cloud Automatizata — SC MEDIA SRL
 
 **Proiect disertatie Master**: Proiectarea, implementarea si securizarea unei infrastructuri cloud automatizate in Microsoft Azure utilizand Bicep, Packer si Ansible
 
@@ -8,40 +8,35 @@
 
 ### Infrastructura (6 VM-uri)
 
-| VM | OS | Rol | Subnet | IP Public | Specs |
-|----|----|----|--------|-----------|-------|
-| vm-jmp-01 | Ubuntu 22.04 LTS + XFCE + xRDP | Jumphost / Ansible Control Node | mgmt | Persistent | D2s_v3 (2 vCPU, 8GB RAM, 64GB SSD) |
-| vm-web-01 | Ubuntu 22.04 LTS | Nginx reverse proxy + SSL/Let's Encrypt | prod | Persistent | B2s (2 vCPU, 4GB RAM, 32GB SSD) |
-| vm-app-01 | Ubuntu 22.04 LTS | Application server (Nginx API port 8080) | prod | Privat | B2s (2 vCPU, 4GB RAM, 32GB SSD) |
-| vm-cms-01 | Ubuntu 22.04 LTS | WordPress + PHP-FPM + Postfix | prod | Privat | B2s (2 vCPU, 4GB RAM, 32GB SSD) |
-| vm-db-01 | Windows Server 2022 | MySQL Community Server 8.0 | prod | Privat | B2s (2 vCPU, 4GB RAM, 128GB SSD) |
-| vm-fs-01 | Windows Server 2022 | File Server (SMB shares) | prod | Privat | B2s (2 vCPU, 4GB RAM, 128GB SSD) |
+| VM | OS | Rol | Subnet | IP Public | Size |
+|----|----|-----|--------|-----------|------|
+| vm-jmp-01 | Ubuntu 22.04 LTS + XFCE + xRDP | Jumphost / Ansible Control Node | mgmt | Persistent | Standard_B4ls_v2 |
+| vm-web-01 | Ubuntu 22.04 LTS | nginx reverse proxy + SSL/TLS | prod | Persistent | Standard_B2s |
+| vm-app-01 | Ubuntu 22.04 LTS | Application server (port 8080) | prod | Privat | Standard_B2s |
+| vm-cms-01 | Ubuntu 22.04 LTS | WordPress + PHP-FPM + Postfix | prod | Privat | Standard_B2s |
+| vm-db-01  | Windows Server 2022 | MySQL Community Server 8.0 | prod | Privat | Standard_B2s |
+| vm-fs-01  | Windows Server 2022 | File Server (SMB) | prod | Privat | Standard_B2s |
 
 ### Networking
 
-- **VNet:** 10.10.0.0/20
-- **Subnets:**
-  - Management: 10.10.12.0/24
-  - Production: 10.10.10.0/24
-  - Development: 10.10.11.0/24
+- **VNet:** `vnet-mediasrl-productie` — 10.10.0.0/20
+- **Subnets:** snet-mgmt 10.10.12.0/24 | snet-prod 10.10.10.0/24 | snet-dev 10.10.11.0/24
 - **NSGs:** 3 Network Security Groups (mgmt, prod, dev)
-- **Access:** RDP catre jumphost (port 3389), SSH intre VMs, WinRM catre Windows (port 5985)
-- **HTTP (80):** Restrictionat doar la VNet (fara acces extern)
-- **HTTPS (443):** Deschis public (SSL Let's Encrypt)
+- **HTTP (80):** restrictionat la VNet — acces extern via HTTPS (443) prin nginx
+- **WinRM (5985):** acces exclusiv din snet-mgmt (jumphost)
 
 ### Flux de trafic
 
 ```
-Internet --> vm-web-01 (nginx reverse proxy, HTTPS:443)
-               |-- proxy_pass --> vm-cms-01:80 (WordPress)
-               |-- proxy_pass --> vm-app-01:8080 (API REST)
+Internet ──[HTTPS:443]──► vm-web-01 (nginx reverse proxy)
+                              ├──[HTTP:80]──► vm-cms-01 (WordPress)
+                              └──[HTTP:8080]──► vm-app-01 (REST API)
 
-vm-cms-01 (WordPress) --> vm-db-01:3306 (MySQL - wordpress_db)
-vm-app-01 (API) --> serveste JSON static (date coerente cu MySQL)
+vm-cms-01 ──[MySQL:3306]──► vm-db-01 (MySQL 8.0)
 
-vm-jmp-01 (Ansible control node)
-  |-- SSH --> vm-web-01, vm-app-01, vm-cms-01
-  |-- WinRM --> vm-db-01, vm-fs-01
+Admin ──[RDP:3389]──► vm-jmp-01
+vm-jmp-01 ──[SSH:22]──► vm-web-01, vm-app-01, vm-cms-01
+vm-jmp-01 ──[WinRM:5985]──► vm-db-01, vm-fs-01
 ```
 
 ---
@@ -55,8 +50,8 @@ vm-jmp-01 (Ansible control node)
 | Config Management | Ansible | Configurare post-deployment si orchestrare |
 | CI/CD | Azure DevOps Pipelines | Automatizare (3 pipeline-uri YAML) |
 | Monitoring | Azure Monitor + Log Analytics | Observability (free tier 5GB/month) |
-| Security | Azure Policy + CIS Benchmarks | Governance si hardening |
-| Secrets | Azure Key Vault | Stocare securizata parole, chei SSH, certificate |
+| Secrets | Azure Key Vault | Stocare securizata parole si secrete |
+| Logging | HTML + text logs | Rapoarte colapsibile per executie script |
 
 ---
 
@@ -66,81 +61,79 @@ vm-jmp-01 (Ansible control node)
 IT/
 ├── packer/
 │   ├── ubuntu-base/                    # Template Packer Ubuntu 22.04 Base
-│   │   ├── ubuntu-base.pkr.hcl
-│   │   ├── variables.pkr.hcl
-│   │   └── scripts/base-setup.sh
 │   ├── ubuntu-jumphost/                # Template Packer Ubuntu 22.04 Jumphost
-│   │   ├── ubuntu-jumphost.pkr.hcl
-│   │   ├── variables.pkr.hcl
-│   │   └── scripts/provision-jumphost.sh
 │   └── windows-server/                 # Template Packer Windows Server 2022
-│       ├── windows-server.pkr.hcl
-│       ├── variables.pkr.hcl
-│       └── scripts/configure-winrm.ps1
 │
 ├── bicep/
-│   ├── main.bicep                      # Orchestrator principal
+│   ├── main.bicep                      # Orchestrator principal (subscription scope)
+│   ├── bootstrap/
+│   │   └── keyvault-persistent.bicep   # KV persistent (run once)
 │   ├── modules/
 │   │   ├── resource-group.bicep
-│   │   ├── networking.bicep
-│   │   ├── nsg.bicep
-│   │   ├── compute.bicep
-│   │   ├── keyvault.bicep
-│   │   ├── monitoring.bicep
-│   │   ├── policy.bicep
-│   │   ├── persistent-ips.bicep
-│   │   └── backup.bicep
+│   │   ├── networking.bicep            # VNet + subnets
+│   │   ├── nsg.bicep                   # Network Security Groups
+│   │   ├── compute.bicep               # VM + NIC + extensions
+│   │   ├── keyvault.bicep              # Key Vault (main RG)
+│   │   ├── monitoring.bicep            # Log Analytics + Action Group
+│   │   ├── policy.bicep                # Azure Policies
+│   │   ├── persistent-ips.bicep        # IP-uri publice statice
+│   │   ├── ama.bicep                   # Azure Monitor Agent
+│   │   ├── role-assignment.bicep       # RBAC role assignments
+│   │   ├── kv-access-policy.bicep      # KV access policy (MSI jumphost)
+│   │   ├── backup.bicep                # RSV vault (dezactivat)
+│   │   └── backup-vm.bicep             # VM backup protection (dezactivat)
+│   ├── scripts/
+│   │   └── windows-winrm-bootstrap.ps1 # WinRM bootstrap (rulat automat via runCommands)
 │   └── parameters/
-│       └── prod.bicepparam
+│       ├── prod.bicepparam
+│       └── dev.bicepparam
 │
 ├── ansible/
-│   ├── ansible.cfg
+│   ├── ansible.cfg                     # Configuratie Ansible
 │   ├── inventory/
-│   │   ├── azure_rm.yml                # Inventar dinamic Azure (principal)
-│   │   └── hosts.ini                   # Inventar static (fallback)
+│   │   ├── azure_rm.yml                # Inventar dinamic Azure (auth_source: msi)
+│   │   └── azure_rm_dev.yml            # Inventar dev
 │   ├── group_vars/
+│   │   ├── all/
+│   │   │   └── vault.yml               # Secrete encriptate AES-256 (gitignored)
 │   │   ├── linux.yml
 │   │   ├── windows.yml
 │   │   └── jumphost.yml
-│   ├── playbooks/
-│   │   ├── site.yml                    # Master playbook (7 faze)
-│   │   ├── setup-ssh-keys.yml          # Distribuire chei SSH
-│   │   ├── deploy-services.yml         # Deploy doar servicii
-│   │   ├── harden-all.yml              # Hardening CIS Benchmarks
-│   │   ├── harden-nginx-ssl.yml        # Hardening SSL/TLS nginx (A+ grade)
-│   │   ├── bootstrap-windows-winrm.yml # Bootstrap WinRM
-│   │   └── test-services.yml           # Teste servicii (Etapa 6)
-│   └── roles/
-│       ├── common/                     # Baseline (Linux + Windows)
-│       ├── nginx/                      # Reverse proxy + SSL
-│       ├── appserver/                  # Backend API (nginx:8080)
-│       ├── wordpress/                  # WordPress + PHP-FPM + seed content
-│       ├── postfix/                    # Server mail SMTP
-│       ├── mysql/                      # MySQL 8.0 (Windows)
-│       ├── sqlserver/                  # SQL Server Express (alternativa)
-│       ├── mssql/                      # SQL Server (varianta)
-│       ├── fileserver/                 # SMB File Server (Windows)
-│       ├── hardening/                  # CIS Benchmarks
-│       └── jumphost/                   # Ubuntu jumphost management
+│   ├── playbooks/                      # Playbook-uri Ansible
+│   ├── roles/
+│   │   ├── common/                     # Baseline Linux
+│   │   ├── nginx/                      # Reverse proxy + SSL
+│   │   ├── appserver/                  # REST API
+│   │   ├── wordpress/                  # WordPress + PHP-FPM
+│   │   ├── postfix/                    # SMTP relay
+│   │   ├── mysql/                      # MySQL 8.0 (Windows)
+│   │   ├── fileserver/                 # SMB File Server (Windows)
+│   │   └── hardening/                  # CIS Benchmarks
+│   └── scripts/
+│       ├── create-ansible-vault.sh     # Preia secrete din KV + creeaza vault.yml
+│       └── demo-*.sh                   # Scripturi demo securitate
 │
 ├── pipelines/
-│   ├── packer-build.yml               # Pipeline: build imagini Packer (manual)
-│   ├── bicep-deploy.yml               # Pipeline: validate + deploy Bicep (auto pe master)
-│   ├── ansible-configure.yml          # Pipeline: configurare Ansible (manual)
-│   └── templates/
-│       └── az-login.yml               # Template reutilizabil: login Azure
+│   ├── packer-build.yml
+│   ├── bicep-deploy.yml
+│   └── ansible-configure.yml
 │
 ├── scripts/
-│   ├── bootstrap-jumphost.sh           # Bootstrap jumphost (CSE)
-│   ├── bootstrap-windows-winrm.ps1     # Bootstrap WinRM (CSE)
-│   ├── build-packer-images.ps1         # Script automatizat build imagini Packer
-│   └── test-infrastructure.ps1         # Teste infrastructura Azure (Etapa 6)
+│   ├── 0-bootstrap-keyvault.ps1        # [O SINGURA DATA] Creeaza KV + secrete
+│   ├── 1-build-packer-images.ps1       # Build imagini Packer
+│   ├── 2-deploy-teardown-bicep.ps1     # Deploy / teardown infrastructura
+│   ├── 3-deploy-ansible-to-jumphost.ps1# Copiaza ansible/ + ruleaza vault bootstrap
+│   ├── 4-test-infrastructure.ps1       # Teste infrastructura Azure
+│   ├── get-vm-ips.ps1                  # IP-uri VM-uri + genereaza hosts.ini
+│   └── lib/
+│       └── Write-Log.ps1               # Librarie logging HTML + text
 │
-├── logs/                               # Output Packer builds (generat automat)
+├── logs/                               # Loguri HTML + text (generat automat)
 ├── docs/
-│   └── PLAN_PROIECT.md                 # Planul complet al proiectului
-├── .gitignore
-├── DEPLOYMENT_GUIDE.md                 # Ghid detaliat de deployment
+│   └── PLAN_PROIECT.md
+├── ARCHITECTURE_QUICK_REFERENCE.md
+├── DEPLOYMENT_GUIDE.md
+├── INFRASTRUCTURE_UPDATE_SUMMARY.md
 └── README.md
 ```
 
@@ -157,19 +150,31 @@ az bicep install
 az login
 ```
 
-### 2. Construire imagini Packer
+### 2. Bootstrap Key Vault (o singura data)
 
 ```powershell
-.\scripts\build-packer-images.ps1
+.\scripts\0-bootstrap-keyvault.ps1
 ```
 
-### 3. Deploy infrastructura Bicep
+### 3. Construire imagini Packer (o singura data)
 
 ```powershell
-az deployment sub create --location swedencentral --template-file bicep/main.bicep --parameters bicep/parameters/prod.bicepparam
+.\scripts\1-build-packer-images.ps1
 ```
 
-### 4. Conectare la jumphost
+### 4. Deploy infrastructura
+
+```powershell
+.\scripts\2-deploy-teardown-bicep.ps1 -Action deploy -Environment prod
+```
+
+### 5. Deploy Ansible pe jumphost
+
+```powershell
+.\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment prod
+```
+
+### 6. Conectare la jumphost (RDP)
 
 ```powershell
 # Obtine IP
@@ -179,9 +184,9 @@ az network public-ip show -g rg-mediasrl-persistent -n pip-vm-jmp-01 --query ipA
 mstsc /v:<IP_JUMPHOST>
 ```
 
-Credentiale: `azureadmin` / parola din `prod.bicepparam`
+Username: `azureadmin` | Parola: din `kv-mediasrl-persistent` (secretul `vm-admin-password`)
 
-### 5. Configurare cu Ansible (din jumphost)
+### 7. Configurare cu Ansible (din jumphost)
 
 ```bash
 cd ~/ansible
@@ -190,86 +195,48 @@ ansible windows -m win_ping
 ansible-playbook playbooks/2-site.yml
 ```
 
-### 6. Testare
+### 8. Testare
 
 ```powershell
-# Local (infrastructura Azure)
-.\scripts\test-infrastructure.ps1
-
-# Din jumphost (servicii VM-uri)
-ansible-playbook playbooks/obsolete/test-services.yml
+.\scripts\4-test-infrastructure.ps1
 ```
-
-Pentru detalii complete, vezi [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
 
 ---
 
 ## Securitate
 
-- **Azure Policy** - Restrictii regiune, VM SKUs, taguri obligatorii
-- **NSG Rules** - Segmentare retea, deny-all implicit, HTTP 80 doar intern
-- **CIS Benchmarks** - Hardening Linux si Windows via Ansible
-- **SSH Keys** - Chei SSH distribuite via Ansible dupa deployment initial
-- **Key Vault** - Stocare securizata secrete
-- **SSL/TLS** - Let's Encrypt cu HSTS, OCSP stapling
-- **SSL Hardening** - Playbook dedicat: AES-256-GCM, DH 4096-bit, secp384r1 (A+ SSL Labs)
-- **Firewalld** - Firewall pe jumphost
-- **Audit Logging** - auditd (Linux) + Windows Event Log
-- **AppArmor** - Ubuntu security framework
+- **NSG Rules** — segmentare retea, whitelist IP admin, deny-all implicit
+- **CIS Benchmarks** — hardening Linux si Windows via Ansible
+- **Key Vault** — stocare securizata secrete; ansible-vault-password generat automat
+- **Ansible Vault** — `group_vars/all/vault.yml` AES-256, creat automat via MSI
+- **Managed Identity** — jumphost autentificat via MSI (fara credentiale Azure hardcodate)
+- **SSL/TLS** — Let's Encrypt + HSTS + OCSP stapling
+- **WinRM** — configurat automat via Bicep runCommands; restrictionat la snet-mgmt
+- **Audit Logging** — auditd (Linux) + Windows Event Log
 
 ---
 
-## Continut demo
+## Teardown
 
-Proiectul include continut demo coerent si interconectat pentru prezentarea de master:
+```powershell
+# Sterge environment-ul principal (IP-urile si KV persistent supravietuiesc)
+.\scripts\2-deploy-teardown-bicep.ps1 -Action teardown -Environment prod
 
-| Sistem | Continut |
-|--------|----------|
-| WordPress (vm-cms-01) | 5 pagini (Acasa, Despre Noi, Servicii, Portofoliu, Contact) + 3 articole blog |
-| MySQL (vm-db-01) | Baza de date `mediasrl_business`: 5 tabele (angajati, servicii, clienti, proiecte, facturi) + views |
-| API REST (vm-app-01) | 6 endpoint-uri JSON: `/api/services`, `/api/clients`, `/api/projects`, `/api/team`, `/api/stats` |
-| File Server (vm-fs-01) | 6 documente demo: regulament intern, calendar campanii, template propunere, proceduri backup |
-
-Toate datele sunt coerente (aceiasi clienti, servicii, angajati in WordPress, MySQL si API).
-
----
-
-## Azure DevOps Pipelines
-
-| Pipeline | Fisier | Trigger | Scop |
-|----------|--------|---------|------|
-| Packer Build | `pipelines/packer-build.yml` | Manual | Construieste imagini golden in Azure Compute Gallery |
-| Bicep Deploy | `pipelines/bicep-deploy.yml` | Auto (push pe `master`) | Valideaza si deployeaza infrastructura Azure |
-| Ansible Configure | `pipelines/ansible-configure.yml` | Manual | Ruleaza playbook-uri Ansible pe jumphost |
-
-Self-hosted agent Windows, pool `Default`.
-
----
-
-## Jumphost (vm-jmp-01)
-
-- **Desktop:** XFCE (lightweight, optimizat pentru RDP)
-- **Remote Access:** xRDP (port 3389)
-- **DevOps Tools:** Ansible, Azure CLI, VS Code, Git, htop, tmux, jq
-- **Browser:** Firefox ESR
-- **RDP Client:** Remmina cu profile pre-configurate pentru VM-urile Windows
-- **Firewall:** firewalld (ports 22 SSH, 3389 RDP)
-- **Workspace:** `~/ansible` pentru playbook-uri Ansible
+# Re-deploy:
+.\scripts\2-deploy-teardown-bicep.ps1 -Action deploy -Environment prod
+```
 
 ---
 
 ## Documentatie
 
-- [Deployment Guide](DEPLOYMENT_GUIDE.md) - Ghid complet de deployment pas cu pas
-- [Plan Proiect](docs/PLAN_PROIECT.md) - Planul complet al proiectului de disertatie
+- [Deployment Guide](DEPLOYMENT_GUIDE.md) — ghid complet pas cu pas
+- [Architecture Quick Reference](ARCHITECTURE_QUICK_REFERENCE.md) — referinta rapida arhitectura
+- [Infrastructure Summary](INFRASTRUCTURE_UPDATE_SUMMARY.md) — stare curenta componente
+- [Plan Proiect](docs/PLAN_PROIECT.md) — planul complet al proiectului de disertatie
 
 ---
 
 ## Autor
 
-**SC IT SECURITY SRL** - Proiect disertatie Master
-**Anul:** 2026
-
----
-
-Acest proiect este destinat exclusiv pentru scopuri academice (disertatie master).
+**SC IT SECURITY SRL** — Proiect disertatie Master — 2026

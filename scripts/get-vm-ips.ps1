@@ -12,6 +12,12 @@ param(
 $_LogDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'logs'
 Start-LogSession -ScriptTitle "VM IP Address Retrieval" -LogDirectory $_LogDir
 
+trap {
+    Write-Log-Fail "Eroare neasteptata: $_" -Detail "Script oprit prematur"
+    Stop-LogSession
+    break
+}
+
 Write-Log-Header "Verificări preliminare"
 Write-Log-Info "Resource Group: $ResourceGroup"
 

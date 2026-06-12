@@ -32,9 +32,24 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Force UTF-8 throughout so az CLI (Python) can output Unicode (→, ✓ etc.) when piped.
+# PYTHONIOENCODING alone is not enough on Windows — az uses locale.getpreferredencoding()
+# which returns cp1252 for pipes. PYTHONUTF8=1 overrides locale entirely (Python 3.7+).
+$env:PYTHONUTF8              = '1'
+$env:PYTHONIOENCODING        = 'utf-8'
+[Console]::OutputEncoding    = [System.Text.Encoding]::UTF8
+$OutputEncoding              = [System.Text.Encoding]::UTF8
+
 . "$PSScriptRoot\lib\Write-Log.ps1"
 $_LogDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'logs'
 Start-LogSession -ScriptTitle "Deploy / Teardown Bicep" -LogDirectory $_LogDir
+
+# Ensure the HTML log is always written even if the script crashes unexpectedly.
+trap {
+    Write-Log-Fail "Eroare neasteptata: $_" -Detail "Script oprit prematur"
+    Stop-LogSession
+    break
+}
 
 # ============================================================
 # Helpers — delegate to shared logging library
@@ -116,7 +131,6 @@ switch ($Environment) {
         $MainRgName       = 'rg-mediasrl-dezvoltare-swedencentral'
         $PersistentRgName = 'rg-mediasrl-persistent-dev'
         $JmpPipName       = 'pip-dev-vm-jmp-01'
-        $WebPipName       = 'pip-dev-vm-web-01'
         $DeployName       = "deploy-mediasrl-dev-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
         $EnvLabel         = 'DEZVOLTARE (DEV)'
         $EnvColor         = 'Yellow'
@@ -127,7 +141,6 @@ switch ($Environment) {
         $MainRgName       = 'rg-mediasrl-productie-swedencentral'
         $PersistentRgName = 'rg-mediasrl-persistent'
         $JmpPipName       = 'pip-vm-jmp-01'
-        $WebPipName       = 'pip-vm-web-01'
         $DeployName       = "deploy-mediasrl-prod-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
         $EnvLabel         = 'PRODUCTIE (PROD)'
         $EnvColor         = 'Green'
@@ -203,6 +216,7 @@ if ($Action -eq 'deploy') {
         --location swedencentral `
         --template-file bicep/main.bicep `
         --parameters $ParamsFile `
+        @AzParamOverrides `
         --name $DeployName 2>&1 | ForEach-Object { Write-Host $_; [void]$valLines.Add([string]$_) }
 
     if ($LASTEXITCODE -ne 0) {
@@ -222,13 +236,17 @@ if ($Action -eq 'deploy') {
     Write-Header "DEPLOY 2/3 — What-If Preview"
     Write-Step "az deployment sub what-if (previzualizare modificări)..."
 
-    $wifLines = [System.Collections.Generic.List[string]]::new()
+    # What-if outputs Unicode arrows (→, ✓) that cause a Python charmap encoding error
+    # when piped on Windows. Running it unpipped lets az write directly to the console
+    # which uses the correct encoding. The user reads it live and decides whether to apply.
     az deployment sub what-if `
         --location swedencentral `
         --template-file bicep/main.bicep `
         --parameters $ParamsFile `
-        --name $DeployName 2>&1 | ForEach-Object { Write-Host $_; [void]$wifLines.Add([string]$_) }
-    Write-Log-Block -Label "What-If Preview — $DeployName" -Content ($wifLines -join "`n")
+        @AzParamOverrides `
+        --name $DeployName
+
+    Write-Log-Info "What-If afișat în terminal" -Detail "output interactiv — nu este capturat în HTML (caractere Unicode incompatibile cu pipe Windows)"
 
     Write-Host ""
     if (-not $NoConfirm) {
@@ -251,17 +269,25 @@ if ($Action -eq 'deploy') {
         --location swedencentral `
         --template-file bicep/main.bicep `
         --parameters $ParamsFile `
+        @AzParamOverrides `
         --name $DeployName 2>&1 | ForEach-Object { Write-Host $_; [void]$deployLines.Add([string]$_) }
     $deployExit = $LASTEXITCODE
-    Write-Log-Block -Label "Output az deployment create — $DeployName" -Content ($deployLines -join "`n")
 
     if ($deployExit -ne 0) {
+        # On failure keep the raw output — it contains the error details
+        Write-Log-Block -Label "Output az deployment create — EȘUAT" -Content ($deployLines -join "`n")
         Write-Fail "Deployment a eșuat. Verifică erorile de mai sus."
         Stop-LogSession; exit 1
     }
 
     $duration = [int]((Get-Date) - $startTime).TotalMinutes
-    Write-OK "Deployment complet" -Detail "~$duration minute(e) · $DeployName"
+    Write-Log-OK "Deployment complet" -Detail "~$duration minute(e) · $DeployName"
+
+    # Fetch structured result and render as a formatted HTML card
+    $deployResultJson = az deployment sub show --name $DeployName -o json 2>$null | ConvertFrom-Json
+    if ($deployResultJson) {
+        Write-Log-AzDeployment -DeploymentName $DeployName -Result $deployResultJson
+    }
 
     # --- Output-uri ---
 
@@ -271,8 +297,8 @@ if ($Action -eq 'deploy') {
     if ($pipExists -eq 'true') {
         $pips = az network public-ip list -g $PersistentRgName -o json | ConvertFrom-Json
         foreach ($pip in $pips) {
-            $ip   = $pip.properties.ipAddress
-            $fqdn = $pip.properties.dnsSettings?.fqdn
+            $ip   = $pip.ipAddress
+            $fqdn = if ($pip.PSObject.Properties.Name -contains 'dnsSettings') { $pip.dnsSettings?.fqdn } else { $null }
             Write-Log-OK "$($pip.name)" -Detail "IP: $ip$(if ($fqdn) { ' | DNS: ' + $fqdn })"
         }
     } else {
@@ -400,8 +426,14 @@ elseif ($Action -eq 'teardown') {
                 $iName      = $item.name
                 $vmFriendly = $item.properties.friendlyName
 
+                # deleteState is absent when soft-delete is disabled — use safe access to avoid
+                # StrictMode terminating error when the property doesn't exist on the object
+                $deleteState = if ($item.properties.PSObject.Properties.Name -contains 'deleteState') {
+                    $item.properties.deleteState
+                } else { $null }
+
                 # Items in soft-deleted state must be undeleted before permanent delete
-                if ($item.properties.deleteState -eq 'ToBeDeleted') {
+                if ($deleteState -eq 'ToBeDeleted') {
                     Write-Log-Step "  Reactivare (undelete): $vmFriendly..."
                     az backup protection undelete `
                         --vault-name $vName -g $MainRgName `
@@ -413,16 +445,68 @@ elseif ($Action -eq 'teardown') {
                 az backup protection disable `
                     --vault-name $vName -g $MainRgName `
                     --container-name $cName --item-name $iName `
+                    --backup-management-type AzureIaasVM --workload-type VM `
                     --delete-backup-data true --yes 2>$null | Out-Null
 
                 if ($LASTEXITCODE -eq 0) {
                     Write-Log-OK "Backup dezactivat: $vmFriendly" -Detail "date sterse definitiv"
                 } else {
-                    Write-Log-Warn "Nu s-a putut dezactiva: $vmFriendly" -Detail "az group delete va incerca stergerea oricum"
+                    Write-Log-Warn "Nu s-a putut dezactiva: $vmFriendly" -Detail "continuam..."
                 }
             }
 
-            Write-Log-OK "Vault pregatit pentru stergere" -Detail $vName
+            # az backup protection disable is async — wait for all jobs to finish
+            # before attempting vault/group deletion (max 10 min)
+            Write-Log-Step "Asteptare finalizare joburi backup in $vName (max 10 min)..."
+            $maxWait = 60  # 60 x 10s = 10 minute
+            $waited  = 0
+            do {
+                $pendingJobs = @(az backup job list `
+                    --vault-name $vName -g $MainRgName `
+                    --status InProgress -o json 2>$null | ConvertFrom-Json)
+                if ($pendingJobs.Count -gt 0) {
+                    Write-Log-Info "  $($pendingJobs.Count) joburi in curs... (astept 10s)"
+                    Start-Sleep -Seconds 10
+                }
+                $waited++
+            } while ($pendingJobs.Count -gt 0 -and $waited -lt $maxWait)
+
+            if ($pendingJobs.Count -gt 0) {
+                Write-Log-Warn "Joburi backup inca active dupa 10 minute — continuam oricum"
+            } else {
+                Write-Log-OK "Joburi backup finalizate" -Detail $vName
+            }
+
+            # Unregister all backup containers — vault deletion fails if containers remain
+            # registered even after all protected items have been removed
+            $containers = @(az backup container list `
+                --vault-name $vName -g $MainRgName `
+                --backup-management-type AzureIaasVM `
+                -o json 2>$null | ConvertFrom-Json)
+            Write-Log-Info "$($containers.Count) containere de dezinregistrat in $vName"
+            foreach ($container in $containers) {
+                $cnName = $container.name
+                Write-Log-Step "  Dezinregistrare container: $cnName..."
+                az backup container unregister `
+                    --vault-name $vName -g $MainRgName `
+                    --container-name $cnName `
+                    --backup-management-type AzureIaasVM --yes 2>$null | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Log-OK "Container dezinregistrat" -Detail $cnName
+                } else {
+                    Write-Log-Warn "Nu s-a putut dezinregistra containerul" -Detail $cnName
+                }
+            }
+
+            # Vault must be explicitly deleted before the resource group — az group delete
+            # alone will fail while the vault still exists (even with no protected items)
+            Write-Log-Step "Stergere explicita vault: $vName..."
+            az backup vault delete --name $vName -g $MainRgName --force --yes 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log-OK "Vault sters" -Detail $vName
+            } else {
+                Write-Log-Warn "Stergerea directa a vault-ului a esuat — az group delete va incerca" -Detail $vName
+            }
         }
     } else {
         Write-Log-Info "Niciun Recovery Services Vault in $MainRgName"
@@ -444,15 +528,15 @@ elseif ($Action -eq 'teardown') {
     }
 
     $duration = [int]((Get-Date) - $startTime).TotalMinutes
-    Write-OK "Resource Group șters" -Detail "$MainRgName · ~$duration minute(e)"
+    Write-Log-OK "Resource Group șters" -Detail "$MainRgName · ~$duration minute(e)"
 
     Write-Step "Verificare persistent RG ($PersistentRgName)..."
     $persExists = az group exists --name $PersistentRgName -o tsv
     if ($persExists -eq 'true') {
-        Write-OK "$PersistentRgName intact" -Detail "IP-uri statice păstrate"
+        Write-Log-OK "$PersistentRgName intact" -Detail "IP-uri statice păstrate"
         $pips = az network public-ip list -g $PersistentRgName -o json | ConvertFrom-Json
         foreach ($pip in $pips) {
-            $ip = $pip.properties.ipAddress
+            $ip = $pip.ipAddress
             Write-Log-Info "$($pip.name) : $ip"
         }
     }

@@ -46,8 +46,9 @@ param keyVaultName string = 'kv-mediasrl-${environment}'
 @description('Log Analytics Workspace name')
 param logAnalyticsWorkspaceName string = 'log-mediasrl-${environment}'
 
-@description('Recovery Services Vault name for Azure Backup')
-param backupVaultName string = 'rsv-mediasrl-${environment}'
+// DISABLED: backup modules commented out — param unused until re-enabled
+// @description('Recovery Services Vault name for Azure Backup')
+// param backupVaultName string = 'rsv-mediasrl-${environment}'
 
 @description('Azure AD Tenant ID')
 param tenantId string
@@ -189,7 +190,7 @@ var jumphostBootstrapScript = loadTextContent('../scripts/obsolete/bootstrap-jum
 // The substituted script goes into CSE protectedSettings (encrypted by Azure).
 var jumphostFinalizeScriptRaw = loadTextContent('../scripts/finalize-jumphost.sh')
 var jumphostFinalizeScript = replace(jumphostFinalizeScriptRaw, '__ADMIN_PASSWORD_PLACEHOLDER__', adminPassword)
-var windowsWinrmBootstrapScript = loadTextContent('../scripts/3-bootstrap-windows-winrm.ps1')
+var windowsWinrmBootstrapScript = loadTextContent('scripts/windows-winrm-bootstrap.ps1')
 
 var galleryResourceGroupName = 'rg-mediasrl-packer-${location}'
 var galleryImageBase = '/subscriptions/${subscription().subscriptionId}/resourceGroups/${galleryResourceGroupName}/providers/Microsoft.Compute/galleries/${computeGalleryName}/images'
@@ -330,22 +331,24 @@ module monitoring 'modules/monitoring.bicep' = {
 }
 
 // ----- Module: Azure Backup (Recovery Services Vault + Daily Policy 1AM, 14-day retention) -----
+// DISABLED: RSV vault cannot be force-deleted and blocks resource group teardown.
+// Re-enable when a clean teardown procedure is confirmed.
 
-module backup 'modules/backup.bicep' = {
-  name: 'deploy-backup'
-  scope: az.resourceGroup(resourceGroupName)
-  params: {
-    location: location
-    vaultName: backupVaultName
-    backupPolicyName: 'DailyBackupPolicy-1AM-14Days'
-    backupTime: '01:00'
-    retentionDays: 14
-    tags: tags
-  }
-  dependsOn: [
-    resourceGroup
-  ]
-}
+// module backup 'modules/backup.bicep' = {
+//   name: 'deploy-backup'
+//   scope: az.resourceGroup(resourceGroupName)
+//   params: {
+//     location: location
+//     vaultName: backupVaultName
+//     backupPolicyName: 'DailyBackupPolicy-1AM-14Days'
+//     backupTime: '01:00'
+//     retentionDays: 14
+//     tags: tags
+//   }
+//   dependsOn: [
+//     resourceGroup
+//   ]
+// }
 
 // ----- Module: Virtual Machines (Loop) -----
 
@@ -386,7 +389,7 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     // VM-uri Windows: WinRM bootstrap (doar marketplace)
     customScriptContent: vm.name == 'vm-jmp-01'
       ? (useMarketplaceImages ? jumphostBootstrapScript : jumphostFinalizeScript)
-      : (useMarketplaceImages && vm.osType == 'Windows' ? windowsWinrmBootstrapScript : '')
+      : (vm.osType == 'Windows' ? windowsWinrmBootstrapScript : '')
     autoShutdownTime: autoShutdownTime
     autoShutdownTimezone: autoShutdownTimezone
     tags: tags
@@ -394,22 +397,22 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
 }]
 
 // ----- Module: VM Backup Protection (Loop) -----
-// Registers every VM with DailyBackupPolicy — backup at 1AM UTC, 14-day retention
+// DISABLED: depends on backup module which is currently commented out.
 
-module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
-  name: 'deploy-backup-${vm.name}'
-  scope: az.resourceGroup(resourceGroupName)
-  params: {
-    location: location
-    vaultName: backupVaultName
-    vmName: vm.name
-    vmId: virtualMachines[i].outputs.vmId
-    backupPolicyId: backup.outputs.backupPolicyId
-  }
-  dependsOn: [
-    virtualMachines
-  ]
-}]
+// module vmBackupProtection 'modules/backup-vm.bicep' = [for (vm, i) in vms: {
+//   name: 'deploy-backup-${vm.name}'
+//   scope: az.resourceGroup(resourceGroupName)
+//   params: {
+//     location: location
+//     vaultName: backupVaultName
+//     vmName: vm.name
+//     vmId: virtualMachines[i].outputs.vmId
+//     backupPolicyId: backup.outputs.backupPolicyId
+//   }
+//   dependsOn: [
+//     virtualMachines
+//   ]
+// }]
 
 // ----- MSI: Reader on Persistent RG (for azure_rm inventory plugin) -----
 // The jumphost MSI (assigned above) needs Reader on rg-mediasrl-persistent so the
@@ -429,6 +432,22 @@ module jumphostMsiPersistentRgReader 'modules/role-assignment.bicep' = {
     principalId: virtualMachines[jumphostIndex].outputs.msiPrincipalId
     roleDefinitionId: 'acdd72a7-3385-48ef-bd42-f606fba81ae7' // Reader
     roleDescription: 'Ansible MSI: vm-jmp-01 reads persistent RG (static public IPs for inventory)'
+  }
+}
+
+// ----- Access Policy: Jumphost MSI → kv-mediasrl-persistent -----
+// Grants the jumphost MSI get+list on secrets so create-ansible-vault.sh
+// can fetch infrastructure credentials via az keyvault secret show (MSI auth).
+// Deployed as a module (not an inline resource) because main.bicep is subscription-scoped
+// and child resources cannot cross scope boundaries inline.
+
+module jumphostKvSecretRead 'modules/kv-access-policy.bicep' = {
+  name: 'jumphost-kv-secret-read'
+  scope: az.resourceGroup(persistentResourceGroupName)
+  params: {
+    keyVaultName: 'kv-mediasrl-persistent'
+    tenantId: subscription().tenantId
+    objectId: virtualMachines[jumphostIndex].outputs.msiPrincipalId
   }
 }
 
@@ -455,9 +474,10 @@ module ama 'modules/ama.bicep' = if (deployAMA) {
 }
 
 // NOTE: Bootstrap/CSE strategy:
-// - vm-jmp-01 + marketplace: scripts/bootstrap-jumphost.sh (install complet: xRDP, Ansible, etc.)
-// - vm-jmp-01 + gallery:     scripts/finalize-jumphost.sh  (auth fix: chpasswd, SSH, .xsession)
-// - Windows   + marketplace: scripts/bootstrap-windows-winrm.ps1 (WinRM pentru Ansible)
+// - vm-jmp-01 + marketplace: scripts/bootstrap-jumphost.sh      (install complet: xRDP, Ansible, etc.)
+// - vm-jmp-01 + gallery:     scripts/finalize-jumphost.sh       (auth fix: chpasswd, SSH, .xsession)
+// - Windows   + orice:       bicep/scripts/windows-winrm-bootstrap.ps1 (WinRM — Sysprep il reseteaza
+//                            indiferent daca imaginea vine din Packer sau marketplace)
 // - Linux     + gallery:     fara CSE (Packer a baked totul, Ansible configureaza roluri)
 // - Linux     + marketplace: fara CSE (configurate de Ansible de pe jumphost)
 

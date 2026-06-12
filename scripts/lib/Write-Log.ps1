@@ -125,6 +125,25 @@ function Write-Log-Block {
     $script:_Entries.Add(@{ Type = 'Block'; Message = $Label; Content = $clean; Time = (Get-Date) })
 }
 
+function Write-Log-AzDeployment {
+    param(
+        [string]$DeploymentName,
+        [PSObject]$Result
+    )
+    $state    = if ($Result.properties.PSObject.Properties['provisioningState']) { [string]$Result.properties.provisioningState } else { 'Unknown' }
+    $resCount = if ($Result.properties.PSObject.Properties['outputResources'] -and $Result.properties.outputResources) { @($Result.properties.outputResources).Count } else { 0 }
+    $color    = if ($state -eq 'Succeeded') { 'Green' } elseif ($state -eq 'Failed') { 'Red' } else { 'Yellow' }
+    Write-Host "  [AZ] $DeploymentName" -ForegroundColor Cyan
+    Write-Host "       $state  |  $resCount resurse" -ForegroundColor $color
+    $script:_Entries.Add(@{
+        Type           = 'DeployResult'
+        Message        = $DeploymentName
+        DeploymentName = $DeploymentName
+        Result         = $Result
+        Time           = (Get-Date)
+    })
+}
+
 # ── Private helpers ──────────────────────────────────────────
 
 function _Separator([string]$Color = 'Cyan') {
@@ -190,6 +209,71 @@ function _Export-HtmlReport {
             $lc  = ($e.Content -split "`n").Count
             $cnt = _HtmlEnc $e.Content
             $body += "<details class='log-block'><summary><span class='ts'>$t</span><span>$m</span><span class='det'>&nbsp;($lc linii)</span></summary><pre class='block-pre'>$cnt</pre></details>`n"
+        } elseif ($e.Type -eq 'DeployResult') {
+            $props   = $e.Result.properties
+            $state   = if ($props.PSObject.Properties['provisioningState']) { [string]$props.provisioningState } else { 'Unknown' }
+            $stBadge = if ($state -eq 'Succeeded') { 'ok-b' } elseif ($state -eq 'Failed') { 'fail-b' } else { 'warn-b' }
+            $stLabel = $state.ToUpper()
+
+            # Parse ISO 8601 duration: PT12M34.567S → "12m 34s"
+            $durHuman = ''
+            if ($props.PSObject.Properties['duration'] -and $props.duration -match 'PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?') {
+                $hh = if ($Matches[1]) { "$($Matches[1])h " } else { '' }
+                $mm = if ($Matches[2]) { "$($Matches[2])m " } else { '' }
+                $ss = if ($Matches[3]) { "$([int][double]$Matches[3])s" } else { '' }
+                $durHuman = "$hh$mm$ss".Trim()
+            }
+
+            $dname = _HtmlEnc $e.DeploymentName
+            $body += "<div class='az-deploy'>"
+            $body += "<div class='az-deploy-hdr'><span class='ts'>$t</span><span class='badge $stBadge'>$stLabel</span><span class='az-deploy-name'>$dname</span>"
+            if ($durHuman) { $body += "<span class='az-deploy-dur'>&#9201;&nbsp;$durHuman</span>" }
+            $body += "</div>"
+
+            # Resources grouped by provider/type
+            $outRes = if ($props.PSObject.Properties['outputResources'] -and $props.outputResources) { @($props.outputResources) } else { @() }
+            if ($outRes.Count -gt 0) {
+                $grouped = [ordered]@{}
+                foreach ($res in $outRes) {
+                    if (-not $res.PSObject.Properties['id']) { continue }
+                    if ($res.id -notmatch '/providers/([^/]+)/([^/]+)/([^/]+)') { continue }
+                    $ns   = $Matches[1]
+                    $type = $Matches[2]
+                    $name = $Matches[3]
+                    # Skip sub-deployments and role assignment GUIDs — not useful in summary
+                    if ($ns -eq 'Microsoft.Resources' -and $type -eq 'deployments') { continue }
+                    if ($ns -eq 'Microsoft.Authorization' -and $type -eq 'roleAssignments') { continue }
+                    $gk = "$ns / $type"
+                    if (-not $grouped.Contains($gk)) { $grouped[$gk] = [System.Collections.Generic.List[string]]::new() }
+                    if (-not $grouped[$gk].Contains($name)) { [void]$grouped[$gk].Add($name) }
+                }
+                if ($grouped.Count -gt 0) {
+                    $body += "<div class='az-deploy-body'>"
+                    foreach ($gk in $grouped.Keys) {
+                        $body += "<div class='res-group'><div class='res-group-title'>$(_HtmlEnc $gk)</div><div class='res-group-items'>"
+                        foreach ($rn in $grouped[$gk]) { $body += "<div class='res-item'>$(_HtmlEnc $rn)</div>" }
+                        $body += "</div></div>"
+                    }
+                    $body += "</div>"
+                }
+            }
+
+            # Bicep outputs
+            $outs = if ($props.PSObject.Properties['outputs'] -and $props.outputs) { $props.outputs } else { $null }
+            if ($outs) {
+                $outMembers = @($outs | Get-Member -MemberType NoteProperty -ErrorAction SilentlyContinue)
+                if ($outMembers.Count -gt 0) {
+                    $body += "<div class='az-outputs'><div class='az-outputs-title'>Bicep Outputs</div>"
+                    foreach ($om in $outMembers) {
+                        $k = _HtmlEnc $om.Name
+                        $v = if ($outs.($om.Name).PSObject.Properties['value']) { _HtmlEnc ([string]$outs.($om.Name).value) } else { '' }
+                        $body += "<div class='az-output-row'><span class='az-output-key'>$k</span><span class='az-output-val'>$v</span></div>"
+                    }
+                    $body += "</div>"
+                }
+            }
+
+            $body += "</div>`n"
         }
     }
     if ($inSec) { $body += "</div></div>`n" }
@@ -272,6 +356,27 @@ details.log-block>summary:hover{color:var(--cyan);}
 .block-pre{background:#010409;border:1px solid var(--bdr);padding:10px 16px;border-radius:0 0 4px 4px;
   font-family:Consolas,monospace;font-size:.75em;color:#8b949e;white-space:pre-wrap;
   word-break:break-word;max-height:460px;overflow-y:auto;border-left:3px solid var(--blue);}
+
+.az-deploy{border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin:4px 18px 10px;}
+.az-deploy-hdr{display:flex;align-items:center;gap:10px;padding:9px 16px;background:var(--bg3);
+  border-bottom:1px solid var(--bdr);flex-wrap:wrap;}
+.az-deploy-name{font-family:Consolas,monospace;font-size:.8em;color:var(--txt);flex:1;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.az-deploy-dur{color:var(--muted);font-size:.79em;white-space:nowrap;}
+.az-deploy-body{padding:10px 12px;display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;}
+.res-group{background:var(--bg);border:1px solid var(--bdr);border-radius:6px;overflow:hidden;}
+.res-group-title{padding:4px 10px;background:var(--bg3);font-size:.68em;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.4px;border-bottom:1px solid var(--bdr);}
+.res-group-items{padding:3px 0;}
+.res-item{padding:2px 12px;font-size:.8em;font-family:Consolas,monospace;color:var(--txt);}
+.res-item::before{content:'» ';color:var(--muted);}
+.az-outputs{border-top:1px solid var(--bdr);padding:8px 16px 10px;}
+.az-outputs-title{font-size:.69em;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.4px;margin-bottom:5px;}
+.az-output-row{display:flex;gap:10px;padding:2px 0;font-size:.8em;font-family:Consolas,monospace;}
+.az-output-key{color:var(--blue);white-space:nowrap;}
+.az-output-val{color:var(--txt);word-break:break-all;}
 </style>
 </head>
 <body>

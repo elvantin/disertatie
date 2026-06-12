@@ -10,20 +10,13 @@
 #   bicep CLI (az bicep install)
 #
 # Usage:
-#   .\scripts\0-bootstrap-keyvault.ps1                      <- setup initial
-#   .\scripts\0-bootstrap-keyvault.ps1 -Environment dev     <- setup pentru dev
-#   .\scripts\0-bootstrap-keyvault.ps1 -ForceRotateVaultPass <- rotire explicita vault password
-#                                                              (invalideaza vault.yml de pe jumphost!)
+#   .\scripts\0-bootstrap-keyvault.ps1                  <- setup initial (rescrie fortat toate secretele)
+#   .\scripts\0-bootstrap-keyvault.ps1 -Environment dev <- setup pentru dev
 # ============================================================
 
 param(
     [ValidateSet('prod', 'dev')]
-    [string]$Environment = 'prod',
-
-    # Forteaza regenerarea ansible-vault-password chiar daca exista deja.
-    # ATENTIE: invalideaza vault.yml existent de pe jumphost.
-    # Dupa rotire rulezi: bash scripts/create-ansible-vault.sh pe jumphost.
-    [switch]$ForceRotateVaultPass
+    [string]$Environment = 'prod'
 )
 
 Set-StrictMode -Version Latest
@@ -32,6 +25,12 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\lib\Write-Log.ps1"
 $_LogDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'logs'
 Start-LogSession -ScriptTitle "Bootstrap Key Vault" -LogDirectory $_LogDir
+
+trap {
+    Write-Log-Fail "Eroare neasteptata: $_" -Detail "Script oprit prematur"
+    Stop-LogSession
+    break
+}
 
 # ============================================================
 # Configuration
@@ -225,21 +224,6 @@ foreach ($entry in $Secrets.GetEnumerator()) {
     $secretName  = $entry.Key
     $secretValue = $entry.Value
 
-    # ansible-vault-password este cheia de criptare a Ansible Vault de pe jumphost.
-    # Daca exista deja si se schimba, vault.yml existent devine inutilizabil.
-    # => Skip daca secretul exista deja; schimba-l NUMAI intentionat cu -ForceRotateVaultPass.
-    if ($secretName -eq 'ansible-vault-password' -and -not $isNewKv -and -not $ForceRotateVaultPass) {
-        $existing = az keyvault secret show --vault-name $KvName --name $secretName `
-            --query value -o tsv 2>$null
-        if (-not [string]::IsNullOrEmpty($existing)) {
-            Write-Log-Warn "$secretName — skip (există deja)" -Detail "Folosește -ForceRotateVaultPass pentru rotire"
-            continue
-        }
-    }
-    if ($secretName -eq 'ansible-vault-password' -and $ForceRotateVaultPass) {
-        Write-Log-Warn "ROTATE: ansible-vault-password va fi regenerată" -Detail "Rulează create-ansible-vault.sh pe jumphost după!"
-    }
-
     az keyvault secret set `
         --vault-name $KvName `
         --name $secretName `
@@ -247,7 +231,7 @@ foreach ($entry in $Secrets.GetEnumerator()) {
         --output none
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Log-OK "Secret stocat" -Detail $secretName
+        Write-Log-OK "Secret stocat (rescris)" -Detail $secretName
     } else {
         Write-Log-Warn "Nu s-a putut seta secretul" -Detail $secretName
     }

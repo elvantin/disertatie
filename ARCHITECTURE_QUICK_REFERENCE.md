@@ -1,210 +1,188 @@
-# Architecture Quick Reference - 6 VM Infrastructure
+# Architecture Quick Reference — SC MEDIA SRL
+
+**Last Updated:** 2026-06-12
+
+---
 
 ## VM Overview
 
-| VM Name | OS | Role | IP Address | Public IP | Subnet |
-|---------|-------|------|------------|-----------|--------|
-| vm-jmp-01 | Rocky Linux 10 | Jumphost (GUI + xRDP + Ansible) | 10.10.12.x | Yes | mgmt |
-| vm-fs-01 | Windows Server 2022 | File Server | 10.10.10.5 | No | prod |
-| vm-db-01 | Windows Server 2022 | MS SQL Server 2022 | 10.10.10.10 | No | prod |
-| vm-web-01 | Rocky Linux 10 | nginx Web Server | 10.10.10.15 | No | prod |
-| vm-app-01 | Rocky Linux 10 | Application Server | 10.10.10.20 | No | prod |
-| vm-cms-01 | Rocky Linux 10 | WordPress + Postfix | 10.10.10.25 | No | prod |
+| VM | OS | Role | Subnet | Public IP | Size |
+|----|----|------|--------|-----------|------|
+| vm-jmp-01 | Ubuntu 22.04 LTS | Jumphost — XFCE + xRDP + Ansible Control Node | mgmt | Yes (persistent) | Standard_B4ls_v2 |
+| vm-web-01 | Ubuntu 22.04 LTS | nginx reverse proxy + SSL/TLS | prod | Yes (persistent) | Standard_B2s |
+| vm-app-01 | Ubuntu 22.04 LTS | Application server (port 8080) | prod | No | Standard_B2s |
+| vm-cms-01 | Ubuntu 22.04 LTS | WordPress + PHP-FPM + Postfix | prod | No | Standard_B2s |
+| vm-db-01  | Windows Server 2022 | MySQL Community Server 8.0 | prod | No | Standard_B2s |
+| vm-fs-01  | Windows Server 2022 | SMB File Server | prod | No | Standard_B2s |
 
-## Key Services by VM
+IPs sunt alocate dinamic (DHCP Azure). Numai cele 2 IP-uri publice sunt statice (persistent RG).
 
-### vm-jmp-01 (Jumphost)
-- XRDP (Remote Desktop)
-- Ansible Control Node
-- Management tools
-- SSH gateway to Linux VMs
+---
 
-### vm-fs-01 (File Server)
-- Windows File Sharing (SMB)
-- Shared network drives
-- File storage
+## Network Layout
 
-### vm-db-01 (Database Server) - NEW
-- Microsoft SQL Server 2022 Developer Edition
-- WordPress database (wordpress_db)
-- Automated daily backups (2:00 AM)
-- SQL Server Agent
-
-### vm-web-01 (Web Server)
-- nginx
-- Reverse proxy
-- SSL/TLS termination
-
-### vm-app-01 (Application Server)
-- Application runtime
-- Business logic
-
-### vm-cms-01 (CMS + Mail)
-- WordPress (PHP-FPM + nginx)
-- Postfix mail server
-- Connects to vm-db-01 for database
-
-## Network Connectivity
-
-### Database Connections
 ```
-vm-cms-01 (WordPress) --[TCP 1433]--> vm-db-01 (SQL Server)
+VNet: vnet-mediasrl-productie  (10.10.0.0/20)
+├── snet-mgmt  10.10.12.0/24   vm-jmp-01
+├── snet-prod  10.10.10.0/24   vm-web-01, vm-app-01, vm-cms-01, vm-db-01, vm-fs-01
+└── snet-dev   10.10.11.0/24   (rezervat pentru mediu dev)
 ```
 
-### Web Traffic Flow
+### Traffic Flow
+
 ```
-Internet --[HTTPS]--> vm-web-01 (nginx) --[HTTP]--> vm-cms-01 (WordPress/PHP-FPM)
-```
+Internet ──[HTTPS:443]──► vm-web-01 (nginx)
+                              ├──[HTTP:80]──► vm-cms-01 (WordPress/PHP-FPM)
+                              └──[HTTP:8080]──► vm-app-01 (API REST)
 
-### Management Access
-```
-Admin PC --[RDP]--> vm-jmp-01 --[SSH]--> Linux VMs
-Admin PC --[RDP]--> vm-jmp-01 --[RDP]--> Windows VMs
-```
+vm-cms-01 ──[MySQL:3306]──► vm-db-01 (MySQL 8.0)
 
-## Firewall Rules Summary
-
-### vm-db-01 (Database)
-- **Inbound**: TCP 1433 (SQL Server) from 10.10.10.0/24
-- **Inbound**: TCP 5986 (WinRM/HTTPS) from 10.10.12.0/24
-- **Outbound**: All
-
-### vm-cms-01 (WordPress)
-- **Inbound**: TCP 80, 443 (HTTP/HTTPS) from vm-web-01
-- **Inbound**: TCP 22 (SSH) from vm-jmp-01
-- **Outbound**: TCP 1433 to vm-db-01
-- **Outbound**: TCP 25 (SMTP) for mail
-
-## Ansible Inventory Groups
-
-```ini
-[windows]
-vm-fs-01
-vm-db-01
-
-[linux]
-vm-web-01
-vm-app-01
-vm-cms-01
-
-[database]
-vm-db-01
-
-[fileserver]
-vm-fs-01
-
-[webserver]
-vm-web-01
-
-[cms]
-vm-cms-01
-
-[jumphost]
-vm-jmp-01
-```
-
-## Deployment Order
-
-1. **Infrastructure (Bicep)**: Deploy all 6 VMs
-2. **Jumphost**: Configure Ansible control node
-3. **Windows Baseline**: Common Windows configuration
-4. **Linux Baseline**: Common Linux configuration
-5. **File Server**: Configure SMB shares
-6. **Database Server**: Install SQL Server, create WordPress DB
-7. **Web Server**: Configure nginx
-8. **CMS Server**: Install WordPress with SQL Server drivers
-9. **Hardening**: Apply CIS benchmarks to all VMs
-
-## Critical Files
-
-### Bicep
-- `bicep/main.bicep` - Main orchestrator (6 VMs)
-- `bicep/parameters/prod.bicepparam` - Production parameters
-
-### Ansible
-- `ansible/playbooks/2-site.yml` - Main playbook
-- `ansible/inventory/hosts.ini` - Inventory (6 VMs)
-- `ansible/roles/mssql/` - MS SQL Server role (NEW)
-- `ansible/roles/wordpress/` - WordPress role (updated for SQL Server)
-
-## Backup Strategy
-
-### Database Backups (vm-db-01)
-- **Frequency**: Daily at 2:00 AM
-- **Location**: C:\SQLBackups
-- **Retention**: 7 days
-- **Type**: Full backup with compression
-- **Managed by**: PowerShell script + Windows Task Scheduler
-
-### File Server Backups (vm-fs-01)
-- **Frequency**: Daily
-- **Location**: Azure Backup vault
-- **Retention**: 30 days
-
-## Security Credentials
-
-**Stored in Ansible Vault** (`ansible/group_vars/all/vault.yml`):
-- Windows admin password
-- SQL Server SA password
-- WordPress database password
-- SSH private keys
-
-## Quick Commands
-
-### Deploy Infrastructure
-```bash
-az deployment sub create \
-  --location swedencentral \
-  --template-file bicep/main.bicep \
-  --parameters bicep/parameters/prod.bicepparam
-```
-
-### Configure All VMs
-```bash
-ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/2-site.yml
-```
-
-### Configure Database Server Only
-```bash
-ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/2-site.yml \
-  --tags database
-```
-
-### Test Database Connection
-```bash
-# From vm-cms-01
-sqlcmd -S vm-db-01 -U wordpress_user -P 'password' -Q "SELECT @@VERSION"
-```
-
-## Troubleshooting
-
-### SQL Server Connection Issues
-```bash
-# Check SQL Server service status (on vm-db-01)
-Get-Service MSSQLSERVER
-
-# Check firewall rules
-Get-NetFirewallRule -DisplayName "SQL Server*"
-
-# Test connection from vm-cms-01
-telnet vm-db-01 1433
-```
-
-### WordPress Database Errors
-```bash
-# Check PHP SQL Server drivers
-php -m | grep sqlsrv
-
-# Check SELinux booleans
-getsebool httpd_can_network_connect_db
-
-# Test database connection
-php -r "phpinfo();" | grep -i sqlsrv
+Admin PC ──[RDP:3389]──► vm-jmp-01
+vm-jmp-01 ──[SSH:22]──► vm-web-01, vm-app-01, vm-cms-01
+vm-jmp-01 ──[WinRM:5985]──► vm-db-01, vm-fs-01
 ```
 
 ---
 
-**Last Updated**: February 5, 2026
-**Architecture Version**: 2.0 (6 VMs)
+## Key Services per VM
+
+### vm-jmp-01 (Jumphost)
+- XFCE desktop + xRDP (port 3389)
+- Ansible control node (azure.azcollection ≥ 3.15.0)
+- Azure CLI — autentificare via Managed Identity (fără `az login`)
+- Managed Identity: Reader pe persistent RG + Secrets User pe kv-mediasrl-persistent
+- Workspace Ansible: `~/ansible`
+
+### vm-web-01 (Web Server)
+- nginx reverse proxy
+- SSL/TLS (Let's Encrypt) — port 443
+- DNS: `mediasrl.swedencentral.cloudapp.azure.com`
+
+### vm-app-01 (Application Server)
+- REST API (nginx port 8080)
+- 6 endpoint-uri JSON: `/api/services`, `/api/clients`, `/api/projects`, `/api/team`, `/api/stats`, `/health`
+
+### vm-cms-01 (CMS + Mail)
+- WordPress + PHP-FPM (nginx frontend)
+- Postfix SMTP relay
+- Conexiune MySQL la vm-db-01 (port 3306)
+
+### vm-db-01 (Database Server)
+- MySQL Community Server 8.0 pe Windows Server 2022
+- Baze de date: `wordpress_db`, `mediasrl_business`
+- Port: 3306
+
+### vm-fs-01 (File Server)
+- Windows Server 2022
+- SMB shares: Public, Marketing, IT, Backups
+- LanmanServer service
+
+---
+
+## Ansible Inventory Groups
+
+```
+[jumphost]    vm-jmp-01
+[webserver]   vm-web-01
+[appserver]   vm-app-01
+[cmsserver]   vm-cms-01
+[database]    vm-db-01   (Windows, WinRM)
+[fileserver]  vm-fs-01   (Windows, WinRM)
+
+[linux:children]    webserver, appserver, cmsserver
+[windows:children]  database, fileserver
+```
+
+Inventar dinamic Azure (`inventory/azure_rm.yml`) — autentificare via MSI (fără `az login`).
+
+---
+
+## Ansible Roles
+
+| Rol | Target | Descriere |
+|-----|--------|-----------|
+| common | linux | Pachete de baza, NTP, SSH hardening, timezone |
+| nginx | vm-web-01 | Reverse proxy, SSL/TLS, security headers |
+| appserver | vm-app-01 | REST API pe nginx:8080 |
+| wordpress | vm-cms-01 | WordPress + PHP-FPM + WP-CLI |
+| postfix | vm-cms-01 | SMTP relay |
+| mysql | vm-db-01 | MySQL 8.0 + baze de date + utilizatori |
+| fileserver | vm-fs-01 | SMB shares, ACL-uri, SMBv1 dezactivat |
+| hardening | toate | CIS Benchmarks Linux + Windows |
+
+---
+
+## Azure Resources
+
+```
+Subscription (7a0255bf-...)
+│
+├── rg-mediasrl-persistent/                  (supravietuieste teardown)
+│   ├── pip-vm-jmp-01  (IP public static jumphost)
+│   └── pip-vm-web-01  (IP public static webserver, DNS: mediasrl)
+│
+├── rg-mediasrl-packer-swedencentral/
+│   └── gal_mediasrl  (Azure Compute Gallery)
+│       ├── imgdef-ubuntu2204           (Ubuntu 22.04 base)
+│       ├── imgdef-ubuntu2204-jumphost  (Ubuntu 22.04 + XFCE + Ansible)
+│       └── imgdef-winserver2022        (Windows Server 2022 + WinRM)
+│
+├── rg-mediasrl-persistent/
+│   └── kv-mediasrl-persistent  (Key Vault — secrete infrastructura)
+│
+└── rg-mediasrl-productie-swedencentral/
+    ├── vnet-mediasrl-productie  (10.10.0.0/20)
+    ├── kv-mediasrl-productie    (Key Vault — deployment secrets)
+    ├── log-mediasrl-productie   (Log Analytics Workspace)
+    ├── 6 x VMs + NICs + OS Disks
+    └── Azure Policies (subscription scope)
+```
+
+---
+
+## Secrets (Ansible Vault)
+
+Stocate în `kv-mediasrl-persistent`, preluate automat de `ansible/scripts/create-ansible-vault.sh`:
+
+| Secret KV | Variabila Vault |
+|-----------|-----------------|
+| `vm-admin-password` | `vault_admin_password` |
+| `mysql-root-password` | `vault_mysql_root_password` |
+| `mysql-wordpress-password` | `vault_mysql_wordpress_password` |
+| `mysql-monitoring-password` | `vault_mysql_monitoring_password` |
+| `mysql-api-password` | `vault_mysql_api_password` |
+| `wordpress-admin-password` | `vault_wordpress_admin_password` |
+| `ansible-vault-password` | (parola vault — salvata la `~/.vault-pass`) |
+
+---
+
+## WinRM Bootstrap (Automat)
+
+Scriptul `bicep/scripts/windows-winrm-bootstrap.ps1` ruleaza automat pe Windows VMs
+la deployment via `Microsoft.Compute/virtualMachines/runCommands`.
+Nu este necesara nicio configurare manuala.
+Log: `C:\Logs\mediasrl\winrm-bootstrap-*.log`
+
+---
+
+## Deployment Scripts (ordine de rulare)
+
+```powershell
+# 0. Bootstrap KV (o singura data)
+.\scripts\0-bootstrap-keyvault.ps1
+
+# 1. Build Packer images (o singura data sau la actualizare imagini)
+.\scripts\1-build-packer-images.ps1
+
+# 2. Deploy infrastructura
+.\scripts\2-deploy-teardown-bicep.ps1 -Action deploy -Environment prod
+
+# 3. Deploy Ansible pe jumphost
+.\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment prod
+
+# 4. Teste infrastructura
+.\scripts\4-test-infrastructure.ps1
+
+# Utilitar: afiseaza IP-uri + genereaza inventory static
+.\scripts\get-vm-ips.ps1
+```

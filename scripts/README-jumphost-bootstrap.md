@@ -1,196 +1,188 @@
-# Jumphost Bootstrap Instructions
+# Jumphost Bootstrap — vm-jmp-01
 
-## Overview
-After deploying the infrastructure with Bicep, the jumphost (vm-jmp-01) needs to be configured with xRDP and XFCE desktop environment using the bootstrap script.
+## Rezumat
 
-**VM Specifications:**
-- Size: Standard_D2s_v3 (2 vCPU, 8GB RAM)
-- OS: Ubuntu 22.04 LTS (Canonical)
-- Disk: 64GB Standard SSD
-- Desktop: XFCE (lightweight, optimized for RDP)
-- Browser: Firefox ESR (from Mozilla Team PPA)
-- Firewall: firewalld (replaces UFW)
-- Tools: Ansible, Azure CLI, VS Code, Remmina (with pre-configured profiles), DevOps utilities
+**Bootstrap-ul jumphostului este complet AUTOMAT** — nu este nevoie de nicio interventie manuala.
 
-This manual bootstrap step is required because VM extensions trigger Azure Policy tag requirements that complicate deployment.
+Toate uneltele necesare (XFCE, xRDP, Ansible, Azure CLI, VS Code, pywinrm etc.) sunt
+pre-instalate in imaginea `imgdef-ubuntu2204-jumphost` construita cu Packer.
+La deployment-ul Bicep, VM-ul porneste direct cu toate componentele functionale.
 
-## Quick Bootstrap (Windows PowerShell)
+---
 
-Run this command after the Bicep deployment completes:
+## Specificatii VM
+
+| Atribut | Valoare |
+|---------|---------|
+| Size | Standard_B4ls_v2 (4 vCPU, 8GB RAM) |
+| OS | Ubuntu 22.04 LTS (din imaginea Packer `imgdef-ubuntu2204-jumphost`) |
+| Disk | 64GB Standard SSD |
+| Desktop | XFCE (lightweight, optimizat pentru xRDP) |
+| Browser | Firefox ESR |
+| Firewall | firewalld |
+| IP public | Persistent (`pip-vm-jmp-01` in `rg-mediasrl-persistent`) |
+
+---
+
+## Ce contine imaginea Packer (imgdef-ubuntu2204-jumphost)
+
+Imaginea este construita o singura data (sau la actualizare) cu `scripts/1-build-packer-images.ps1`
+si stocata in `gal_mediasrl`. Contine pre-instalat:
+
+- XFCE Desktop Environment + xRDP (port 3389)
+- Ansible cu `azure.azcollection` (inventar dinamic Azure via MSI)
+- `python3-winrm` / `pywinrm` (conectivitate WinRM la Windows VMs)
+- Azure CLI
+- VS Code (Microsoft repository)
+- Firefox ESR (Mozilla Team PPA)
+- Remmina RDP client
+- Git, vim, htop, tmux, jq, curl, wget si alte utilitare DevOps
+- `firewalld` (UFW dezinstalat)
+- `xrdp` configurat pentru XFCE
+
+---
+
+## Conectare dupa deployment
+
+### 1. Obtine IP-ul public
 
 ```powershell
-az vm run-command invoke `
-  --resource-group rg-mediasrl-productie-swedencentral `
-  --name vm-jmp-01 `
-  --command-id RunShellScript `
-  --scripts @"
-$(Get-Content -Path 'scripts\bootstrap-jumphost.sh' -Raw)
-"@
+az network public-ip show -g rg-mediasrl-persistent -n pip-vm-jmp-01 --query ipAddress -o tsv
 ```
 
-**OR** if the above fails, use the file directly:
+### 2. Conectare RDP
 
 ```powershell
-az vm run-command invoke `
-  --resource-group rg-mediasrl-productie-swedencentral `
-  --name vm-jmp-01 `
-  --command-id RunShellScript `
-  --scripts '@scripts/bootstrap-jumphost.sh'
+mstsc /v:<IP_JUMPHOST>
 ```
 
-## Quick Bootstrap (Linux/macOS Bash)
+Credentiale:
+- **Username:** `azureadmin`
+- **Password:** secretul `vm-admin-password` din `kv-mediasrl-persistent`
+
+```powershell
+# Obtine parola din Key Vault
+az keyvault secret show --vault-name kv-mediasrl-persistent --name vm-admin-password --query value -o tsv
+```
+
+---
+
+## Dupa conectare
+
+Dupa prima conectare RDP, directorul `~/ansible` este populat automat de
+`scripts/3-deploy-ansible-to-jumphost.ps1` (pasul urmator in deployment).
+
+```bash
+cd ~/ansible
+
+# Verifica inventarul dinamic
+ansible-inventory --list
+
+# Verifica conectivitate Linux VMs
+ansible all -m ping
+
+# Verifica conectivitate Windows VMs
+ansible windows -m win_ping
+
+# Deploy configuratie
+ansible-playbook playbooks/2-site.yml
+```
+
+---
+
+## Managed Identity (MSI)
+
+Jumphostul are Managed Identity configurata cu:
+- **Reader** pe `rg-mediasrl-persistent`
+- **Key Vault Secrets User** pe `kv-mediasrl-persistent`
+
+Aceasta permite:
+- `az login --identity` — autentificare fara credentiale hardcodate
+- Inventarul Ansible `azure_rm.yml` cu `auth_source: msi` — fara `az login` separat
+- `create-ansible-vault.sh` — preia secretele din KV via MSI
+
+---
+
+## Troubleshooting
+
+### RDP nu functioneaza
+
+```bash
+# Verifica xRDP via az run-command
+az vm run-command invoke \
+  --resource-group rg-mediasrl-productie-swedencentral \
+  --name vm-jmp-01 \
+  --command-id RunShellScript \
+  --scripts "systemctl status xrdp; firewall-cmd --list-all"
+```
+
+Verifica:
+- NSG-ul `nsg-mgmt` permite portul 3389 de la IP-ul tau
+- xRDP ruleaza: `systemctl status xrdp`
+- Firewall: `firewall-cmd --list-all` (trebuie sa apara portul `3389/tcp`)
+
+### Reconectare se inchide imediat
+
+Desktop-ul nu este pornit corect:
 
 ```bash
 az vm run-command invoke \
   --resource-group rg-mediasrl-productie-swedencentral \
   --name vm-jmp-01 \
   --command-id RunShellScript \
-  --scripts @scripts/bootstrap-jumphost.sh
+  --scripts "cat /etc/xrdp/startwm.sh"
 ```
 
-## What the Bootstrap Script Does
+Linia din `startwm.sh` trebuie sa contina `exec startxfce4`.
 
-1. ✅ Updates system packages (apt)
-2. ✅ Sets password for `azureadmin` user
-3. ✅ Enables password authentication in SSH
-4. ✅ Removes UFW and installs firewalld
-5. ✅ Configures firewalld (ports 22, 3389)
-6. ✅ Installs XFCE Desktop Environment
-7. ✅ Installs X11 components
-8. ✅ Sets graphical target as default
-9. ✅ Installs and configures xRDP for XFCE
-10. ✅ Installs Remmina (RDP/VNC client)
-11. ✅ Installs Ansible + dependencies (python3-winrm, sshpass)
-12. ✅ Installs Azure CLI
-13. ✅ Installs VS Code (from Microsoft repository)
-14. ✅ Installs Firefox ESR (from Mozilla Team PPA)
-15. ✅ Installs DevOps tools (git, vim, htop, tmux, jq, etc.)
-16. ✅ Creates workspace directories
-17. ✅ Creates pre-configured Remmina RDP profiles for Windows VMs
-18. ✅ Creates MOTD (Message of the Day)
-19. ✅ Verifies services (firewalld, xrdp, ssh)
-20. ✅ Cleanup and reboot
-
-## Expected Duration
-
-- Script execution: ~8-12 minutes
-- Reboot: ~2-3 minutes
-- **Total**: ~12-15 minutes
-
-## After Bootstrap
-
-Connect via RDP:
-- **Address**: `<jumphost-public-ip>:3389`
-- **Username**: `azureadmin`
-- **Password**: `Str0ng_P@ssw0rd_2026!`
-
-## Pre-configured Remmina Profiles
-
-The bootstrap script automatically creates Remmina RDP profiles for Windows VMs:
-- **vm-db-01** (Windows DB Server)
-- **vm-fs-01** (Windows File Server)
-
-Simply open Remmina from the Applications menu and select the saved connection!
-
-## Verification
-
-Check if jumphost is ready for RDP:
-
-```powershell
-# Test RDP port (should return True)
-Test-NetConnection -ComputerName <jumphost-public-ip> -Port 3389
-
-# Check xRDP service status
-az vm run-command invoke `
-  --resource-group rg-mediasrl-productie-swedencentral `
-  --name vm-jmp-01 `
-  --command-id RunShellScript `
-  --scripts "systemctl status xrdp"
-```
-
-## Troubleshooting
-
-### RDP Connection Fails
-
-1. Check NSG rules allow your IP on port 3389
-2. Verify xRDP is running: `systemctl status xrdp`
-3. Check firewall: `firewall-cmd --list-all`
-4. Verify desktop is installed: `dpkg -l | grep xfce4`
-
-### Connection Closes After Login
-
-This usually means desktop environment is not properly installed:
-
-```bash
-# Reinstall XFCE
-sudo apt install -y xfce4 xfce4-goodies xorg
-
-# Reconfigure xRDP
-cat > /etc/xrdp/startwm.sh <<'EOF'
-#!/bin/sh
-if [ -r /etc/default/locale ]; then
-  . /etc/default/locale
-  export LANG LANGUAGE
-fi
-unset SESSION_MANAGER
-unset DBUS_SESSION_BUS_ADDRESS
-exec startxfce4
-EOF
-sudo chmod +x /etc/xrdp/startwm.sh
-
-# Restart xRDP
-sudo systemctl restart xrdp
-```
-
-### Firefox Not Working
-
-If Firefox doesn't launch, install Firefox ESR from Mozilla Team PPA:
+### Firefox nu functioneaza
 
 ```bash
 sudo add-apt-repository -y ppa:mozillateam/ppa
-echo 'Package: *
-Pin: release o=LP-PPA-mozillateam
-Pin-Priority: 1001' | sudo tee /etc/apt/preferences.d/mozilla-firefox
 sudo apt update
 sudo apt install -y firefox-esr
 ```
 
-### Remmina Connection to Windows Crashes
+### Remmina — conexiune la Windows se inchide
 
-If Remmina closes immediately when connecting to Windows Server:
+1. Deschide Remmina
+2. Editeaza conexiunea
+3. Advanced → Security: **NLA protocol security**
+4. Advanced → Ignore certificate: **YES**
 
-1. Open Remmina
-2. Edit the saved connection (vm-db-01)
-3. Advanced tab → Security: Change to **"NLA protocol security"**
-4. Advanced tab → Ignore certificate: **YES**
-5. Save and reconnect
+### Managed Identity nu functioneaza
 
-## Manual Configuration (Alternative)
+Verifica ca VM-ul are MSI activata:
 
-If `az vm run-command` doesn't work, use Azure Portal Serial Console:
+```powershell
+az vm identity show -g rg-mediasrl-productie-swedencentral -n vm-jmp-01
+```
 
-1. Azure Portal → vm-jmp-01 → Serial Console
-2. Login with `azureadmin` and the password
-3. Become root: `sudo su -`
-4. Copy/paste commands from `scripts/bootstrap-jumphost.sh` one by one
+Verifica access policy in KV:
 
-## Security Notes
+```powershell
+az keyvault show -n kv-mediasrl-persistent --query properties.accessPolicies
+```
 
-- Default password is `Str0ng_P@ssw0rd_2026!` - **change this immediately** after first login
-- Password authentication is enabled for SSH and RDP
-- SSH keys will be configured via Ansible after bootstrap
-- Firewall is configured to allow only RDP (3389) and SSH (22)
-- Ubuntu AppArmor is active (no SELinux on Ubuntu)
+---
 
-## Next Steps After Bootstrap
+## Reconstruire imagine (daca e necesar)
 
-1. Connect via RDP to jumphost
-2. Change default password: `passwd`
-3. Test Firefox ESR browser
-4. Test Remmina connection to vm-db-01
-5. Configure SSH keys for Linux VMs (via Ansible)
-6. Run Ansible playbooks from jumphost to configure other VMs
+Daca imaginea Packer trebuie reconstruita:
 
-## Bootstrap Log File
+```powershell
+.\scripts\1-build-packer-images.ps1
+```
 
-All bootstrap output is saved to `/tmp/jumphost-bootstrap-YYYYMMDD-HHMMSS.log` for troubleshooting.
+Urmat de re-deployment VM:
+
+```powershell
+.\scripts\2-deploy-teardown-bicep.ps1 -Action teardown -Environment prod
+.\scripts\2-deploy-teardown-bicep.ps1 -Action deploy -Environment prod
+```
+
+---
+
+**Nota:** Scriptul `3-bootstrap-windows-winrm.ps1` si `4-deploy-ansible-to-jumphost.ps1`
+au fost redenumite ca `3-deploy-ansible-to-jumphost.ps1` si `4-test-infrastructure.ps1`.
+Bootstrap-ul WinRM este acum automat via Bicep `runCommands`.

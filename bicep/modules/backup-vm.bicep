@@ -18,12 +18,6 @@ param backupPolicyId string
 @description('Azure region for resources')
 param location string
 
-// ----- Get existing Recovery Services Vault -----
-
-resource vault 'Microsoft.RecoveryServices/vaults@2024-04-01' existing = {
-  name: vaultName
-}
-
 // ----- Backup Protection Container -----
 // Note: Protection container and protected item are created implicitly
 // when you configure backup for a VM. This resource configures the link.

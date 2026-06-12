@@ -1,228 +1,79 @@
-# Infrastructure Update Summary: 5 VMs to 6 VMs
+# Infrastructure Summary — SC MEDIA SRL
 
-## Overview
-The infrastructure has been successfully updated from 5 VMs to 6 VMs, with the following new architecture:
-
-### VM Architecture (6 VMs Total)
-
-1. **vm-jmp-01** (Rocky Linux) - Jumphost with GUI + xRDP + Ansible Control Node
-2. **vm-fs-01** (Windows Server 2022) - File Server
-3. **vm-db-01** (Windows Server 2022) - MS SQL Server 2022 Database Server **[NEW]**
-4. **vm-web-01** (Rocky Linux) - nginx Web Server
-5. **vm-app-01** (Rocky Linux) - Application Server
-6. **vm-cms-01** (Rocky Linux) - WordPress CMS + Postfix Mail Server
-
-### Key Architecture Changes
-
-- **Database separation**: WordPress now connects to a remote MS SQL Server (vm-db-01) instead of local MySQL
-- **Windows infrastructure**: 2 Windows Servers (vm-fs-01 for files, vm-db-01 for database)
-- **Linux infrastructure**: 4 Rocky Linux servers (jumphost, web, app, cms)
-
-## Files Modified
-
-### 1. Bicep Infrastructure Files
-
-#### `bicep/parameters/prod.bicepparam`
-- Added vm-db-01 to the vms array
-- Configuration: Windows Server 2022, Standard_B2s, prod subnet, no public IP
-
-#### `bicep/main.bicep`
-- Updated default vms array to include vm-db-01
-- VM will be deployed with the same configuration as other Windows servers
-
-### 2. Ansible Inventory
-
-#### `ansible/inventory/hosts.ini`
-- Added vm-db-01 to [windows] group (IP: 10.10.10.10)
-- Created new [database] group containing vm-db-01
-- Updated [production:children] to include database group
-- Removed vm-cms-01 from [database] group (no longer hosting MySQL locally)
-
-### 3. New MS SQL Role
-
-Created complete Ansible role: `ansible/roles/mssql/`
-
-#### `ansible/roles/mssql/defaults/main.yml`
-- SQL Server 2022 Developer Edition configuration
-- SA password and WordPress database credentials
-- Backup settings (retention: 7 days, location: C:\SQLBackups)
-- TCP port 1433, SQL Server Agent enabled
-
-#### `ansible/roles/mssql/tasks/main.yml`
-- Download and install SQL Server 2022
-- Configure TCP/IP protocol and firewall (port 1433)
-- Enable SQL Server and SQL Server Agent services
-- Create WordPress database and user
-- Deploy automated backup script
-- Configure scheduled task for daily backups
-- Clean up installation files
-
-#### `ansible/roles/mssql/handlers/main.yml`
-- Handler to restart SQL Server service
-- Handler to restart SQL Server Agent
-
-#### `ansible/roles/mssql/templates/backup-mssql.ps1.j2`
-- PowerShell script for automated SQL Server backups
-- Full backup of all user databases
-- Automatic cleanup of old backups (7-day retention)
-- Comprehensive logging
-
-### 4. Updated WordPress Role
-
-#### `ansible/roles/wordpress/defaults/main.yml`
-- Changed db_host from "localhost" to "vm-db-01"
-- Changed db_type to "sqlsrv" (SQL Server driver)
-- Removed MySQL-specific variables
-
-#### `ansible/roles/wordpress/tasks/main.yml`
-- Removed local MySQL installation tasks
-- Added Microsoft ODBC Driver 18 for SQL Server
-- Added PHP SQL Server drivers (sqlsrv and pdo_sqlsrv)
-- Added mssql-tools18 package
-- Added SELinux boolean: httpd_can_network_connect_db (for remote DB access)
-- Updated wp-config.php template reference for SQL Server connection
-
-#### Deleted: `ansible/roles/wordpress/tasks/mysql-local.yml`
-- No longer needed (using remote MS SQL instead of local MySQL)
-
-### 5. Main Playbook
-
-#### `ansible/playbooks/2-site.yml`
-- Added new play: "Configure Database Server (Windows with MS SQL Server 2022)"
-- Targets: hosts: database
-- Applies role: mssql
-- Tags: [database, mssql, windows]
-- Runs before common baseline configuration
-
-## Network Configuration
-
-### IP Address Allocation (10.10.10.0/24 - Production Subnet)
-
-- vm-fs-01: 10.10.10.5 (File Server)
-- vm-db-01: 10.10.10.10 (Database Server) **[NEW]**
-- vm-web-01: 10.10.10.15 (Web Server)
-- vm-app-01: 10.10.10.20 (App Server)
-- vm-cms-01: 10.10.10.25 (CMS + Mail)
-
-### Firewall Rules
-
-**vm-db-01 (Database Server)**:
-- Port 1433 (SQL Server) - Inbound from production subnet
-- WinRM 5986 (Ansible management) - Inbound from jumphost
-
-**vm-cms-01 (WordPress Server)**:
-- Port 1433 (SQL Server client) - Outbound to vm-db-01
-- Ports 80/443 (HTTP/HTTPS) - Inbound from internet
-
-## Security Considerations
-
-1. **SQL Server Authentication**:
-   - SA password stored in Ansible Vault
-   - WordPress database user with minimal permissions (db_owner on wordpress_db only)
-
-2. **Network Isolation**:
-   - Database server on internal production subnet (no public IP)
-   - Access only via jumphost or internal network
-
-3. **Backup Strategy**:
-   - Daily automated backups at 2:00 AM
-   - 7-day retention policy
-   - Backups stored on C:\SQLBackups
-
-4. **SELinux Configuration**:
-   - httpd_can_network_connect_db enabled on WordPress server
-   - Allows PHP to connect to remote SQL Server
-
-## Deployment Steps
-
-### 1. Deploy Infrastructure (Bicep)
-```bash
-az deployment sub create \
-  --location swedencentral \
-  --template-file bicep/main.bicep \
-  --parameters bicep/parameters/prod.bicepparam
-```
-
-### 2. Configure Database Server (Ansible)
-```bash
-ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/2-site.yml \
-  --tags database
-```
-
-### 3. Configure WordPress Server (Ansible)
-```bash
-ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/2-site.yml \
-  --tags cms
-```
-
-### 4. Run Full Deployment (All VMs)
-```bash
-ansible-playbook -i ansible/inventory/hosts.ini \
-  ansible/playbooks/2-site.yml
-```
-
-## Testing Checklist
-
-- [ ] vm-db-01 deploys successfully via Bicep
-- [ ] SQL Server 2022 installs and starts
-- [ ] WordPress database and user are created
-- [ ] WordPress can connect to remote SQL Server from vm-cms-01
-- [ ] Automated backups run successfully
-- [ ] Firewall rules allow SQL Server traffic
-- [ ] SELinux allows remote database connections
-- [ ] WordPress site is accessible and functional
-
-## Required Ansible Collections
-
-Ensure the following collections are installed on the jumphost:
-
-```bash
-ansible-galaxy collection install community.windows
-ansible-galaxy collection install ansible.windows
-ansible-galaxy collection install community.general
-ansible-galaxy collection install ansible.posix
-```
-
-## Database Connection Details
-
-**Connection String (from WordPress)**:
-- Host: vm-db-01
-- Port: 1433
-- Database: wordpress_db
-- User: wordpress_user
-- Driver: sqlsrv (Microsoft SQL Server Native Client)
-
-## Cost Implications
-
-- **New VM**: vm-db-01 (Standard_B2s) - ~€30/month
-- **Total Infrastructure**: 6 VMs x €30/month = ~€180/month
-- **Storage**: Additional 128GB SSD for database = ~€10/month
-
-**Total estimated monthly cost**: ~€190/month
-
-## Documentation Updates Needed
-
-1. Update architecture diagrams to show 6 VMs
-2. Update network topology to include vm-db-01
-3. Update deployment documentation with new database configuration
-4. Update security documentation with SQL Server hardening
-5. Update backup and recovery procedures
-
-## Migration Notes
-
-**If migrating from existing 5-VM setup**:
-
-1. Export existing WordPress database from MySQL
-2. Deploy new vm-db-01
-3. Convert MySQL dump to SQL Server format (using tools like MySQL to MSSQL converter)
-4. Import data into SQL Server
-5. Update WordPress configuration
-6. Test thoroughly before decommissioning old MySQL setup
+**Data:** 2026-06-12
 
 ---
 
-**Date**: February 5, 2026
-**Updated by**: Claude Sonnet 4.5
-**Status**: Ready for deployment
+## Arhitectura curenta (6 VM-uri)
+
+| VM | OS | Rol | Size |
+|----|----|-----|------|
+| vm-jmp-01 | Ubuntu 22.04 LTS | Jumphost + Ansible Control Node | Standard_B4ls_v2 |
+| vm-web-01 | Ubuntu 22.04 LTS | nginx reverse proxy + SSL | Standard_B2s |
+| vm-app-01 | Ubuntu 22.04 LTS | REST API (port 8080) | Standard_B2s |
+| vm-cms-01 | Ubuntu 22.04 LTS | WordPress + Postfix | Standard_B2s |
+| vm-db-01  | Windows Server 2022 | MySQL Community 8.0 | Standard_B2s |
+| vm-fs-01  | Windows Server 2022 | SMB File Server | Standard_B2s |
+
+---
+
+## Componente Azure
+
+| Resursa | Nume | RG |
+|---------|------|----|
+| VNet | vnet-mediasrl-productie (10.10.0.0/20) | productie |
+| Key Vault (infra) | kv-mediasrl-productie | productie |
+| Key Vault (secrete) | kv-mediasrl-persistent | persistent |
+| Log Analytics | log-mediasrl-productie | productie |
+| Compute Gallery | gal_mediasrl | packer |
+| IP public jumphost | pip-vm-jmp-01 | persistent |
+| IP public webserver | pip-vm-web-01 | persistent |
+
+---
+
+## Stare curenta componente
+
+### Bicep (IaC)
+- Deployment via `scripts/2-deploy-teardown-bicep.ps1`
+- IP admin detectat automat + adaugat la whitelist NSG
+- WinRM bootstrap Windows: automat via `runCommands` (nu CSE — limita cmd.exe depasita)
+- Azure Backup (RSV): **dezactivat** — vault blocheaza teardown-ul, in investigare
+- Access policy jumphost MSI → kv-mediasrl-persistent: configurat via Bicep
+
+### Packer (Golden Images)
+- 3 image definitions in `gal_mediasrl`
+- `imgdef-ubuntu2204` — Ubuntu base hardened
+- `imgdef-ubuntu2204-jumphost` — Ubuntu + XFCE + Ansible + Azure CLI
+- `imgdef-winserver2022` — Windows Server 2022 + WinRM pre-configurat
+
+### Ansible (Config Management)
+- Inventar dinamic Azure (`azure_rm.yml`) cu `auth_source: msi` (fara `az login`)
+- Vault automat: `ansible/scripts/create-ansible-vault.sh` preia secretele din KV via MSI
+- Vault password: `~/.vault-pass` (generat de scriptul de bootstrap)
+- Ansible Galaxy collections pre-installed in imaginea Packer
+
+### Scripts (PowerShell — ordine rulare)
+
+| Script | Scop | Cand |
+|--------|------|------|
+| `0-bootstrap-keyvault.ps1` | Creeaza KV persistent + populeaza secrete | O singura data |
+| `1-build-packer-images.ps1` | Build imagini golden in Azure Compute Gallery | La actualizare imagini |
+| `2-deploy-teardown-bicep.ps1` | Deploy sau teardown infrastructura | La fiecare deploy |
+| `3-deploy-ansible-to-jumphost.ps1` | Copiaza ansible/ pe jumphost + ruleaza create-ansible-vault.sh | Dupa deploy |
+| `4-test-infrastructure.ps1` | Teste Azure (resurse, VM-uri, NSG, conectivitate) | Dupa deploy |
+| `get-vm-ips.ps1` | Afiseaza IP-uri + genereaza hosts.ini static | Utilitar |
+
+Toate scripturile genereaza log HTML + log text in `logs/`.
+
+### HTML Logs
+Fiecare script genereaza un raport HTML colapsibil in `logs/`:
+- Output-ul comenzilor az CLI este capturat in blocuri `<details>` expandabile
+- Logul e scris intotdeauna, indiferent daca scriptul se termina cu eroare sau succes (trap block)
+
+---
+
+## Probleme cunoscute / In lucru
+
+- **Azure Backup**: modulele `backup.bicep` si `backup-vm.bicep` exista dar sunt dezactivate in `main.bicep`. Recovery Services Vault nu poate fi sters fortat la teardown. In investigare.
+- **Ansible roles**: directoarele exista cu `.gitkeep`, continutul rolurilor urmeaza a fi implementat.
+- **Playbooks**: `playbooks/.gitkeep` — playbook-urile Ansible urmeaza a fi scrise.

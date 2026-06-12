@@ -19,6 +19,12 @@ $LogDir = Join-Path $ProjectRoot "logs"
 . "$PSScriptRoot\lib\Write-Log.ps1"
 Start-LogSession -ScriptTitle "Packer Image Builder" -LogDirectory $LogDir
 
+trap {
+    Write-Log-Fail "Eroare neasteptata: $_" -Detail "Script oprit prematur"
+    Stop-LogSession
+    break
+}
+
 # ----- Variabile -----
 $Location = "swedencentral"
 $GalleryName = "gal_mediasrl"

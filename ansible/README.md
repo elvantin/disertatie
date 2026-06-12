@@ -1,328 +1,325 @@
-# Ansible Configuration Management - SC MEDIA SRL
+# Ansible Configuration Management — SC MEDIA SRL
 
-Infrastructure automation pentru proiect disertație master - Managementul configurației pentru 6 VMs în Azure.
+Gestionarea configuratiei pentru 6 VMs Azure — proiect disertatie Master.
 
-## 📋 Structura
+---
+
+## Structura
 
 ```
 ansible/
-├── ansible.cfg              # Configurație Ansible
+├── ansible.cfg                     # Configuratie Ansible (vault_password_file = ~/.vault-pass)
 ├── inventory/
-│   ├── hosts.ini           # Inventory static
-│   └── azure_rm.yml        # Dynamic inventory pentru Azure
+│   ├── azure_rm.yml                # Inventar dinamic Azure (auth_source: msi) — PRIMAR
+│   └── azure_rm_dev.yml            # Inventar dinamic — mediu dev
+├── group_vars/
+│   ├── all/
+│   │   └── vault.yml               # Secrete encriptate AES-256 (gitignored, creat automat)
+│   ├── linux.yml                   # Variabile comune Linux VMs
+│   ├── windows.yml                 # Variabile WinRM Windows VMs
+│   └── jumphost.yml                # Variabile specifice jumphost
 ├── playbooks/
-│   ├── site.yml            # Playbook principal (orchestrare completă)
-│   ├── setup-ssh-keys.yml  # Configurare SSH keys între VMs
-│   ├── deploy-services.yml # Deploy doar servicii
-│   └── harden-all.yml      # Hardening security
-└── roles/
-    ├── common/             # Configurație baseline (toate VM-urile Linux)
-    ├── nginx/              # Web server (vm-web-01)
-    ├── wordpress/          # CMS (vm-cms-01)
-    ├── postfix/            # Mail server (vm-cms-01)
-    ├── sqlserver/          # SQL Server (vm-db-01, Windows)
-    ├── fileserver/         # File Server (vm-fs-01, Windows)
-    └── hardening/          # CIS Benchmark hardening
+│   ├── 1-setup-ssh-keys.yml        # Configureaza SSH keys intre VM-uri
+│   └── 2-site.yml                  # Playbook principal — deploy complet
+├── roles/
+│   ├── common/                     # Baseline Linux (pachete, NTP, SSH hardening)
+│   ├── nginx/                      # Reverse proxy + SSL/TLS (vm-web-01)
+│   ├── appserver/                  # REST API pe nginx:8080 (vm-app-01)
+│   ├── wordpress/                  # WordPress + PHP-FPM + WP-CLI (vm-cms-01)
+│   ├── postfix/                    # SMTP relay (vm-cms-01)
+│   ├── mysql/                      # MySQL Community 8.0 pe Windows (vm-db-01)
+│   ├── fileserver/                 # SMB File Server pe Windows (vm-fs-01)
+│   └── hardening/                  # CIS Benchmarks Linux + Windows
+└── scripts/
+    ├── create-ansible-vault.sh     # Preia secrete din KV via MSI + creeaza vault.yml
+    └── demo-*.sh                   # Scripturi demo securitate
 ```
 
-## 🚀 Utilizare
+---
 
-### 1. Pregătire Ansible Control Node (Jumphost)
+## Jumphost — Ansible Control Node
 
-**Jumphost (vm-jmp-01)** vine pre-configurat cu Ansible prin bootstrap script:
-- OS: Ubuntu 22.04 LTS + XFCE Desktop
-- Ansible + python3-winrm (pentru Windows VMs)
-- Azure CLI
-- VS Code, Git, și alte DevOps tools
+**vm-jmp-01** vine pre-configurat cu toate uneltele necesare prin imaginea Packer:
+- OS: Ubuntu 22.04 LTS + XFCE Desktop + xRDP
+- Ansible cu `azure.azcollection` (inventar dinamic Azure)
+- `pywinrm` (conectivitate WinRM la Windows VMs)
+- Azure CLI — autentificat via Managed Identity (fara `az login`)
+- VS Code, Git, Remmina, utilitare DevOps
+
+Workspace Ansible: `~/ansible` (copiat de `scripts/3-deploy-ansible-to-jumphost.ps1`).
+
+---
+
+## Inventar dinamic (azure_rm.yml)
+
+Inventarul dinamic se autentifica via MSI (Managed Identity) — fara credentiale hardcodate:
 
 ```bash
-# Verificare instalare Ansible
-ansible --version
-
-# Instalare Azure collection pentru dynamic inventory (dacă e necesar)
-ansible-galaxy collection install azure.azcollection
+# Verifica inventarul
+ansible-inventory -i inventory/azure_rm.yml --list
+ansible-inventory -i inventory/azure_rm.yml --graph
 ```
 
-### 2. Configurare Inventory
+Grupuri definite in `azure_rm.yml` prin tag-uri Azure:
+```
+[jumphost]    vm-jmp-01
+[webserver]   vm-web-01
+[appserver]   vm-app-01
+[cmsserver]   vm-cms-01
+[database]    vm-db-01   (Windows, WinRM)
+[fileserver]  vm-fs-01   (Windows, WinRM)
 
-Editați `inventory/hosts.ini` și completați:
-- IP-uri private ale tuturor VMs
-- Credențiale SSH pentru Linux VMs
-- Credențiale WinRM pentru Windows VMs
-
-**Exemplu inventory:**
-
-```ini
-[webserver]
-vm-web-01 ansible_host=10.10.10.4 ansible_user=azureadmin
-
-[appserver]
-vm-app-01 ansible_host=10.10.10.5 ansible_user=azureadmin
-
-[cmsserver]
-vm-cms-01 ansible_host=10.10.10.6 ansible_user=azureadmin
-
-[database]
-vm-db-01 ansible_host=10.10.10.7 ansible_user=azureadmin ansible_connection=winrm ansible_winrm_server_cert_validation=ignore
-
-[fileserver]
-vm-fs-01 ansible_host=10.10.10.8 ansible_user=azureadmin ansible_connection=winrm ansible_winrm_server_cert_validation=ignore
-
-[linux:children]
-webserver
-appserver
-cmsserver
-
-[windows:children]
-database
-fileserver
+[linux:children]    webserver, appserver, cmsserver
+[windows:children]  database, fileserver
 ```
 
-### 3. Setup SSH Keys (First Step)
+---
 
-**IMPORTANT:** Primul pas după bootstrap este configurarea SSH keys între jumphost și Linux VMs:
+## Ansible Vault — creare automata
+
+`group_vars/all/vault.yml` se creeaza **automat** la rularea `scripts/3-deploy-ansible-to-jumphost.ps1`,
+care apeleaza `ansible/scripts/create-ansible-vault.sh` pe jumphost via SSH.
+
+Scriptul:
+1. Se autentifica in Azure via Managed Identity (`az login --identity`)
+2. Preia secretele din `kv-mediasrl-persistent`
+3. Salveaza parola vault la `~/.vault-pass` (chmod 600)
+4. Creeaza `group_vars/all/vault.yml` encriptat AES-256
+
+**Pentru recreare manuala (daca e necesar):**
 
 ```bash
-cd ~/ansible-workspace
+cd ~/ansible
+bash scripts/create-ansible-vault.sh
+```
 
-# Generate SSH key pair pe jumphost (dacă nu există)
-ssh-keygen -t rsa -b 4096 -C "jumphost-ansible" -f ~/.ssh/id_rsa -N ""
+**Vizualizare/editare vault:**
 
-# Deploy SSH keys to Linux VMs (folosește password authentication pentru prima dată)
-ansible-playbook playbooks/1-setup-ssh-keys.yml --ask-pass
+```bash
+ansible-vault view group_vars/all/vault.yml
+ansible-vault edit group_vars/all/vault.yml
+```
 
-# Test connectivity
+Fisierul `ansible.cfg` contine `vault_password_file = ~/.vault-pass` — playbook-urile ruleaza fara `--ask-vault-pass`.
+
+**Variabile stocate in vault:**
+
+| Secret KV (kv-mediasrl-persistent) | Variabila Vault |
+|------------------------------------|-----------------|
+| `vm-admin-password` | `vault_admin_password` |
+| `mysql-root-password` | `vault_mysql_root_password` |
+| `mysql-wordpress-password` | `vault_mysql_wordpress_password` |
+| `mysql-monitoring-password` | `vault_mysql_monitoring_password` |
+| `mysql-api-password` | `vault_mysql_api_password` |
+| `wordpress-admin-password` | `vault_wordpress_admin_password` |
+
+---
+
+## Utilizare
+
+### Verificare conectivitate
+
+```bash
+cd ~/ansible
+
+# Linux VMs (SSH)
 ansible all -m ping
+
+# Windows VMs (WinRM)
+ansible windows -m win_ping
 ```
 
-### 4. Deployment Complet
+### Deploy complet
 
 ```bash
-# Deployment complet (baseline + servicii + hardening)
 ansible-playbook playbooks/2-site.yml
-
-# Deployment doar servicii
-ansible-playbook playbooks/obsolete/deploy-services.yml
-
-# Doar hardening security
-ansible-playbook playbooks/obsolete/harden-all.yml
-
-# Deployment cu tags specifice
-ansible-playbook playbooks/2-site.yml --tags "nginx,wordpress"
-
-# Dry-run (test fără modificări)
-ansible-playbook playbooks/2-site.yml --check
 ```
 
-### 5. Deployment Selectiv
+### Deploy selectiv (tags)
 
 ```bash
-# Doar Web Server
+ansible-playbook playbooks/2-site.yml --tags common
+ansible-playbook playbooks/2-site.yml --tags nginx
+ansible-playbook playbooks/2-site.yml --tags appserver
+ansible-playbook playbooks/2-site.yml --tags cms
+ansible-playbook playbooks/2-site.yml --tags database
+ansible-playbook playbooks/2-site.yml --tags fileserver
+ansible-playbook playbooks/2-site.yml --tags hardening
+```
+
+### Deploy pe VM-uri specifice
+
+```bash
 ansible-playbook playbooks/2-site.yml --limit webserver
-
-# Doar Linux VMs
 ansible-playbook playbooks/2-site.yml --limit linux
-
-# Doar Windows VMs
 ansible-playbook playbooks/2-site.yml --limit windows
-
-# Doar un VM specific
 ansible-playbook playbooks/2-site.yml --limit vm-cms-01
 ```
 
-## 🔐 Securitate - Ansible Vault
-
-Secretele (parole SQL Server, WordPress keys, certificates) trebuie stocate în Ansible Vault:
+### Dry-run
 
 ```bash
-# Creare vault pentru secrete
-ansible-vault create group_vars/all/vault.yml
-
-# Editare vault
-ansible-vault edit group_vars/all/vault.yml
-
-# Deployment cu vault
-ansible-playbook playbooks/2-site.yml --ask-vault-pass
-
-# Sau folosiți un password file
-echo 'your-vault-password' > ~/.vault_pass
-chmod 600 ~/.vault_pass
-ansible-playbook playbooks/2-site.yml --vault-password-file ~/.vault_pass
+ansible-playbook playbooks/2-site.yml --check
 ```
 
-## 📦 Roluri Ansible
+---
+
+## Roluri Ansible
 
 ### common (Linux baseline)
-- Update pachete (apt)
-- Instalare utilities (htop, vim, curl, etc.)
-- Configurare timezone (Europe/Bucharest)
-- NTP/time sync (systemd-timesyncd)
-- SSH hardening
-- Firewall configuration (firewalld)
-- Baseline security
+- Update pachete (apt), utilitare (htop, vim, curl, etc.)
+- Timezone Europe/Bucharest, NTP (systemd-timesyncd)
+- SSH hardening, firewalld, baseline security
 
 ### nginx
-- Instalare nginx pe Ubuntu
-- Virtual host pentru SC MEDIA SRL
-- Reverse proxy către vm-app-01
-- SSL/TLS configuration
-- Hardening HTTP headers (HSTS, CSP, X-Frame-Options)
-- Log rotation
+- Reverse proxy pe vm-web-01
+- SSL/TLS (Let's Encrypt), port 443
+- Security headers (HSTS, CSP, X-Frame-Options)
+
+### appserver
+- REST API pe nginx:8080 (vm-app-01)
+- 6 endpoint-uri JSON: `/api/services`, `/api/clients`, `/api/projects`, `/api/team`, `/api/stats`, `/health`
 
 ### wordpress
-- Instalare PHP 8.1 + PHP-FPM
-- MySQL/MariaDB client pentru conexiune la vm-db-01
-- Deployment WordPress
-- Configurare wp-config.php (database connection)
-- Nginx + PHP-FPM integration
-- WP-CLI installation
+- PHP 8.1 + PHP-FPM, MySQL client
+- WordPress + WP-CLI
+- wp-config.php configurat din vault (conexiune MySQL la vm-db-01:3306)
 
 ### postfix
-- Instalare Postfix pe Ubuntu
-- Configurare SMTP relay
-- Mail aliases
-- SPF/DKIM configuration
+- SMTP relay pe vm-cms-01
+- Mail aliases, SPF/DKIM
 
-### sqlserver
-- Instalare SQL Server 2022 pe Windows Server via DSC
-- Configurare SQL Server Management Studio
-- Database creation pentru WordPress
-- User creation și permissions
-- Backup configuration (automated via SQL Agent)
-- Firewall rules pentru port 1433
+### mysql
+- MySQL Community Server 8.0 pe Windows Server 2022 (vm-db-01)
+- Baze de date: `wordpress_db`, `mediasrl_business`
+- Utilizatori MySQL cu parole din vault
+- Port: 3306
 
 ### fileserver
-- Configurare SMB shares pe Windows Server
-- NTFS permissions
-- Access Control Lists (ACLs)
-- Quota management
-- Disable SMBv1 pentru securitate
-- Audit logging
+- SMB shares pe Windows Server 2022 (vm-fs-01): Public, Marketing, IT, Backups
+- NTFS permissions, ACL-uri, dezactivare SMBv1
+- LanmanServer service
 
 ### hardening
-- CIS Benchmark compliance pentru Ubuntu și Windows Server
-- Kernel hardening (sysctl pentru Linux)
-- Audit logging (auditd Linux, Windows Event Log)
-- Password policies
-- File permissions
-- Disable unnecessary services
-- AppArmor configuration (Ubuntu)
-- Windows Defender configuration
+- CIS Benchmarks Linux + Windows
+- Kernel hardening (sysctl), auditd, Windows Event Log
+- Password policies, AppArmor (Ubuntu), Windows Defender
 
-## 🧪 Testare
+---
 
-```bash
-# Ping test (toate VMs)
-ansible all -m ping
+## Variabile grup
 
-# Check disk space
-ansible all -m shell -a "df -h"
-
-# Gather facts despre toate VMs
-ansible all -m setup
-
-# Test conectivitate la servicii
-ansible webserver -m uri -a "url=http://localhost"
-
-# Check running services
-ansible linux -m service -a "name=nginx state=started"
-
-# Windows-specific commands
-ansible windows -m win_service -a "name=MSSQLSERVER"
-```
-
-## 📝 Configurare Variabile
-
-Variabilele pot fi suprascrise în:
-- `group_vars/all.yml` - variabile globale
-- `group_vars/linux.yml` - specific Ubuntu VMs
-- `group_vars/windows.yml` - specific Windows Server VMs
-- `host_vars/vm-web-01.yml` - specific unui host
-- `group_vars/all/vault.yml` - secrete (encrypted)
-
-**Exemplu group_vars/all.yml:**
+**`group_vars/all/`** — variabile globale + vault:
 
 ```yaml
----
-# Global variables
 timezone: "Europe/Bucharest"
 ntp_servers:
   - "0.ro.pool.ntp.org"
   - "1.ro.pool.ntp.org"
 
-# Database connection
-db_host: "vm-db-01"
-db_port: 1433
-db_name: "wordpress_db"
-db_user: "wp_user"
-# db_password stored in vault.yml
-
-# Company information
 company_name: "SC MEDIA SRL"
 company_domain: "media-srl.ro"
+
+db_host: "vm-db-01"
+db_port: 3306
+db_name: "wordpress_db"
 ```
 
-## 🔄 Troubleshooting
+**`group_vars/windows.yml`** — variabile WinRM (parola din vault, nu hardcodata):
+
+```yaml
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_winrm_server_cert_validation: ignore
+ansible_port: 5985
+ansible_user: azureadmin
+ansible_password: "{{ vault_admin_password }}"
+```
+
+---
+
+## Testare
 
 ```bash
-# Verbose mode (debug)
+# Ping toate VM-urile
+ansible all -m ping
+
+# Check disk
+ansible all -m shell -a "df -h"
+
+# Check serviciu MySQL pe Windows
+ansible database -m win_service -a "name=MySQL80"
+
+# Check serviciu SMB pe Windows
+ansible fileserver -m win_service -a "name=LanmanServer"
+
+# Check nginx
+ansible webserver -m uri -a "url=http://localhost"
+```
+
+---
+
+## Troubleshooting
+
+### Debug general
+
+```bash
 ansible-playbook playbooks/2-site.yml -vvv
-
-# Check syntax
 ansible-playbook playbooks/2-site.yml --syntax-check
-
-# List hosts
 ansible-playbook playbooks/2-site.yml --list-hosts
-
-# List tasks
 ansible-playbook playbooks/2-site.yml --list-tasks
-
-# List tags
 ansible-playbook playbooks/2-site.yml --list-tags
-
-# Test WinRM connectivity to Windows VMs
-ansible windows -m win_ping
-
-# Check Python interpreter on Linux VMs
-ansible linux -m setup -a "filter=ansible_python_version"
 ```
 
-## 🐛 Common Issues
-
-### SSH Connection Failed (Linux VMs)
+### SSH connection failed (Linux VMs)
 
 ```bash
-# Test manual SSH connection
-ssh azureadmin@vm-web-01
-
-# Check if SSH key was deployed
-ansible linux -m shell -a "cat ~/.ssh/authorized_keys" --ask-pass
-
-# Re-deploy SSH keys
-ansible-playbook playbooks/1-setup-ssh-keys.yml --ask-pass --limit vm-web-01
+ssh azureadmin@<private-ip>
+ansible linux -m ping -vvv
 ```
 
-### WinRM Connection Failed (Windows VMs)
+### WinRM connection failed (Windows VMs)
+
+WinRM este configurat **automat** la deployment via `Microsoft.Compute/virtualMachines/runCommands`.
+Log bootstrap: `C:\Logs\mediasrl\winrm-bootstrap-*.log`
 
 ```bash
-# Enable WinRM on Windows VMs manually via RDP first
-Enable-PSRemoting -Force
-Set-NetFirewallRule -Name "WINRM-HTTP-In-TCP" -RemoteAddress Any
-
-# Test from jumphost
 ansible windows -m win_ping -vvv
 ```
 
-## 📚 Documentație
+Verificare pe VM (via RDP daca e necesar):
+```powershell
+Test-WSMan -ComputerName localhost
+winrm get winrm/config
+Get-Service WinRM
+```
+
+### Vault: re-creare
+
+```bash
+cd ~/ansible
+bash scripts/create-ansible-vault.sh
+```
+
+### python3-winrm nu e instalat
+
+Instalat in imaginea Packer. Daca lipseste:
+```bash
+sudo pip3 install pywinrm
+```
+
+---
+
+## Documentatie
 
 - [Ansible Documentation](https://docs.ansible.com/)
 - [Ansible for Windows](https://docs.ansible.com/ansible/latest/user_guide/windows.html)
 - [Azure Ansible Collection](https://docs.ansible.com/ansible/latest/collections/azure/azcollection/)
-- [CIS Benchmarks - Ubuntu 22.04](https://www.cisecurity.org/benchmark/ubuntu_linux)
-- [CIS Benchmarks - Windows Server 2022](https://www.cisecurity.org/benchmark/microsoft_windows_server)
+- [CIS Benchmarks Ubuntu 22.04](https://www.cisecurity.org/benchmark/ubuntu_linux)
+- [CIS Benchmarks Windows Server 2022](https://www.cisecurity.org/benchmark/microsoft_windows_server)
 
 ---
 
-**Proiect:** Disertație Master - Cloud Infrastructure Automation
+**Proiect:** Disertatie Master — Cloud Infrastructure Automation
 **Autor:** SC IT SECURITY SRL
 **Anul:** 2026
