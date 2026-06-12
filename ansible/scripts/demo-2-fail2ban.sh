@@ -14,6 +14,9 @@ DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
 BEFORE_FILE="${DEMO_DIR}/fail2ban-before.txt"
 AFTER_FILE="${DEMO_DIR}/fail2ban-after.txt"
 TARGET_HOST="vm-web-01"
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+HTML_FILE="${DEMO_DIR}/demo-2-fail2ban-${TIMESTAMP}.html"
+DEMO_START=$SECONDS
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -148,3 +151,17 @@ echo -e "  Unban an IP manually:"
 echo -e "    ansible ${TARGET_HOST} -m command -a 'fail2ban-client set sshd unbanip <IP>' --become"
 echo -e "  Watch bans in real-time:"
 echo -e "    ansible ${TARGET_HOST} -m command -a 'tail -f /var/log/fail2ban.log' --become"
+echo ""
+
+# Generate HTML report
+DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
+python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
+    --title    "Fail2ban — Auto-ban IP după brute-force SSH" \
+    --subtitle "IP bannuit automat după 5 tentative eșuate — bantime 3600s" \
+    --before   "${BEFORE_FILE}" \
+    --after    "${AFTER_FILE}" \
+    --target   "${TARGET_HOST}" \
+    --demo-num 2 \
+    --duration "${DEMO_ELAPSED}s" \
+    --html     "${HTML_FILE}" || true
+echo -e "    HTML Report: ${HTML_FILE}"

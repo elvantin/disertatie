@@ -15,6 +15,9 @@ DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
 BEFORE_FILE="${DEMO_DIR}/ssh-hardening-before.txt"
 AFTER_FILE="${DEMO_DIR}/ssh-hardening-after.txt"
 TARGET_HOST="vm-web-01"
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+HTML_FILE="${DEMO_DIR}/demo-3-ssh-hardening-${TIMESTAMP}.html"
+DEMO_START=$SECONDS
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -155,3 +158,17 @@ echo -e "  Or with nmap:"
 echo -e "    nmap --script ssh2-enum-algos -p 22 ${TARGET_IP}"
 echo -e "  Config deployed to:"
 echo -e "    /etc/ssh/sshd_config.d/99-hardening.conf"
+echo ""
+
+# Generate HTML report
+DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
+python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
+    --title    "SSH Hardening — Algoritmi moderni exclusiv" \
+    --subtitle "curve25519 KEX, ChaCha20/AES-256-GCM, MACs ETM — algoritmi slabi respinși" \
+    --before   "${BEFORE_FILE}" \
+    --after    "${AFTER_FILE}" \
+    --target   "${TARGET_HOST} (${TARGET_IP})" \
+    --demo-num 3 \
+    --duration "${DEMO_ELAPSED}s" \
+    --html     "${HTML_FILE}" || true
+echo -e "    HTML Report: ${HTML_FILE}"

@@ -15,6 +15,9 @@ ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
 BEFORE_FILE="${DEMO_DIR}/rate-limit-before.txt"
 AFTER_FILE="${DEMO_DIR}/rate-limit-after.txt"
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+HTML_FILE="${DEMO_DIR}/demo-1-rate-limiting-${TIMESTAMP}.html"
+DEMO_START=$SECONDS
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -110,3 +113,17 @@ echo ""
 echo -e "  To verify on server:"
 echo -e "    nginx -T | grep limit_req"
 echo -e "    cat /etc/nginx/conf.d/rate-limiting.conf"
+echo ""
+
+# Generate HTML report
+DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
+python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
+    --title    "nginx Rate Limiting" \
+    --subtitle "Brute-force /wp-login.php blocat după burst — 429 Too Many Requests" \
+    --before   "${BEFORE_FILE}" \
+    --after    "${AFTER_FILE}" \
+    --target   "${DOMAIN}" \
+    --demo-num 1 \
+    --duration "${DEMO_ELAPSED}s" \
+    --html     "${HTML_FILE}" || true
+echo -e "    HTML Report: ${HTML_FILE}"

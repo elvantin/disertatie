@@ -16,6 +16,9 @@ ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
 BEFORE_FILE="${DEMO_DIR}/mysql-hardening-before.txt"
 AFTER_FILE="${DEMO_DIR}/mysql-hardening-after.txt"
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+HTML_FILE="${DEMO_DIR}/demo-5-mysql-hardening-${TIMESTAMP}.html"
+DEMO_START=$SECONDS
 
 DB_HOST="vm-db-01"
 MYSQL_BIN="C:/Program Files/MySQL/MySQL Server 8.0/bin/mysql.exe"
@@ -171,3 +174,17 @@ echo -e "  Verify encryption in MySQL:"
 echo -e "    SELECT NAME, ENCRYPTION FROM information_schema.INNODB_TABLESPACES"
 echo -e "    WHERE NAME LIKE 'wordpress_db/%';"
 echo -e "    # All rows should show ENCRYPTION = Y"
+echo ""
+
+# Generate HTML report
+DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
+python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
+    --title    "MySQL Hardening + TDE (Transparent Data Encryption)" \
+    --subtitle "Utilizatori anonimi eliminați, test DB șters, tablespace-uri InnoDB criptate" \
+    --before   "${BEFORE_FILE}" \
+    --after    "${AFTER_FILE}" \
+    --target   "${DB_HOST}" \
+    --demo-num 5 \
+    --duration "${DEMO_ELAPSED}s" \
+    --html     "${HTML_FILE}" || true
+echo -e "    HTML Report: ${HTML_FILE}"

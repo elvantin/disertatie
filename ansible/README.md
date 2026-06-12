@@ -225,7 +225,7 @@ db_port: 3306
 db_name: "wordpress_db"
 ```
 
-**`group_vars/windows.yml`** — variabile WinRM (parola din vault, nu hardcodata):
+**`group_vars/windows.yml`** — variabile WinRM (parola din vault):
 
 ```yaml
 ansible_connection: winrm

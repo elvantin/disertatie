@@ -20,7 +20,9 @@ set -euo pipefail
 ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
 SCRIPTS_DIR="${ANSIBLE_DIR}/scripts"
-REPORT_FILE="${DEMO_DIR}/security-demo-report-$(date +%Y-%m-%d_%H-%M-%S).txt"
+MASTER_TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+REPORT_FILE="${DEMO_DIR}/security-demo-report-${MASTER_TIMESTAMP}.txt"
+HTML_MASTER="${DEMO_DIR}/security-demo-report-${MASTER_TIMESTAMP}.html"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -152,5 +154,32 @@ echo -e "${GREEN}${BOLD}║  Individual demo logs:${NC}" | tee -a "$REPORT_FILE"
 for f in "${DEMO_DIR}"/*.txt; do
     [[ -f "$f" ]] && echo -e "${GREEN}${BOLD}║    $(basename "$f")${NC}" | tee -a "$REPORT_FILE"
 done
+echo -e "${GREEN}${BOLD}╠══════════════════════════════════════════════════════════════╣${NC}" | tee -a "$REPORT_FILE"
+echo -e "${GREEN}${BOLD}║  HTML Reports:${NC}" | tee -a "$REPORT_FILE"
+for f in "${DEMO_DIR}"/demo-*.html; do
+    [[ -f "$f" ]] && echo -e "${GREEN}${BOLD}║    $(basename "$f")${NC}" | tee -a "$REPORT_FILE"
+done
 echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}" | tee -a "$REPORT_FILE"
 echo "" | tee -a "$REPORT_FILE"
+
+# Generate master HTML report
+# NAV format: "num:basename.html" (no spaces in keys — Python looks up label from DEMO_META)
+NAV_PAIRS=""
+for demo_num in 1 2 3 4 5; do
+    html_file=$(ls -t "${DEMO_DIR}/demo-${demo_num}-"*.html 2>/dev/null | head -1 || true)
+    if [[ -n "$html_file" ]]; then
+        NAV_PAIRS="${NAV_PAIRS} ${demo_num}:$(basename "$html_file")"
+    fi
+done
+
+python3 "${SCRIPTS_DIR}/lib/generate-demo-html.py" \
+    --title    "SC MEDIA SRL — Security Hardening Demonstration" \
+    --demo-num ALL \
+    --full-log "${REPORT_FILE}" \
+    --target   "toate VM-urile Azure (swedencentral)" \
+    --duration "${MINS}m ${SECS}s" \
+    --nav      "${NAV_PAIRS}" \
+    --html     "${HTML_MASTER}" || true
+
+echo ""
+echo -e "${GREEN}${BOLD}  Master HTML Report: ${HTML_MASTER}${NC}"
