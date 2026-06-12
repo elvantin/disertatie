@@ -20,7 +20,7 @@
 #
 #   # Deploy specific roles
 #   ansible-playbook playbooks/2-site.yml --tags common
-#   ansible-playbook playbooks/2-site.yml --tags sqlserver
+#   ansible-playbook playbooks/2-site.yml --tags mysql
 #   ansible-playbook playbooks/2-site.yml --tags nginx,wordpress
 #
 #   # Deploy to specific hosts

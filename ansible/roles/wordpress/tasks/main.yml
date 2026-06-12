@@ -3,7 +3,7 @@
 # Ansible Role: wordpress
 # Installs and configures WordPress CMS on Ubuntu 22.04
 # Target: vm-cms-01
-# Database: MySQL/MariaDB (local) or SQL Server (remote vm-db-01)
+# Database: MySQL Community 8.0 (remote vm-db-01, port 3306)
 # ============================================================
 
 - name: Update apt cache

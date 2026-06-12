@@ -288,7 +288,7 @@
         msg: "{{ smb_shares.stdout_lines | default(['No shares configured yet']) }}"
 
 # ============================================================
-# TEST 8: DB Server (vm-db-01) — SQL Server / MySQL
+# TEST 8: DB Server (vm-db-01) — MySQL Community 8.0
 # ============================================================
 - name: "Test Database Server Services"
   hosts: dbservers
