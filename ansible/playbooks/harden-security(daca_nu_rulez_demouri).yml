@@ -182,10 +182,9 @@
   vars:
     ansible_connection: winrm
     ansible_port: 5985
-    ansible_winrm_transport: ntlm
+    ansible_winrm_transport: basic
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
-    ansible_password: "{{ vault_admin_password }}"
     mysql_root_password: "{{ vault_mysql_root_password }}"
     mysql_install_dir: "C:\\Program Files\\MySQL\\MySQL Server 8.0"
     mysql_data_dir: "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data"

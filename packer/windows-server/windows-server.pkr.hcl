@@ -78,7 +78,16 @@ build {
     restart_timeout = "15m"
   }
 
-  // Step 3: Final cleanup before sysprep
+  // Step 3: Set timezone to Romania (E. Europe Standard Time = Europe/Bucharest UTC+2/+3)
+  provisioner "powershell" {
+    inline = [
+      "Write-Output 'Setting timezone to Europe/Bucharest...'",
+      "Set-TimeZone -Id 'E. Europe Standard Time'",
+      "Write-Output \"Timezone: $((Get-TimeZone).DisplayName)\""
+    ]
+  }
+
+  // Step 4: Final cleanup before sysprep
   provisioner "powershell" {
     inline = [
       "Write-Output 'Cleaning up temporary files...'",
@@ -88,7 +97,7 @@ build {
     ]
   }
 
-  // Step 4: Generalize with Sysprep
+  // Step 5: Generalize with Sysprep
   provisioner "powershell" {
     inline = [
       "Write-Output 'Running Sysprep...'",

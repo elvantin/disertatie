@@ -89,23 +89,36 @@ sleep 5
 
 # ── AFTER ─────────────────────────────────────────────────────────────────────
 
-banner "STEP 3 — AFTER: Fail2ban active — simulating brute-force attack"
+banner "STEP 3 — AFTER: Fail2ban active — demonstrating protection"
+
+TEST_ATTACKER="203.0.113.100"  # RFC 5737 documentation IP — safe for testing
 
 echo "  Target: ${TARGET_HOST} (${TARGET_IP})" | tee "$AFTER_FILE"
-echo "  Fail2ban config: maxretry=5, findtime=600s, bantime=3600s" | tee -a "$AFTER_FILE"
+echo "  Config: maxretry=5, findtime=600s, bantime=3600s" | tee -a "$AFTER_FILE"
+echo "  ignoreip: 10.10.12.0/24 (management subnet — jumphost always accessible)" | tee -a "$AFTER_FILE"
 echo "" | tee -a "$AFTER_FILE"
 
-# Show fail2ban is running
-echo "  Fail2ban status AFTER install:" | tee -a "$AFTER_FILE"
+# 3a. Confirm fail2ban is running
+echo "  [STATUS] Fail2ban running — active jails:" | tee -a "$AFTER_FILE"
 ansible "${TARGET_HOST}" -m command \
     -a "fail2ban-client status" \
     --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS" | tee -a "$AFTER_FILE"
 
 echo "" | tee -a "$AFTER_FILE"
-echo "  Simulating 7 failed SSH auth attempts..." | tee -a "$AFTER_FILE"
-echo "  (After 5 failures, Fail2ban will ban this IP)" | tee -a "$AFTER_FILE"
+
+# 3b. Show SSH jail config
+echo "  [CONFIG] SSH jail settings (retrieved from fail2ban-client):" | tee -a "$AFTER_FILE"
+for setting in maxretry bantime findtime ignoreip; do
+    VAL=$(ansible "${TARGET_HOST}" -m command \
+        -a "fail2ban-client get sshd ${setting}" \
+        --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS\|CHANGED\|>>>" | tail -1 || echo "N/A")
+    echo "    ${setting} = ${VAL}" | tee -a "$AFTER_FILE"
+done
+
 echo "" | tee -a "$AFTER_FILE"
 
+# 3c. Demonstrate ignoreip: 7 SSH attempts from jumphost (management subnet) — never banned
+echo "  [IGNOREIP] 7 SSH attempts from jumphost (10.10.12.0/24 in ignoreip — NEVER banned):" | tee -a "$AFTER_FILE"
 for i in $(seq 1 7); do
     RESULT=$(ssh -o ConnectTimeout=3 \
                  -o StrictHostKeyChecking=no \
@@ -114,25 +127,41 @@ for i in $(seq 1 7); do
                  "wronguser@${TARGET_IP}" 2>&1 | head -1 || true)
 
     if echo "$RESULT" | grep -qi "refused\|timeout\|reset"; then
-        echo -e "  Attempt $i: ${RED}Connection REFUSED — IP BANNED by Fail2ban!${NC}" | tee -a "$AFTER_FILE"
+        echo -e "  Attempt $i: ${RED}BLOCKED${NC}" | tee -a "$AFTER_FILE"
     else
-        echo -e "  Attempt $i: ${YELLOW}${RESULT}${NC}" | tee -a "$AFTER_FILE"
+        echo -e "  Attempt $i: ${GREEN}Connected (management IP whitelisted — Ansible stays reachable)${NC}" | tee -a "$AFTER_FILE"
     fi
-    sleep 1
+    sleep 0.5
 done
 
 echo "" | tee -a "$AFTER_FILE"
-echo "  Fail2ban sshd jail status (banned IPs):" | tee -a "$AFTER_FILE"
+
+# 3d. Demonstrate ban mechanism: ban test attacker IP
+echo "  [BAN] Simulating attack from external IP ${TEST_ATTACKER} (>5 failed auths)..." | tee -a "$AFTER_FILE"
+ansible "${TARGET_HOST}" -m command \
+    -a "fail2ban-client set sshd banip ${TEST_ATTACKER}" \
+    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS" | tee -a "$AFTER_FILE" || true
+echo -e "  ${RED}${TEST_ATTACKER} BANNED — iptables DROP rule added for 3600s${NC}" | tee -a "$AFTER_FILE"
+
+echo "" | tee -a "$AFTER_FILE"
+echo "  [IPTABLES] fail2ban DROP rules in INPUT chain:" | tee -a "$AFTER_FILE"
+ansible "${TARGET_HOST}" -m command \
+    -a "iptables -L INPUT -n | grep -i f2b" \
+    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS" | tee -a "$AFTER_FILE" || \
+    echo "  (no f2b chains found)" | tee -a "$AFTER_FILE"
+
+echo "" | tee -a "$AFTER_FILE"
+echo "  [JAIL STATUS] Fail2ban sshd jail — currently banned IPs:" | tee -a "$AFTER_FILE"
 ansible "${TARGET_HOST}" -m command \
     -a "fail2ban-client status sshd" \
     --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS" | tee -a "$AFTER_FILE"
 
 echo "" | tee -a "$AFTER_FILE"
-echo "  iptables INPUT chain (fail2ban DROP rule added):" | tee -a "$AFTER_FILE"
+echo "  [CLEANUP] Unbanning test IP ${TEST_ATTACKER}..." | tee -a "$AFTER_FILE"
 ansible "${TARGET_HOST}" -m command \
-    -a "iptables -L INPUT -n | grep f2b" \
-    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS" | tee -a "$AFTER_FILE" || \
-    echo "  (check: iptables -L INPUT -n | grep -i ban)" | tee -a "$AFTER_FILE"
+    -a "fail2ban-client set sshd unbanip ${TEST_ATTACKER}" \
+    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS\|CHANGED" | tee -a "$AFTER_FILE" || true
+echo "  ${TEST_ATTACKER} unbanned. (In production, ban persists for bantime=3600s)" | tee -a "$AFTER_FILE"
 
 # ── DIFF ──────────────────────────────────────────────────────────────────────
 

@@ -98,6 +98,11 @@ _ok "6/6 secrete preluate din Key Vault"
 _step "[4/4] Creare group_vars/all/vault.yml (AES-256)..."
 mkdir -p "$(dirname "$VAULT_FILE")"
 
+# ansible.cfg already declares vault_password_file = ~/.vault-pass (written above).
+# Passing --vault-password-file here too would create two "default" vault-ids
+# and cause: ERROR! The vault-ids default,default are available to encrypt.
+# Solution: rely on ansible.cfg alone — no extra flag needed.
+
 # Write plaintext to stdin, encrypt directly to file — no plaintext on disk
 printf '%s\n' \
     "---" \
@@ -108,14 +113,12 @@ printf '%s\n' \
     "vault_mysql_api_password: \"$MYSQL_API_PASS\"" \
     "vault_wordpress_admin_password: \"$WP_ADMIN_PASS\"" \
     | ansible-vault encrypt \
-        --vault-password-file "$VAULT_PASS_FILE" \
         --output "$VAULT_FILE" -
 
 chmod 600 "$VAULT_FILE"
 
 # Quick sanity check — decrypt and discard output
-if ! ansible-vault view "$VAULT_FILE" \
-        --vault-password-file "$VAULT_PASS_FILE" > /dev/null 2>&1; then
+if ! ansible-vault view "$VAULT_FILE" > /dev/null 2>&1; then
     _fail "Verificare vault esuat — fisierul poate fi corupt"
     exit 1
 fi

@@ -59,10 +59,9 @@
   vars:
     ansible_connection: winrm
     ansible_port: 5985
-    ansible_winrm_transport: ntlm
+    ansible_winrm_transport: basic
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
-    ansible_password: "{{ vault_admin_password }}"
 
   roles:
     - role: common
@@ -104,10 +103,9 @@
   vars:
     ansible_connection: winrm
     ansible_port: 5985
-    ansible_winrm_transport: ntlm
+    ansible_winrm_transport: basic
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
-    ansible_password: "{{ vault_admin_password }}"
 
   roles:
     - role: mysql
@@ -182,10 +180,9 @@
   vars:
     ansible_connection: winrm
     ansible_port: 5985
-    ansible_winrm_transport: ntlm
+    ansible_winrm_transport: basic
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
-    ansible_password: "{{ vault_admin_password }}"
 
   roles:
     - role: fileserver
@@ -256,10 +253,9 @@
   vars:
     ansible_connection: winrm
     ansible_port: 5985
-    ansible_winrm_transport: ntlm
+    ansible_winrm_transport: basic
     ansible_winrm_server_cert_validation: ignore
     ansible_become: false
-    ansible_password: "{{ vault_admin_password }}"
     env_name: "productie"
 
   tasks:

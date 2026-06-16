@@ -70,19 +70,37 @@
     enabled: true
   tags: [fail2ban]
 
-- name: Wait for fail2ban to initialize
-  ansible.builtin.pause:
-    seconds: 3
+# Flush handlers now so "restart fail2ban" runs with the new jail.local BEFORE verification.
+# Without this, handlers run at end-of-play and the verify task sees stale config.
+- name: Flush handlers to apply new jail.local before verification
+  ansible.builtin.meta: flush_handlers
+  tags: [fail2ban]
+
+- name: Wait for fail2ban socket to be available
+  ansible.builtin.wait_for:
+    path: /run/fail2ban/fail2ban.sock
+    state: present
+    timeout: 30
   tags: [fail2ban]
 
 - name: Verify fail2ban is running
-  ansible.builtin.command: fail2ban-client status
-  register: f2b_status
+  ansible.builtin.command: systemctl is-active fail2ban
+  register: f2b_active
   changed_when: false
-  failed_when: f2b_status.rc != 0
+  failed_when: f2b_active.stdout | trim != 'active'
+  retries: 5
+  delay: 3
+  until: f2b_active.stdout | trim == 'active'
   tags: [fail2ban]
 
 - name: Show fail2ban status
+  ansible.builtin.command: fail2ban-client status
+  register: f2b_status
+  changed_when: false
+  failed_when: false
+  tags: [fail2ban]
+
+- name: Display fail2ban status
   ansible.builtin.debug:
     msg: "{{ f2b_status.stdout_lines }}"
   tags: [fail2ban]

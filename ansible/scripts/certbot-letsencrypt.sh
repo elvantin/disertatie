@@ -100,6 +100,24 @@ LE_LIVE_DIR="/etc/letsencrypt/live/${DOMAIN}"
 # Script lives in ~/ansible/scripts/ — parent dir is ~/ansible/ (contains ansible.cfg)
 ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# ── Demo / log setup ───────────────────────────────────────────────────────────
+DEMO_DIR="${ANSIBLE_DIR}/logs/certbot"
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+LOG_FILE="${DEMO_DIR}/certbot-${TIMESTAMP}.log"
+BEFORE_FILE="${DEMO_DIR}/certbot-before-${TIMESTAMP}.txt"
+AFTER_FILE="${DEMO_DIR}/certbot-after-${TIMESTAMP}.txt"
+HTML_FILE="${DEMO_DIR}/certbot-${TIMESTAMP}.html"
+SCRIPT_START=$SECONDS
+STEPS_DONE=()
+
+mkdir -p "$DEMO_DIR"
+# Tee all stdout+stderr to LOG_FILE while keeping terminal output
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+step_ok()   { STEPS_DONE+=("[OK]   $*"); }
+step_warn() { STEPS_DONE+=("[WARN] $*"); }
+step_fail() { STEPS_DONE+=("[FAIL] $*"); }
+
 # ── Colors ─────────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[$(date +%H:%M:%S)] $*${NC}"; }
@@ -107,10 +125,12 @@ info() { echo -e "${CYAN}[$(date +%H:%M:%S)] $*${NC}"; }
 warn() { echo -e "${YELLOW}[$(date +%H:%M:%S)] WARNING: $*${NC}"; }
 err()  { echo -e "${RED}[$(date +%H:%M:%S)] ERROR: $*${NC}" >&2; }
 
-# ── Cleanup: always restore NSG on exit ───────────────────────────────────────
+# ── Cleanup: always restore NSG + generate HTML report on exit ────────────────
 NSG_OPENED=false
 cleanup() {
     local exit_code=$?
+
+    # 1. Restore NSG (always)
     if [[ "$NSG_OPENED" == "true" ]]; then
         echo ""
         log "CLEANUP: Restoring NSG rule — port 80 → VNet-only (10.10.0.0/20)..."
@@ -121,15 +141,86 @@ cleanup() {
             --source-address-prefixes '10.10.0.0/20' \
             --output none 2>&1; then
             log "NSG restored successfully. Port 80 is VNet-only again."
+            step_ok "CLEANUP: NSG restaurat — port 80 → VNet-only (10.10.0.0/20)"
         else
             err "FAILED to restore NSG automatically!"
             err "Run manually: az network nsg rule update \\"
             err "  --resource-group $RG --nsg-name $NSG --name $RULE \\"
             err "  --source-address-prefixes '10.10.0.0/20'"
+            step_fail "CLEANUP: NSG NU a fost restaurat — ACȚIUNE MANUALĂ NECESARĂ"
         fi
     fi
+
     if [[ $exit_code -ne 0 ]]; then
         err "Script exited with error code $exit_code."
+    fi
+
+    # 2. Generate AFTER file (final cert state + step summary)
+    echo ""
+    log "Generare raport HTML..."
+    local _final_https
+    _final_https=$(curl -sk -o /dev/null -w "%{http_code}" \
+        --max-time 10 "https://${DOMAIN}/health" 2>/dev/null || echo "000")
+
+    {
+        echo "=== Stare finală certificat ==="
+        echo ""
+        if [[ $exit_code -eq 0 ]]; then
+            echo "Certificat Let's Encrypt obținut cu succes."
+        else
+            echo "Script terminat cu eroare (exit code ${exit_code})."
+        fi
+        echo ""
+        echo "Certificate details (openssl x509):"
+        ( cd "${ANSIBLE_DIR}" && ansible webserver \
+              -i "$INVENTORY" \
+              -m command \
+              -a "openssl x509 -in ${LE_LIVE_DIR}/fullchain.pem -noout -subject -issuer -dates" \
+              --become 2>/dev/null \
+              | grep -v "^$\|WARNING\|SUCCESS\|CHANGED" \
+              | sed 's/^/  /' ) 2>/dev/null \
+            || echo "  (certificatul nu poate fi citit)"
+        echo ""
+        echo "HTTPS test final:"
+        echo "  https://${DOMAIN}/health → HTTP ${_final_https}"
+        if [[ "$_final_https" == "200" ]]; then
+            echo "  [OK] HTTPS funcțional"
+        else
+            echo "  [!!] HTTPS: răspuns ${_final_https}"
+        fi
+        echo ""
+        echo "=== Execuție — rezumat pași ==="
+        local _s
+        for _s in "${STEPS_DONE[@]:-}"; do
+            echo "  ${_s}"
+        done
+        if [[ $exit_code -ne 0 ]]; then
+            echo "  [FAIL] Script terminat cu exit code ${exit_code}"
+        fi
+    } | tee "$AFTER_FILE"
+
+    # 3. Brief wait so exec-tee flushes LOG_FILE before Python reads it
+    sleep 1
+
+    # 4. Generate HTML report
+    local _elapsed=$(( SECONDS - SCRIPT_START ))
+    python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
+        --title        "Let's Encrypt TLS — ${DOMAIN}" \
+        --subtitle     "Obținere certificat, configurare HTTPS nginx, validare SSL" \
+        --before-label "Stare inițială (pre-certbot)" \
+        --after-label  "Stare finală + rezumat pași" \
+        --before       "${BEFORE_FILE}" \
+        --after        "${AFTER_FILE}" \
+        --full-log     "${LOG_FILE}" \
+        --target       "${DOMAIN}" \
+        --demo-num     "CERT" \
+        --duration     "${_elapsed}s" \
+        --html         "${HTML_FILE}" 2>/dev/null || true
+
+    echo ""
+    if [[ -f "$HTML_FILE" ]]; then
+        log "HTML: ${HTML_FILE}"
+        log "Log:  ${LOG_FILE}"
     fi
 }
 trap cleanup EXIT
@@ -179,6 +270,35 @@ az network nsg rule show \
     exit 1
 }
 log "All prerequisites met."
+step_ok "STEP 0: Prerequisites verificate (az CLI, Ansible, NSG '${NSG}')"
+
+# ── BEFORE state capture ──────────────────────────────────────────────────────
+log "Captură stare inițială certificat..."
+cd "$ANSIBLE_DIR"
+{
+    echo "=== Stare inițială (pre-certbot) ==="
+    echo ""
+    echo "Domeniu : ${DOMAIN}"
+    echo "Email   : ${EMAIL}"
+    echo "NSG     : ${NSG} (${RG})"
+    echo ""
+    echo "Certificat actual pe vm-web-01:"
+    ansible webserver \
+        -i "$INVENTORY" \
+        -m shell \
+        -a "openssl x509 -in '${LE_LIVE_DIR}/fullchain.pem' -noout -subject -issuer -dates \
+                2>/dev/null || echo 'Niciun certificat la ${LE_LIVE_DIR} — first deployment'" \
+        --become 2>/dev/null \
+        | grep -v "^$\|WARNING\|SUCCESS\|CHANGED" \
+        | sed 's/^/  /' \
+        || echo "  (verificare eșuată — ansible indisponibil)"
+    echo ""
+    echo "Status HTTPS inițial:"
+    _pre=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 8 \
+        "https://${DOMAIN}/health" 2>/dev/null || echo "000")
+    echo "  https://${DOMAIN}/health → HTTP ${_pre}"
+} | tee "$BEFORE_FILE"
+echo ""
 
 # ── Step 1: Open NSG port 80 to internet ──────────────────────────────────────
 echo ""
@@ -202,6 +322,7 @@ az network nsg rule update \
 NSG_OPENED=true
 log "NSG rule updated. Waiting 45s for Azure fabric propagation..."
 sleep 45
+step_ok "STEP 1: NSG '${RULE}' deschis spre internet (sursă anterior: ${CURRENT_SOURCE})"
 
 # ── Step 2: Verify port 80 is reachable ───────────────────────────────────────
 echo ""
@@ -219,6 +340,7 @@ while [[ $RETRY -lt $MAX_RETRIES ]]; do
     # Any HTTP response (even 404) confirms port 80 is open
     if [[ "$HTTP_CODE" != "000" ]]; then
         log "Port 80 reachable (HTTP $HTTP_CODE). Continuing."
+        step_ok "STEP 2: Port 80 accesibil din internet (HTTP ${HTTP_CODE})"
         break
     fi
 
@@ -266,6 +388,7 @@ ansible webserver \
     --become 2>&1 | grep -v "^$" | sed 's/^/  /'
 
 log "LE live directory checked."
+step_ok "STEP 3: Symlinks LE live verificate/curățate"
 
 # ── Step 4: Run certbot ────────────────────────────────────────────────────────
 echo ""
@@ -293,6 +416,7 @@ if [[ $CERTBOT_EXIT -ne 0 ]]; then
     exit 1
 fi
 log "Certbot completed successfully."
+step_ok "STEP 4: Certbot — certificat Let's Encrypt obținut pentru ${DOMAIN}"
 
 # ── Step 4b: Repair live symlinks if certbot skipped renewal ───────────────────
 # certbot --keep-until-expiring skips issuance when cert is still valid, but does
@@ -322,6 +446,7 @@ ansible webserver \
         fi
     " \
     --become 2>&1 | grep -v "^$" | sed 's/^/  /'
+step_ok "STEP 4b: Symlinks live certificate verificate/recreate"
 
 # ── Step 5: Verify certificate ─────────────────────────────────────────────────
 echo ""
@@ -346,9 +471,11 @@ ISSUER=$(ansible webserver \
 
 if echo "$ISSUER" | grep -qi "Let.s Encrypt\|ISRG"; then
     log "Certificate issuer confirmed: Let's Encrypt"
+    step_ok "STEP 5: Certificat verificat — emitent: Let's Encrypt / ISRG"
 else
     warn "Could not confirm LE issuer from: $ISSUER"
     warn "Verify manually: openssl x509 -in ${LE_LIVE_DIR}/fullchain.pem -noout -issuer"
+    step_warn "STEP 5: Emitent neconfirmat (${ISSUER:-necunoscut}) — verificare manuală recomandată"
 fi
 
 # ── Step 6: Deploy HTTPS nginx config ─────────────────────────────────────────
@@ -362,6 +489,7 @@ ansible-playbook playbooks/2-site.yml \
     2>&1 | grep -E "(TASK|ok|changed|failed|PLAY RECAP|fatal)" | sed 's/^/  /'
 
 log "Nginx HTTPS configuration deployed."
+step_ok "STEP 6: nginx HTTPS configurat (playbooks/2-site.yml --tags nginx)"
 
 # ── Step 7: Verify HTTPS ───────────────────────────────────────────────────────
 echo ""
@@ -374,9 +502,11 @@ HTTPS_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
 
 if [[ "$HTTPS_CODE" == "200" ]]; then
     log "HTTPS is working! (HTTP $HTTPS_CODE)"
+    step_ok "STEP 7: HTTPS funcțional — https://${DOMAIN}/health → 200 OK"
 else
     warn "HTTPS health check returned HTTP $HTTPS_CODE."
     warn "Check: curl -v https://${DOMAIN}/health"
+    step_warn "STEP 7: HTTPS răspuns neașteptat (HTTP ${HTTPS_CODE}) — verificare manuală"
 fi
 
 # ── Summary ────────────────────────────────────────────────────────────────────

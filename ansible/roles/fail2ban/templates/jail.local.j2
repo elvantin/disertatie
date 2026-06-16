@@ -17,6 +17,9 @@ maxretry = {{ fail2ban_maxretry }}
 # Log backend: systemd for Ubuntu 22.04 (reads from journald)
 backend  = {{ fail2ban_backend }}
 
+# Never ban these IPs — management subnet keeps Ansible connectivity intact
+ignoreip = {{ fail2ban_ignoreip }}
+
 # Action: ban only (iptables DROP)
 banaction = iptables-multiport
 banaction_allports = iptables-allports

@@ -68,6 +68,52 @@
             color: #999;
             font-size: 0.9em;
         }
+        .api-section {
+            margin-top: 25px;
+            text-align: left;
+        }
+        .api-section h2 {
+            color: #555;
+            font-size: 0.95em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 8px;
+            padding: 14px 10px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            line-height: 1;
+        }
+        .stat-label {
+            font-size: 0.75em;
+            opacity: 0.85;
+            margin-top: 4px;
+        }
+        .api-source {
+            margin-top: 8px;
+            font-size: 0.75em;
+            color: #aaa;
+            text-align: right;
+        }
+        .api-error {
+            color: #e53935;
+            font-size: 0.85em;
+            padding: 10px;
+            background: #fff3f3;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
@@ -97,10 +143,43 @@
             </div>
         </div>
 
+        <div class="api-section">
+            <h2>Date live — Business API (vm-app-01)</h2>
+            <div class="stats-grid" id="stats-grid">
+                <div class="stat-card"><div class="stat-value" id="stat-clienti">…</div><div class="stat-label">Clienți activi</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-proiecte">…</div><div class="stat-label">Proiecte active</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-angajati">…</div><div class="stat-label">Angajați</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-finalizate">…</div><div class="stat-label">Proiecte finalizate</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-retentie">…</div><div class="stat-label">Rată retenție</div></div>
+                <div class="stat-card"><div class="stat-value" id="stat-venit">…</div><div class="stat-label">Venit total (€)</div></div>
+            </div>
+            <div class="api-source" id="api-source">Se încarcă date din /api/stats…</div>
+        </div>
+
         <div class="footer">
             Proiect disertație Master - Cloud Infrastructure Automation<br>
             © 2026 SC IT SECURITY SRL
         </div>
     </div>
+
+    <script>
+        fetch('/api/stats')
+            .then(r => r.json())
+            .then(json => {
+                const d = json.data;
+                document.getElementById('stat-clienti').textContent   = d.clienti_activi;
+                document.getElementById('stat-proiecte').textContent  = d.proiecte_active;
+                document.getElementById('stat-angajati').textContent  = d.angajati_activi;
+                document.getElementById('stat-finalizate').textContent = d.proiecte_finalizate;
+                document.getElementById('stat-retentie').textContent  = d.rata_retentie_clienti + '%';
+                document.getElementById('stat-venit').textContent     = (d.venit_total_incasat / 1000).toFixed(1) + 'k';
+                document.getElementById('api-source').textContent     = 'Sursa: GET /api/stats → vm-app-01:8080 (via proxy vm-web-01)';
+            })
+            .catch(() => {
+                document.getElementById('stats-grid').innerHTML =
+                    '<div class="api-error">⚠ Nu s-au putut încărca datele din API. Verificați vm-app-01.</div>';
+                document.getElementById('api-source').textContent = '';
+            });
+    </script>
 </body>
 </html>

@@ -795,16 +795,6 @@ IT/
                   ansible/scripts/demo-all-hardenings.sh
 ```
 
----
-
-## 11. Reguli de lucru pe parcursul proiectului
-
-1. **Documentația** — ton academic, cu diacritice, surse oficiale citate
-2. **Comentarii cod** — fără diacritice, în limba engleză (best practice)
-3. **Commit messages** — în limba engleză, descriptive
-4. **Branch strategy** — `master` (protejat) + feature branches
-5. **Fiecare capitol** va fi generat cu surse bibliografice oficiale
-6. **Codul** va fi funcțional, testat și documentat
 
 ---
 

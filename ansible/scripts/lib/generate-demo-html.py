@@ -183,12 +183,13 @@ def count_stats(before_lines: list, after_lines: list) -> dict:
 # Demo metadata
 # ---------------------------------------------------------------------------
 DEMO_META = {
-    '1':   {'icon': '⚡',   'color': '#f0883e', 'label': 'nginx Rate Limiting'},
-    '2':   {'icon': '🛡️',  'color': '#d29922', 'label': 'Fail2ban'},
-    '3':   {'icon': '🔐',  'color': '#79c0ff', 'label': 'SSH Hardening'},
-    '4':   {'icon': '🧱',  'color': '#3fb950', 'label': 'ModSecurity WAF'},
-    '5':   {'icon': '💾',  'color': '#bc8cff', 'label': 'MySQL Hardening + TDE'},
-    'ALL': {'icon': '🔒',  'color': '#58a6ff', 'label': 'Security Hardening Demo'},
+    '1':    {'icon': '⚡',   'color': '#f0883e', 'label': 'nginx Rate Limiting'},
+    '2':    {'icon': '🛡️',  'color': '#d29922', 'label': 'Fail2ban'},
+    '3':    {'icon': '🔐',  'color': '#79c0ff', 'label': 'SSH Hardening'},
+    '4':    {'icon': '🧱',  'color': '#3fb950', 'label': 'ModSecurity WAF'},
+    '5':    {'icon': '💾',  'color': '#bc8cff', 'label': 'MySQL Hardening + TDE'},
+    'ALL':  {'icon': '🔒',  'color': '#58a6ff', 'label': 'Security Hardening Demo'},
+    'CERT': {'icon': '🔏',  'color': '#79c0ff', 'label': "Let's Encrypt TLS"},
 }
 
 
@@ -408,6 +409,9 @@ def generate_individual_html(args, before_lines, after_lines, full_log_lines) ->
     changed_chip = (f'<span class="chip chip-yellow">🔄 {stats["changed"]} modificări Ansible</span>'
                     if stats['changed'] > 0 else '')
 
+    before_label = args.before_label or 'BEFORE: Stare inițială'
+    after_label  = args.after_label  or 'AFTER: Stare finală'
+
     return f"""<!DOCTYPE html>
 <html lang="ro">
 <head>
@@ -443,17 +447,17 @@ def generate_individual_html(args, before_lines, after_lines, full_log_lines) ->
   </div>
 
   <details class="section" open>
-    <summary class="sec-before">🔴 STEP 1 — BEFORE: Stare inițială (fără hardening)</summary>
+    <summary class="sec-before">🔴 {esc(before_label)}</summary>
     <div class="log-block">{b_html}</div>
   </details>
 
   <details class="section" open>
-    <summary class="sec-after">🟢 STEP 3 — AFTER: Post-hardening (protecție activă)</summary>
+    <summary class="sec-after">🟢 {esc(after_label)}</summary>
     <div class="log-block">{a_html}</div>
   </details>
 
   <details class="section" open>
-    <summary class="sec-diff">🔀 STEP 4 — DIFF: Before vs After</summary>
+    <summary class="sec-diff">🔀 DIFF: Before vs After</summary>
     <div class="diff-block">{d_html}</div>
   </details>
 
@@ -595,16 +599,18 @@ def generate_master_html(args, full_log_lines, nav_pairs) -> str:
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser(description='Security demo HTML report generator')
-    p.add_argument('--title',    required=True)
-    p.add_argument('--subtitle', default='')
-    p.add_argument('--before',   default='')
-    p.add_argument('--after',    default='')
-    p.add_argument('--full-log', default='', dest='full_log')
-    p.add_argument('--target',   default='')
-    p.add_argument('--duration', default='')
-    p.add_argument('--demo-num', default='', dest='demo_num')
-    p.add_argument('--html',     required=True)
-    p.add_argument('--nav',      default='',
+    p.add_argument('--title',        required=True)
+    p.add_argument('--subtitle',     default='')
+    p.add_argument('--before',       default='')
+    p.add_argument('--after',        default='')
+    p.add_argument('--before-label', default='', dest='before_label')
+    p.add_argument('--after-label',  default='', dest='after_label')
+    p.add_argument('--full-log',     default='', dest='full_log')
+    p.add_argument('--target',       default='')
+    p.add_argument('--duration',     default='')
+    p.add_argument('--demo-num',     default='', dest='demo_num')
+    p.add_argument('--html',         required=True)
+    p.add_argument('--nav',          default='',
                    help='Space-separated "Title:relative-path.html" pairs for master report')
     args = p.parse_args()
 
