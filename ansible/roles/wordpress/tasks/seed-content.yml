@@ -234,7 +234,7 @@
 
 - name: Remove default FSE navigation placeholder links
   # Twenty Twenty-Four ships with placeholder nav links (Blog, About, FAQs…).
-  # We clear the wp_navigation post so no broken links appear in the header.
+  # Clears the wp_navigation post so no broken links appear in the header.
   shell: |
     WP="wp --path={{ wordpress_install_dir }}"
     NAV_ID=$($WP post list --post_type=wp_navigation --field=ID 2>/dev/null | head -1)

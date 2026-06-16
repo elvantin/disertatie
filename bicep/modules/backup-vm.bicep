@@ -20,7 +20,7 @@ param location string
 
 // ----- Backup Protection Container -----
 // Note: Protection container and protected item are created implicitly
-// when you configure backup for a VM. This resource configures the link.
+// when a backup is configured for a VM. This resource configures the link.
 
 resource backupProtectedItem 'Microsoft.RecoveryServices/vaults/backupFabrics/protectionContainers/protectedItems@2024-04-01' = {
   name: '${vaultName}/Azure/iaasvmcontainer;iaasvmcontainerv2;${split(vmId, '/')[4]};${vmName}/vm;iaasvmcontainerv2;${split(vmId, '/')[4]};${vmName}'

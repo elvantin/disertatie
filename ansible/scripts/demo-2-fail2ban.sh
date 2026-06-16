@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
+DEMO_DIR="${ANSIBLE_DIR}/logs"
 BEFORE_FILE="${DEMO_DIR}/fail2ban-before.txt"
 AFTER_FILE="${DEMO_DIR}/fail2ban-after.txt"
 TARGET_HOST="vm-web-01"
@@ -185,12 +185,14 @@ echo ""
 # Generate HTML report
 DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
 python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
-    --title    "Fail2ban — Auto-ban IP după brute-force SSH" \
-    --subtitle "IP bannuit automat după 5 tentative eșuate — bantime 3600s" \
-    --before   "${BEFORE_FILE}" \
-    --after    "${AFTER_FILE}" \
-    --target   "${TARGET_HOST}" \
-    --demo-num 2 \
-    --duration "${DEMO_ELAPSED}s" \
-    --html     "${HTML_FILE}" || true
+    --title        "Fail2ban — Auto-ban IP după brute-force SSH" \
+    --subtitle     "IP banat automat după 5 tentative eșuate — bantime 3600s via iptables" \
+    --before       "${BEFORE_FILE}" \
+    --after        "${AFTER_FILE}" \
+    --before-label "BEFORE — Fără Fail2ban: tentative SSH nedetectate, fără blocare" \
+    --after-label  "AFTER — Fail2ban activ: IP extern banat după 5 eșecuri, management subnet protejat" \
+    --target       "${TARGET_HOST}" \
+    --demo-num     2 \
+    --duration     "${DEMO_ELAPSED}s" \
+    --html         "${HTML_FILE}" || true
 echo -e "    HTML Report: ${HTML_FILE}"

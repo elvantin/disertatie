@@ -238,9 +238,10 @@ foreach ($entry in $Secrets.GetEnumerator()) {
 }
 
 Write-Log-Header "Pași următori" -Step 5 -Total 5
-Write-Log-Info "ssh azureadmin@<jumphost-ip>"
-Write-Log-Info "cd ~/ansible-workspace"
-Write-Log-Info "bash scripts/create-ansible-vault.sh"
-Write-Log-OK "Bootstrap complet" -Detail "https://$KvName.vault.azure.net/"
+Write-Log-Info "1. Construieste imagini Packer:  .\scripts\1-build-packer-images.ps1"
+Write-Log-Info "2. Deployaza infrastructura:     .\scripts\2-deploy-teardown-bicep.ps1 -Action deploy -Environment prod"
+Write-Log-Info "3. Copiaza Ansible pe jumphost:  .\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment prod -JumphostIP <IP>"
+Write-Log-Info "4. Ruleaza playbook-urile (din ~/ansible pe jumphost):  ./run-playbook.sh <playbook>"
+Write-Log-OK "Bootstrap complet — $KvName populat cu $($Secrets.Count) secrete" -Detail "https://$KvName.vault.azure.net/"
 
 Stop-LogSession

@@ -316,7 +316,7 @@
 
 # ── Fix siteurl/home in DB (in case WordPress was installed with wrong URL) ───
 # WP_HOME/WP_SITEURL constants in wp-config.php override DB values at runtime,
-# but we also update DB for consistency (admin dashboard, CLI commands, etc.)
+# also updates DB for consistency (admin dashboard, CLI commands, etc.)
 - name: Update WordPress siteurl option in database
   ansible.builtin.command: >
     wp option update siteurl "{{ wordpress_site_url }}"

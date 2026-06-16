@@ -52,7 +52,7 @@ Workspace Ansible: `~/ansible` (copiat de `scripts/3-deploy-ansible-to-jumphost.
 
 ## Inventar dinamic (azure_rm.yml)
 
-Inventarul dinamic se autentifica via MSI (Managed Identity) — fara credentiale hardcodate:
+Inventarul dinamic se autentifica via MSI (Managed Identity):
 
 ```bash
 # Verifica inventarul
@@ -84,7 +84,7 @@ Scriptul:
 1. Se autentifica in Azure via Managed Identity (`az login --identity`)
 2. Preia secretele din `kv-mediasrl-persistent`
 3. Salveaza parola vault la `~/.vault-pass` (chmod 600)
-4. Creeaza `group_vars/all/vault.yml` encriptat AES-256
+4. Creeaza `group_vars/all/vault.yml` criptat AES-256
 
 **Pentru recreare manuala (daca e necesar):**
 

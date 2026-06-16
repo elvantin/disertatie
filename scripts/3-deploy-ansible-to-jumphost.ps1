@@ -13,13 +13,13 @@
 #     prod -> azure_rm.yml     -> azure_rm.yml  (RG: productie, nicio copiere)
 #
 # Usage:
-#   .\scripts\deploy-ansible-to-jumphost.ps1              # prompt interactiv
-#   .\scripts\deploy-ansible-to-jumphost.ps1 -Environment dev
-#   .\scripts\deploy-ansible-to-jumphost.ps1 -Environment prod
-#   .\scripts\deploy-ansible-to-jumphost.ps1 -SkipCopy           # sare peste SCP (fisierele exista deja)
-#   .\scripts\deploy-ansible-to-jumphost.ps1 -SkipConfig         # sare peste permisiuni + inventory
-#   .\scripts\deploy-ansible-to-jumphost.ps1 -SkipVault          # sare peste create-ansible-vault.sh
-#   .\scripts\deploy-ansible-to-jumphost.ps1 -SkipCopy -SkipConfig  # doar Vault
+#   .\scripts\3-deploy-ansible-to-jumphost.ps1              # prompt interactiv
+#   .\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment dev
+#   .\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment prod
+#   .\scripts\3-deploy-ansible-to-jumphost.ps1 -SkipCopy           # sare peste SCP (fisierele exista deja)
+#   .\scripts\3-deploy-ansible-to-jumphost.ps1 -SkipConfig         # sare peste permisiuni + inventory
+#   .\scripts\3-deploy-ansible-to-jumphost.ps1 -SkipVault          # sare peste scrierea ~/.vault-pass
+#   .\scripts\3-deploy-ansible-to-jumphost.ps1 -SkipCopy -SkipConfig  # doar Vault
 # ============================================================
 
 param(
@@ -211,8 +211,15 @@ echo 'Jumphost-ul foloseste Managed Identity (auth_source: msi).'
 echo 'Nu este necesara autentificarea manuala (az login).'
 echo ''
 echo "  cd ${RemotePath}"
-echo '  ansible linux   -m ping'
-echo '  ansible windows -m win_ping'
+echo '  ansible linux   -m ping                        # verifica conectivitate Linux'
+echo '  ansible windows -m win_ping                    # verifica conectivitate Windows'
+echo '  ./run-playbook.sh 1-base-setup.yml             # instalare pachete de baza'
+echo '  ./run-playbook.sh 2-deploy-wordpress.yml       # deploy WordPress + MySQL'
+echo '  ./run-playbook.sh 3-wordpress-config.yml       # configurare WordPress'
+echo '  ./run-playbook.sh 4-harden-nginx-ssl_ssllabs.com_ssltest.yml'
+echo '  bash scripts/certbot-letsencrypt.sh --env prod # certificat TLS Let'"'"'s Encrypt'
+echo "  ./run-playbook.sh 'harden-security(daca_nu_rulez_demouri).yml'"
+echo '  ./run-playbook.sh 6-monitoring.yml             # Azure Monitor Agent'
 echo '========================================='
 "@ 2>&1 | ForEach-Object { Write-Host $_; [void]$sshStep2Lines.Add([string]$_) }
 $sshStep2Exit = $LASTEXITCODE
@@ -226,25 +233,44 @@ Write-Log-OK "Permisiuni setate, inventory activat" -Detail "$SourceInventory �
 } # end if -SkipConfig
 
 # =============================================================================
-# STEP 3: Ansible Vault — fetch secrets + create vault.yml via MSI
+# STEP 3: Ansible Vault — scrie ~/.vault-pass din Key Vault via MSI
+# vault.yml este deja prezent in fisierele copiate (committed encrypted in repo).
+# Este necesar doar sa scriem parola de decriptare in ~/.vault-pass.
 # =============================================================================
 
-Write-Log-Header "Ansible Vault Setup (create-ansible-vault.sh)" -Step 3 -Total 3
+Write-Log-Header "Ansible Vault — ~/.vault-pass din Key Vault (MSI)" -Step 3 -Total 3
 if ($SkipVault) {
-    Write-Log-Warn "SKIP: Ansible Vault (-SkipVault)" -Detail "Se presupune că vault.yml există deja pe jumphost"
+    Write-Log-Warn "SKIP: Ansible Vault (-SkipVault)" -Detail "Se presupune ca ~/.vault-pass exista deja pe jumphost"
 } else {
-    Write-Log-Step "Rulare create-ansible-vault.sh pe jumphost via SSH (Managed Identity)..."
+    Write-Log-Step "Fetch ansible-vault-password din kv-mediasrl-persistent via MSI → ~/.vault-pass..."
 
     $vaultLines = [System.Collections.Generic.List[string]]::new()
-    ssh @SSHOpts $SSHTarget "cd `"${RemotePath}`" && bash scripts/create-ansible-vault.sh" 2>&1 | ForEach-Object { Write-Host $_; [void]$vaultLines.Add([string]$_) }
+    ssh @SSHOpts $SSHTarget @"
+pass=`$(az keyvault secret show --vault-name kv-mediasrl-persistent --name ansible-vault-password --query value -o tsv 2>&1)
+if [ -z "`$pass" ] || echo "`$pass" | grep -qi 'error\|could not'; then
+    echo "[ERR] Nu s-a putut obtine ansible-vault-password din Key Vault"
+    echo "      Verifica ca VM MSI are rolul 'Key Vault Secrets User' pe kv-mediasrl-persistent"
+    exit 1
+fi
+printf '%s' "`$pass" > ~/.vault-pass
+chmod 600 ~/.vault-pass
+echo "[OK] ~/.vault-pass scris (mode 600)"
+vault_file="${RemotePath}/group_vars/all/vault.yml"
+if [ -f "`$vault_file" ]; then
+    echo "[OK] vault.yml prezent: `$vault_file"
+    ansible-vault view "`$vault_file" --vault-password-file ~/.vault-pass 2>&1 | head -3 || echo "  (verificare vault esuata)"
+else
+    echo "[WARN] vault.yml lipsa din `$vault_file — verifica repo-ul"
+fi
+"@ 2>&1 | ForEach-Object { Write-Host $_; [void]$vaultLines.Add([string]$_) }
     $vaultExit = $LASTEXITCODE
-    Write-Log-Block -Label "Output SSH: create-ansible-vault.sh" -Content ($vaultLines -join "`n")
+    Write-Log-Block -Label "Output SSH: vault-pass setup" -Content ($vaultLines -join "`n")
 
     if ($vaultExit -ne 0) {
-        Write-Log-Fail "create-ansible-vault.sh a eșuat" -Detail "Verifică că MSI are acces la kv-mediasrl-persistent (role: Key Vault Secrets User)"
+        Write-Log-Fail "Setarea vault-password a esuat" -Detail "Verifica ca VM MSI are 'Key Vault Secrets User' pe kv-mediasrl-persistent"
         Stop-LogSession; exit 1
     }
-    Write-Log-OK "Ansible Vault configurat" -Detail "group_vars/all/vault.yml  (AES-256)  |  ~/.vault-pass  (mode 600)"
+    Write-Log-OK "~/.vault-pass setat" -Detail "kv-mediasrl-persistent → ansible-vault-password  |  vault.yml (AES-256) prezent  |  mode 600"
 }
 
 # =============================================================================
@@ -252,12 +278,20 @@ if ($SkipVault) {
 # =============================================================================
 
 Write-Log-Header "Rezultat deployment"
-Write-Log-OK "Fișiere Ansible configurate pe jumphost" -Detail "${RemotePath}"
-Write-Log-OK "Vault criptat, secrete preluate din Key Vault"
-Write-Log-Info "ssh ${User}@${JumphostIP}"
-Write-Log-Info "cd ${RemotePath}"
-Write-Log-Info "ansible linux   -m ping"
-Write-Log-Info "ansible windows -m win_ping"
-Write-Log-Info "(fără az login — autentificare prin Managed Identity)"
+Write-Log-OK "Fisiere Ansible configurate pe jumphost" -Detail "${RemotePath}"
+Write-Log-OK "~/.vault-pass setat — vault.yml (AES-256) decriptabil"
+Write-Log-Info "Pasul urmator — conectare la jumphost si rulare playbook-uri:"
+Write-Log-Info "  ssh ${User}@${JumphostIP}"
+Write-Log-Info "  cd ${RemotePath}"
+Write-Log-Info "  ansible linux   -m ping                          # verifica conectivitate"
+Write-Log-Info "  ansible windows -m win_ping"
+Write-Log-Info "  ./run-playbook.sh 1-base-setup.yml"
+Write-Log-Info "  ./run-playbook.sh 2-deploy-wordpress.yml"
+Write-Log-Info "  ./run-playbook.sh 3-wordpress-config.yml"
+Write-Log-Info "  ./run-playbook.sh 4-harden-nginx-ssl_ssllabs.com_ssltest.yml"
+Write-Log-Info "  bash scripts/certbot-letsencrypt.sh --env prod   # certificat TLS"
+Write-Log-Info "  ./run-playbook.sh 'harden-security(daca_nu_rulez_demouri).yml'"
+Write-Log-Info "  ./run-playbook.sh 6-monitoring.yml"
+Write-Log-Info "Sau testeaza mai intai infrastructura Azure: .\scripts\4-test-infrastructure.ps1"
 
 Stop-LogSession

@@ -148,7 +148,7 @@ IT/
 │   ├── 4-test-infrastructure.ps1       # Teste infrastructura Azure
 │   ├── get-vm-ips.ps1                  # IP-uri VM-uri + generează hosts.ini
 │   └── lib/
-│       └── Write-Log.ps1               # Logging HTML + text (colapsibil)
+│       └── Write-Log.ps1               # Logging HTML + text (colapsabil)
 │
 ├── logs/                               # Loguri HTML + text (generat automat)
 ├── docs/

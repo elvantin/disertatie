@@ -5,7 +5,7 @@
 #
 # Strategy: nginx-module-modsecurity is NOT available as a free
 # package (nginx.org provides it only for nginx Plus).
-# We compile the modsecurity-nginx connector from source using
+# Compiles the modsecurity-nginx connector from source using
 # --with-compat against the installed nginx version.
 # ============================================================
 

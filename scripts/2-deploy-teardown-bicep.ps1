@@ -6,11 +6,11 @@
 #   TEARDOWN — Sterge Resource Group-ul principal (pastreaza persistent RG)
 #
 # Rulare interactiva (recomandat):
-#   .\scripts\deploy-teardown-bicep.ps1
+#   .\scripts\2-deploy-teardown-bicep.ps1
 #
 # Rulare cu parametri (CI / scripturi):
-#   .\scripts\deploy-teardown-bicep.ps1 -Action deploy   -Environment prod
-#   .\scripts\deploy-teardown-bicep.ps1 -Action teardown -Environment dev -NoConfirm
+#   .\scripts\2-deploy-teardown-bicep.ps1 -Action deploy   -Environment prod
+#   .\scripts\2-deploy-teardown-bicep.ps1 -Action teardown -Environment dev -NoConfirm
 # ============================================================
 
 param(
@@ -322,19 +322,21 @@ if ($Action -eq 'deploy') {
         $jmpIp = az network public-ip show -g $PersistentRgName -n $JmpPipName --query ipAddress -o tsv 2>$null
     }
 
-    Write-Log-Info "1. Bootstrap Ansible Vault:  ssh azureadmin@$jmpIp  →  bash scripts/create-ansible-vault.sh"
     if ($jmpIp) {
-        Write-Log-Info "2. Deploy Ansible:           .\scripts\4-deploy-ansible-to-jumphost.ps1 -JumphostIP $jmpIp"
+        Write-Log-Info "1. Deploy Ansible:  .\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment $Environment -JumphostIP $jmpIp"
     } else {
-        Write-Log-Info "2. Deploy Ansible:           .\scripts\4-deploy-ansible-to-jumphost.ps1 -JumphostIP <IP>"
+        Write-Log-Info "1. Deploy Ansible:  .\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment $Environment -JumphostIP <IP>"
     }
-    Write-Log-Info "3. RDP la jumphost:          $(if ($jmpIp) { "mstsc /v:$jmpIp" } else { "mstsc /v:<IP_JUMPHOST>" })"
-    if ($Environment -eq 'dev') {
-        Write-Log-Info "4. Rulează Ansible:          ansible-playbook playbooks/2-site.yml -i inventory/azure_rm_dev.yml"
-    } else {
-        Write-Log-Info "4. Rulează Ansible:          ansible-playbook playbooks/2-site.yml"
-    }
-    Write-Log-Info "5. Teste infrastructură:     .\scripts\5-test-infrastructure.ps1"
+    Write-Log-Info "2. Teste Azure:     .\scripts\4-test-infrastructure.ps1"
+    Write-Log-Info "3. SSH la jumphost: ssh azureadmin@$(if ($jmpIp) { $jmpIp } else { '<IP_JUMPHOST>' })"
+    Write-Log-Info "4. Ruleaza playbook-urile (din ~/ansible pe jumphost):"
+    Write-Log-Info "     ./run-playbook.sh 1-base-setup.yml"
+    Write-Log-Info "     ./run-playbook.sh 2-deploy-wordpress.yml"
+    Write-Log-Info "     ./run-playbook.sh 3-wordpress-config.yml"
+    Write-Log-Info "     ./run-playbook.sh 4-harden-nginx-ssl_ssllabs.com_ssltest.yml"
+    Write-Log-Info "     bash scripts/certbot-letsencrypt.sh --env prod"
+    Write-Log-Info "     ./run-playbook.sh 'harden-security(daca_nu_rulez_demouri).yml'"
+    Write-Log-Info "     ./run-playbook.sh 6-monitoring.yml"
 
     Write-Log-OK "Deploy $EnvLabel — FINALIZAT"
     Stop-LogSession

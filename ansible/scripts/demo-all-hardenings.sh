@@ -18,7 +18,7 @@
 set -euo pipefail
 
 ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
+DEMO_DIR="${ANSIBLE_DIR}/logs"
 SCRIPTS_DIR="${ANSIBLE_DIR}/scripts"
 MASTER_TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
 REPORT_FILE="${DEMO_DIR}/security-demo-report-${MASTER_TIMESTAMP}.txt"

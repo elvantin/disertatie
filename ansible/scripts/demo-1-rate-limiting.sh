@@ -12,7 +12,7 @@ set -euo pipefail
 
 DOMAIN="mediasrl.swedencentral.cloudapp.azure.com"
 ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
+DEMO_DIR="${ANSIBLE_DIR}/logs"
 BEFORE_FILE="${DEMO_DIR}/rate-limit-before.txt"
 AFTER_FILE="${DEMO_DIR}/rate-limit-after.txt"
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
@@ -118,12 +118,14 @@ echo ""
 # Generate HTML report
 DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
 python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
-    --title    "nginx Rate Limiting" \
-    --subtitle "Brute-force /wp-login.php blocat după burst — 429 Too Many Requests" \
-    --before   "${BEFORE_FILE}" \
-    --after    "${AFTER_FILE}" \
-    --target   "${DOMAIN}" \
-    --demo-num 1 \
-    --duration "${DEMO_ELAPSED}s" \
-    --html     "${HTML_FILE}" || true
+    --title        "nginx Rate Limiting" \
+    --subtitle     "Brute-force /wp-login.php blocat după burst — 429 Too Many Requests" \
+    --before       "${BEFORE_FILE}" \
+    --after        "${AFTER_FILE}" \
+    --before-label "BEFORE — Fără rate limiting: toate cererile trec (200 OK)" \
+    --after-label  "AFTER — Rate limiting activ: 429 Too Many Requests după burst" \
+    --target       "${DOMAIN}" \
+    --demo-num     1 \
+    --duration     "${DEMO_ELAPSED}s" \
+    --html         "${HTML_FILE}" || true
 echo -e "    HTML Report: ${HTML_FILE}"

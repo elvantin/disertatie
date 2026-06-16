@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
+DEMO_DIR="${ANSIBLE_DIR}/logs"
 BEFORE_FILE="${DEMO_DIR}/ssh-hardening-before.txt"
 AFTER_FILE="${DEMO_DIR}/ssh-hardening-after.txt"
 TARGET_HOST="vm-web-01"
@@ -163,12 +163,14 @@ echo ""
 # Generate HTML report
 DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
 python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
-    --title    "SSH Hardening — Algoritmi moderni exclusiv" \
-    --subtitle "curve25519 KEX, ChaCha20/AES-256-GCM, MACs ETM — algoritmi slabi respinși" \
-    --before   "${BEFORE_FILE}" \
-    --after    "${AFTER_FILE}" \
-    --target   "${TARGET_HOST} (${TARGET_IP})" \
-    --demo-num 3 \
-    --duration "${DEMO_ELAPSED}s" \
-    --html     "${HTML_FILE}" || true
+    --title        "SSH Hardening — Algoritmi criptografici moderni exclusiv" \
+    --subtitle     "curve25519 KEX, ChaCha20/AES-256-GCM cipher, hmac-sha2-512-etm MAC — algoritmi slabi respinși" \
+    --before       "${BEFORE_FILE}" \
+    --after        "${AFTER_FILE}" \
+    --before-label "BEFORE — Configurație SSH implicită: posibili algoritmi legacy activi" \
+    --after-label  "AFTER — SSH hardening activ: exclusiv algoritmi moderni, slabi respinși explicit" \
+    --target       "${TARGET_HOST} (${TARGET_IP})" \
+    --demo-num     3 \
+    --duration     "${DEMO_ELAPSED}s" \
+    --html         "${HTML_FILE}" || true
 echo -e "    HTML Report: ${HTML_FILE}"

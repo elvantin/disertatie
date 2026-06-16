@@ -1,6 +1,6 @@
 # Deployment Guide — Infrastructura SC MEDIA SRL
 
-**Ultima actualizare:** 2026-06-13
+**Ultima actualizare:** 2026-06-16
 
 ---
 
@@ -15,12 +15,15 @@ Infrastructura SC MEDIA SRL se deployeaza in urmatoarele etape principale:
 | **2** | `scripts/2-deploy-teardown-bicep.ps1 -Action deploy` | La fiecare deploy | Deployeaza infrastructura Azure (VNet, NSG, VMs, KV, monitoring) |
 | **3** | `scripts/3-deploy-ansible-to-jumphost.ps1` | Dupa fiecare deploy | Copiaza Ansible pe jumphost + creeaza Ansible Vault |
 | **4** | Conectare RDP la jumphost | — | Acces la Ansible Control Node |
-| **5** | `ansible-playbook playbooks/2-site.yml` | Dupa deploy infrastructura | Configureaza toate VM-urile (nginx, MySQL, WordPress etc.) |
-| **6** | `ansible-playbook playbooks/4-harden-nginx-ssl.yml` | Post-configurare | Hardening SSL/TLS nginx (A+ SSL Labs) |
-| **7** | `ansible-playbook playbooks/5-harden-security.yml` | Post-configurare | Hardening avansat: fail2ban, WAF, SSH, MySQL TDE |
-| **8** | `ansible-playbook playbooks/6-monitoring.yml` | Post-configurare | Deploy Azure Monitor Agent pe toate VM-urile |
-| **9** | `scripts/4-test-infrastructure.ps1` | La validare | Suite de teste infrastructura (Azure + conectivitate) |
-| **10** | `scripts/demo-all-hardenings.sh` | Demo comisie | Demonstratii live de securitate cu raport HTML |
+| **5** | `ansible-playbook playbooks/1-setup-ssh-keys.yml` + `playbooks/2-site.yml` + `playbooks/3-verify.yml` | Dupa deploy infrastructura | Configureaza toate VM-urile (nginx, MySQL, WordPress etc.) |
+| **6** | `scripts/certbot-letsencrypt.sh` | Post-configurare site | Obtine certificat Let's Encrypt pentru HTTPS |
+| **7** | `ansible-playbook playbooks/4-harden-nginx-ssl_ssllabs.com_ssltest.yml` | Post-certificat | Hardening SSL/TLS nginx (A+ SSL Labs) |
+| **8** | `scripts/demo-all-hardenings.sh` | Demo comisie | Demonstratii live de securitate cu raport HTML (deploy implicit playbook 5) |
+| **9** | `ansible-playbook playbooks/6-monitoring.yml` | Post-securizare | Deploy health check scripts + cron/Task Scheduler |
+| **10** | `scripts/4-test-infrastructure.ps1` | La validare | Suite de teste infrastructura (Azure + conectivitate) |
+| **11** | intrebari comisie | — | — |
+
+> **Nota executie demo-uri:** Demo-urile (Pas 8) deployeaza hardeningurile din playbook 5 in mod progresiv (BEFORE/AFTER). Daca nu se ruleaza demo-uri, se poate rula direct `playbooks/harden-security(daca_nu_rulez_demouri).yml` pentru a aplica toate hardeningurile deodata.
 
 ---
 
@@ -104,9 +107,9 @@ Imaginile golden trebuie construite INAINTE de deployment-ul Bicep (necesar cu `
 
 | Image Definition | Continut |
 |-----------------|----------|
-| `imgdef-ubuntu2204` | Ubuntu 22.04 base: update, pachete comune, SSH hardening, timezone, auditd |
-| `imgdef-ubuntu2204-jumphost` | Ubuntu 22.04 + XFCE Desktop + xRDP + Ansible + `azure.azcollection` + Azure CLI + VS Code + Remmina + `pywinrm` |
-| `imgdef-winserver2022` | Windows Server 2022 + WinRM pre-configurat + Visual C++ Redistributable + hardening de baza |
+| `imgdef-ubuntu2204` | Ubuntu 22.04 base: update, pachete comune, SSH hardening, timezone Europe/Bucharest, auditd |
+| `imgdef-ubuntu2204-jumphost` | Ubuntu 22.04 + XFCE Desktop + xRDP + Ansible + `azure.azcollection` + Azure CLI + VS Code + Remmina + `pywinrm` + timezone Europe/Bucharest |
+| `imgdef-winserver2022` | Windows Server 2022 + WinRM pre-configurat + Visual C++ Redistributable + hardening de baza + timezone E. Europe Standard Time (Europe/Bucharest) |
 
 **Resource Group Packer:** `rg-mediasrl-packer-swedencentral`
 **Durata estimata:** 10–30 minute per imagine
@@ -152,6 +155,7 @@ Imaginile golden trebuie construite INAINTE de deployment-ul Bicep (necesar cu `
 - RBAC role assignments (MSI jumphost: Reader pe RG persistent, Key Vault Secrets User pe KV persistent)
 - KV access policies pentru Managed Identity jumphost
 - WinRM configurat automat pe vm-db-01 si vm-fs-01 via `Microsoft.Compute/virtualMachines/runCommands`
+- Finalizare jumphost via Custom Script Extension (`scripts/finalize-jumphost.sh`) la primul boot
 
 > **Nota:** IP-urile publice persistente (pip-vm-jmp-01, pip-vm-web-01) si KV-ul persistent exista deja din Pas 0 si nu sunt recreate.
 
@@ -172,9 +176,6 @@ az vm list -g rg-mediasrl-productie-swedencentral -o table `
 # IP-uri publice
 az network public-ip list -g rg-mediasrl-persistent -o table `
   --query "[].{Name:name, IP:ipAddress}"
-
-# Alternativ: scriptul dedicat
-.\scripts\get-vm-ips.ps1
 ```
 
 ---
@@ -208,7 +209,7 @@ Copiaza directorul `ansible/` pe jumphost si ruleaza configurarea initiala:
 **Ce face (3 pasi):**
 1. **Copiere fisiere** — `scp ansible/* → jumphost:~/ansible/` (fallback: tar+SSH)
 2. **Permisiuni + inventory** — seteaza chmod, activeaza `azure_rm.yml` pentru mediul ales, seteaza `website_domain` in `group_vars/linux.yml`
-3. **Ansible Vault** — ruleaza `scripts/create-ansible-vault.sh` pe jumphost via SSH:
+3. **Ansible Vault** — ruleaza `ansible/scripts/create-ansible-vault.sh` pe jumphost via SSH:
    - Autentificare Azure via Managed Identity (fara `az login`)
    - Preia secretele din `kv-mediasrl-persistent`
    - Creeaza `group_vars/all/vault.yml` encriptat AES-256
@@ -329,79 +330,158 @@ ansible-playbook playbooks/2-site.yml --limit vm-cms-01
 ansible-playbook playbooks/2-site.yml --check
 ```
 
-### 5f. Wrapper cu logging automat (recomandat)
+### 5f. Verificare servicii dupa deploy
+
+```bash
+ansible-playbook playbooks/3-verify.yml
+```
+
+### 5g. Wrapper cu logging automat (recomandat)
 
 ```bash
 # Genereaza automat: .log (ANSI color), .clean.log (text), .html (raport HTML)
-bash scripts/run-playbook.sh playbooks/2-site.yml
+# run-playbook.sh se afla in radacina ~/ansible/
+bash run-playbook.sh playbooks/2-site.yml
 
 # Cu argumente extra
-bash scripts/run-playbook.sh playbooks/2-site.yml --tags webserver
-bash scripts/run-playbook.sh playbooks/2-site.yml --limit vm-web-01
+bash run-playbook.sh playbooks/2-site.yml --tags webserver
+bash run-playbook.sh playbooks/2-site.yml --limit vm-web-01
 ```
 
 Log-urile sunt salvate in `~/ansible/logs/` pe jumphost.
 
 ---
 
-## Pas 6: Hardening avansat SSL/TLS
+## Pas 6: Certificat SSL Let's Encrypt
+
+Obtine un certificat Let's Encrypt real pentru domeniul public al vm-web-01:
 
 ```bash
 # Pe jumphost, din ~/ansible/
-ansible-playbook playbooks/4-harden-nginx-ssl.yml
+bash scripts/certbot-letsencrypt.sh
+
+# Sau cu environment explicit
+bash scripts/certbot-letsencrypt.sh --env prod
+```
+
+**Ce face:**
+1. Deschide temporar portul 80 in NSG catre internet (pentru challenge HTTP-01)
+2. Ruleaza certbot webroot challenge pe vm-web-01
+3. Deployeaza configuratia nginx cu HTTPS activat
+4. Inchide portul 80 inapoi la VNet-only (via trap, intotdeauna)
+
+**Domeniu prod:** `mediasrl.swedencentral.cloudapp.azure.com`
+
+> **Prerequisit:** MSI-ul jumphost trebuie sa aiba rolul `Network Contributor` pe NSG-ul corespunzator pentru a modifica regulile temporar.
+
+---
+
+## Pas 7: Hardening avansat SSL/TLS
+
+```bash
+# Pe jumphost, din ~/ansible/
+ansible-playbook playbooks/4-harden-nginx-ssl_ssllabs.com_ssltest.yml
 ```
 
 **Ce face:**
 - Configureaza nginx pe vm-web-01 cu TLS 1.2/1.3 exclusiv
-- ECDHE/DHE ciphers, dezactivare ciphers slabe
-- HSTS cu `max-age=31536000` (1 an)
+- DH Parameters 4096-bit (dureza 5–15 minute)
+- ECDHE/DHE ciphers cu PFS, dezactivare ciphers slabe
+- HSTS cu `max-age=31536000` (1 an) + `includeSubDomains`
 - OCSP stapling
-- HTTP/2
-- Tinteste grad **A+** pe SSL Labs
+- Security headers: X-Frame-Options DENY, CSP, Permissions-Policy, Referrer-Policy
+- Tinteste grad **A+** pe [SSL Labs](https://www.ssllabs.com/ssltest/)
+
+**Verificare:** ruleaza testul SSL Labs inainte si dupa pentru comparatia de grad.
 
 ---
 
-## Pas 7: Hardening avansat securitate
+## Pas 8: Demo-uri de securitate
+
+> **IMPORTANT:** Demo-urile deployeaza hardeningurile din playbook 5 progresiv (BEFORE → deploy → AFTER). Trebuie rulate INAINTE de a aplica manual playbook 5, altfel starea BEFORE este deja securizata si demo-ul nu mai are contrast.
+
+De pe jumphost, din `~/ansible/`:
 
 ```bash
-# Toate hardeningurile deodata
-ansible-playbook playbooks/5-harden-security.yml
+# Toate demo-urile secvential (recomandat pentru comisie)
+bash scripts/demo-all-hardenings.sh
 
-# Sau individual:
-ansible-playbook playbooks/5-harden-security.yml --tags rate_limiting   # nginx rate limiting
-ansible-playbook playbooks/5-harden-security.yml --tags fail2ban        # auto-ban IP brute-force
-ansible-playbook playbooks/5-harden-security.yml --tags ssh_hardening   # algoritmi SSH moderni
-ansible-playbook playbooks/5-harden-security.yml --tags modsecurity     # WAF OWASP CRS 3.2.1
-ansible-playbook playbooks/5-harden-security.yml --tags mysql_hardening # MySQL hardening + TDE
+# Sau demo-uri individuale:
+bash scripts/demo-1-rate-limiting.sh   # Rate limiting nginx (429 Too Many Requests)
+bash scripts/demo-2-fail2ban.sh        # Ban IP brute-force SSH
+bash scripts/demo-3-ssh-hardening.sh   # Respingere algoritmi slabi SSH
+bash scripts/demo-4-modsecurity.sh     # Blocari WAF (SQLi, XSS, LFI, RCE)
+bash scripts/demo-5-mysql-hardening.sh # MySQL hardening + TDE
+
+# Rulare selectiva (ex. doar demo-urile 1 si 4)
+bash scripts/demo-all-hardenings.sh --only 1,4
+
+# Fara prompt-uri de confirmare (rulare automata)
+bash scripts/demo-all-hardenings.sh --yes
 ```
 
-**Ce configureaza:**
+### Alternativa fara demo-uri
+
+Daca demo-urile nu se ruleaza (ex. environment deja partial securizat):
+
+```bash
+ansible-playbook playbooks/harden-security\(daca_nu_rulez_demouri\).yml
+
+# Sau individual cu tag-uri:
+ansible-playbook playbooks/harden-security\(daca_nu_rulez_demouri\).yml --tags rate_limiting
+ansible-playbook playbooks/harden-security\(daca_nu_rulez_demouri\).yml --tags fail2ban
+ansible-playbook playbooks/harden-security\(daca_nu_rulez_demouri\).yml --tags ssh_hardening
+ansible-playbook playbooks/harden-security\(daca_nu_rulez_demouri\).yml --tags modsecurity
+ansible-playbook playbooks/harden-security\(daca_nu_rulez_demouri\).yml --tags mysql_hardening
+```
+
+**Ce configureaza hardeningurile:**
 
 | Tag | VM | Configurare |
 |-----|-----|-------------|
 | `rate_limiting` | vm-web-01 | nginx: 5 req/min pe `/wp-login.php`, `/wp-admin/`, `/xmlrpc.php`, `/api/` |
-| `fail2ban` | toate Linux | Auto-ban IP dupa 5 incercari esuate, ban 1 ora |
+| `fail2ban` | toate Linux | Auto-ban IP dupa 5 incercari esuate SSH, ban 1 ora; ignoreip 10.10.12.0/24 (mgmt subnet) |
 | `ssh_hardening` | toate Linux | curve25519 KEX, ChaCha20/AES-256-GCM, MACs ETM, AllowUsers azureadmin |
 | `modsecurity` | vm-web-01 | ModSecurity On, OWASP CRS 3.2.1, paranoia level 1, excluderi WordPress |
 | `mysql_hardening` | vm-db-01 | Stergere useri anonimi, test DB, `local_infile=OFF`, TDE InnoDB |
 
+**Output generat de fiecare demo:**
+
+| Fisier | Continut |
+|--------|----------|
+| `logs/security-demos/demo-N-*-TIMESTAMP.html` | Raport HTML cu BEFORE/AFTER/DIFF, colorat, pentru comisie |
+| `logs/security-demos/*-before.txt` | Starea initiala (vulnerabila) |
+| `logs/security-demos/*-after.txt` | Starea dupa hardening (protejata) |
+| `logs/security-demos/security-demo-report-*.html` | Raport master (toate hardeningurile) |
+
 ---
 
-## Pas 8: Monitorizare (Azure Monitor Agent)
+## Pas 9: Monitorizare (health check scripts)
 
 ```bash
 ansible-playbook playbooks/6-monitoring.yml
 ```
 
 **Ce face:**
-- Instaleaza si configureaza Azure Monitor Agent pe toate VM-urile (daca nu s-a instalat deja via Bicep)
-- Configureaza colectare: Windows Event Log + Linux Syslog → Log Analytics `log-mediasrl-productie`
-- Seteaza health check scripts (cron/Task Scheduler la 5 minute)
-- Tag syslog: `mediasrl-health`
+- Deployeaza `check-health.sh` (Linux) / `check-health.ps1` (Windows) pe fiecare VM
+- Linux: cron job la 5 minute, loguri via `logger -t mediasrl-health`
+- Windows: Scheduled Task la 5 minute, loguri via `Write-EventLog`
+- Azure Monitor Agent (instalat de Bicep) colecteaza logurile prin DCR → Log Analytics → KQL Alert Rules
+
+**Servicii monitorizate per VM:**
+
+| VM | Servicii | Porturi |
+|----|----------|---------|
+| vm-jmp-01 | sshd, xrdp | 22, 3389 |
+| vm-web-01 | nginx | 80, 443 |
+| vm-app-01 | nginx | 8080 |
+| vm-cms-01 | nginx, php8.1-fpm, postfix | 80, 25 |
+| vm-db-01 | MySQL80 | 3306 |
+| vm-fs-01 | LanmanServer | 445 |
 
 ---
 
-## Pas 9: Testare si validare
+## Pas 10: Testare si validare
 
 ### Suite Azure (de pe masina locala)
 
@@ -426,48 +506,12 @@ ansible-playbook playbooks/6-monitoring.yml
 
 Genereaza raport HTML + text in `logs/`.
 
-### Suite Ansible (de pe jumphost)
+### Verificare Ansible (de pe jumphost)
 
 ```bash
 # Verificare servicii pe toate VM-urile
 ansible-playbook playbooks/3-verify.yml
-
-# Suite completa de teste (playbook obsolete/test-services.yml)
-ansible-playbook playbooks/obsolete/test-services.yml
 ```
-
----
-
-## Pas 10: Demo-uri de securitate
-
-De pe jumphost, din `~/ansible/`:
-
-```bash
-# Toate demo-urile secvential (recomandat pentru comisie)
-bash scripts/demo-all-hardenings.sh
-
-# Sau demo-uri individuale:
-bash scripts/demo-1-rate-limiting.sh   # Rate limiting nginx (429 Too Many Requests)
-bash scripts/demo-2-fail2ban.sh        # Ban IP brute-force SSH
-bash scripts/demo-3-ssh-hardening.sh   # Respingere algoritmi slabi SSH
-bash scripts/demo-4-modsecurity.sh     # Blocari WAF (SQLi, XSS, LFI, RCE)
-bash scripts/demo-5-mysql-hardening.sh # MySQL hardening + TDE
-
-# Rulare selectiva (ex. doar demo-urile 1 si 4)
-bash scripts/demo-all-hardenings.sh --only 1,4
-
-# Fara prompt-uri de confirmare (rulare automata)
-bash scripts/demo-all-hardenings.sh --yes
-```
-
-**Output generat de fiecare demo:**
-
-| Fisier | Continut |
-|--------|----------|
-| `logs/security-demos/demo-N-*-TIMESTAMP.html` | Raport HTML cu BEFORE/AFTER/DIFF, colorat, pentru comisie |
-| `logs/security-demos/*-before.txt` | Starea initiala (vulnerabila) |
-| `logs/security-demos/*-after.txt` | Starea dupa hardening (protejata) |
-| `logs/security-demos/security-demo-report-*.html` | Raport master (toate hardeningurile) |
 
 ---
 
@@ -509,7 +553,7 @@ Subscription (7a0255bf-...)
 # Re-deploy complet:
 .\scripts\2-deploy-teardown-bicep.ps1 -Action deploy -Environment prod
 .\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment prod
-# Dupa, reconecteaza RDP si ruleaza playbook-urile (Pasii 5-8)
+# Dupa, reconecteaza RDP si ruleaza playbook-urile (Pasii 5-9)
 ```
 
 **Nu se sterg niciodata:**
@@ -565,16 +609,6 @@ firewall-cmd --list-all
 ```bash
 cd ~/ansible
 bash scripts/create-ansible-vault.sh
-```
-
-### Vizualizare IP-uri VM-uri
-
-```powershell
-# Script dedicat (afiseaza IP-uri + genereaza inventory static)
-.\scripts\get-vm-ips.ps1
-
-# Sau via az CLI
-az vm list-ip-addresses -g rg-mediasrl-productie-swedencentral -o table
 ```
 
 ### Logs HTML de executie

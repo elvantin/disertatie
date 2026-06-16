@@ -2,7 +2,7 @@
 # SC MEDIA SRL — Infrastructure Test Suite
 # Runs from local machine (Windows) to validate Azure deployment
 # Tests: Azure resources, NSG rules, connectivity, idempotency
-# Usage: .\scripts\test-infrastructure.ps1
+# Usage: .\scripts\4-test-infrastructure.ps1
 # ============================================================
 
 param(
@@ -408,6 +408,40 @@ if ($script:failed -eq 0) {
     Write-Log-OK "Toate testele au trecut cu succes" -Detail "$($script:passed) PASS · $($script:warnings) WARN"
 } else {
     Write-Log-Fail "$($script:failed) test(e) au eșuat" -Detail "Verifică detaliile din log"
+}
+
+# ============================================================
+# PAȘI URMĂTORI
+# ============================================================
+
+Write-Log-Header "Pași următori"
+
+if (-not $JumphostIp) {
+    $JumphostIp = az network public-ip show -g $RgPersistent -n pip-vm-jmp-01 --query ipAddress -o tsv 2>$null
+}
+
+if ($script:failed -eq 0) {
+    Write-Log-OK "Infrastructura Azure validata — VM-urile sunt accesibile"
+    Write-Log-Info "Daca Ansible nu a fost inca configurat pe jumphost:"
+    if ($JumphostIp) {
+        Write-Log-Info "  .\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment prod -JumphostIP $JumphostIp"
+    } else {
+        Write-Log-Info "  .\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment prod -JumphostIP <IP>"
+    }
+    Write-Log-Info "Daca Ansible este deja configurat — conecteaza-te la jumphost:"
+    Write-Log-Info "  ssh azureadmin@$(if ($JumphostIp) { $JumphostIp } else { '<IP_JUMPHOST>' })"
+    Write-Log-Info "  cd ~/ansible"
+    Write-Log-Info "  ./run-playbook.sh 1-base-setup.yml"
+    Write-Log-Info "  ./run-playbook.sh 2-deploy-wordpress.yml"
+    Write-Log-Info "  ./run-playbook.sh 3-wordpress-config.yml"
+    Write-Log-Info "  ./run-playbook.sh 4-harden-nginx-ssl_ssllabs.com_ssltest.yml"
+    Write-Log-Info "  bash scripts/certbot-letsencrypt.sh --env prod"
+    Write-Log-Info "  ./run-playbook.sh 'harden-security(daca_nu_rulez_demouri).yml'"
+    Write-Log-Info "  ./run-playbook.sh 6-monitoring.yml"
+} else {
+    Write-Log-Warn "Rezolva testele esuate inainte de a rula Ansible"
+    Write-Log-Info "Redeploy Bicep daca resurse lipsesc:"
+    Write-Log-Info "  .\scripts\2-deploy-teardown-bicep.ps1 -Action deploy -Environment prod"
 }
 
 Stop-LogSession

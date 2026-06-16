@@ -9,7 +9,7 @@
 # SSH — ensure password authentication is enabled
 # common role excludes jumphost, so SSH config must be set here.
 # Azure cloud-init (50-cloud-init.conf) may set PasswordAuthentication no —
-# we override it explicitly so users can connect with password from Windows.
+# overrides Azure cloud-init restriction to allow password auth from Windows clients.
 # ============================================================
 
 - name: Ensure PasswordAuthentication yes in sshd_config (main file)
@@ -35,7 +35,7 @@
 
 # ============================================================
 # Timezone — Europe/Bucharest
-# (common role excludes jumphost, so we set it here directly)
+# common role excludes jumphost — set here directly
 # ============================================================
 
 - name: Set timezone to Europe/Bucharest

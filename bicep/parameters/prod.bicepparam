@@ -16,12 +16,12 @@ param subnetProdPrefix = '10.10.10.0/24'
 param subnetDevPrefix = '10.10.11.0/24'
 param subnetMgmtPrefix = '10.10.12.0/24'
 
-// IMPORTANT: Replace with your actual admin IP address
+// Admin IP address — update before deployment
 param adminIpAddress = '82.78.49.150/32'
 
 // ----- Azure AD Configuration -----
 
-// IMPORTANT: Replace with actual values from your Azure subscription
+// Azure AD identifiers — update to match the target subscription
 param tenantId = 'ac82a445-2540-4eda-a5c6-839042376d8f' // TODO: az account show --query tenantId -o tsv
 param adminObjectId = '9f286d78-d412-436b-9f1d-cdd24b456a0c' // TODO: az ad signed-in-user show --query id -o tsv
 
@@ -41,7 +41,7 @@ param adminUsername = 'azureadmin'
 
 // Secret fetched from persistent Key Vault at deployment time (never stored in plaintext).
 // Requires kv-mediasrl-persistent to exist in rg-mediasrl-persistent.
-// Run scripts/0-bootstrap-keyvault.ps1 once before deploying.
+// scripts/0-bootstrap-keyvault.ps1 must be run once before deployment.
 param adminPassword = az.getSecret('7a0255bf-d664-4920-afb0-c523b49c1908', 'rg-mediasrl-persistent', 'kv-mediasrl-persistent', 'vm-admin-password')
 
 // ----- Persistent Resource Group (IP-uri statice care supravietuiesc teardown-ului) -----

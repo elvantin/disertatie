@@ -124,7 +124,7 @@
         msg: |
           Azure CLI is not authenticated on this jumphost.
 
-          Please run the following command on the jumphost BEFORE running this playbook:
+          Run the following command on the jumphost before running this playbook:
             az login --use-device-code
 
           Then re-run:

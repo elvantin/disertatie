@@ -356,23 +356,25 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
   - `1-setup-ssh-keys.yml` — generare și distribuire chei SSH pe Linux VMs
   - `2-site.yml` — playbook principal de deployment complet (toate rolurile)
   - `3-verify.yml` — verificare servicii pe toate VM-urile (teste funcționale)
-  - `4-harden-nginx-ssl.yml` — hardening SSL/TLS nginx (A+ SSL Labs grade)
-  - `5-harden-security.yml` — hardening avansat: fail2ban, ssh-hardening, modsecurity, mysql hardening, TDE
-  - `6-monitoring.yml` — instalare și configurare Azure Monitor Agent
+  - `4-harden-nginx-ssl_ssllabs.com_ssltest.yml` — hardening SSL/TLS nginx (DH 4096-bit, TLS 1.2/1.3, HSTS, A+ SSL Labs)
+  - `harden-security(daca_nu_rulez_demouri).yml` — hardening avansat: fail2ban, ssh-hardening, modsecurity, mysql hardening, TDE (alternativă la demo-uri)
+  - `6-monitoring.yml` — health check scripts + cron/Scheduled Tasks pe toate VM-urile
 - **Playbook suplimentar:**
   - `bootstrap-windows-winrm.yml` — activare WinRM manual (fallback dacă runCommands a eșuat)
 - **Playbook-uri deprecate (în `playbooks/obsolete/`):**
   - `deploy-services.yml`, `harden-all.yml`, `test-services.yml`
-- **Script wrapper:** `ansible/scripts/run-playbook.sh` — execuție playbook cu logging automat
+- **Script wrapper:** `~/ansible/run-playbook.sh` — execuție playbook cu logging automat (la rădăcina directorului ansible, nu în scripts/)
   - Generează 3 fișiere per execuție: `.log` (ANSI color), `.clean.log` (text curat), `.html` (raport HTML detaliat)
   - Raportul HTML conține: metadate execuție, statistici per host, detalii per task, PLAY RECAP colorat
 - **Demo-uri de securitate interactive (6 scripturi):**
   - `ansible/scripts/demo-1-rate-limiting.sh` — demonstrare rate limiting nginx (429 Too Many Requests)
-  - `ansible/scripts/demo-2-fail2ban.sh` — demonstrare blocare IP cu fail2ban (brute-force SSH)
+  - `ansible/scripts/demo-2-fail2ban.sh` — demonstrare blocare IP cu fail2ban (brute-force SSH); ignoreip arată că mgmt subnet nu poate fi banat
   - `ansible/scripts/demo-3-ssh-hardening.sh` — demonstrare respingere algoritmi slabi SSH
   - `ansible/scripts/demo-4-modsecurity.sh` — demonstrare blocări WAF ModSecurity (SQL injection, XSS, LFI, RCE)
   - `ansible/scripts/demo-5-mysql-hardening.sh` — demonstrare hardening MySQL: acces refuzat, TDE, audit log
   - `ansible/scripts/demo-all-hardenings.sh` — rulare secvențială a tuturor demo-urilor
+- **Script certbot:** `ansible/scripts/certbot-letsencrypt.sh` — obținere certificat Let's Encrypt (deschide temporar port 80 în NSG, rulează challenge HTTP-01, închide NSG)
+- **Ordine obligatorie demo-uri:** demo-urile trebuie rulate ÎNAINTE de `harden-security(daca_nu_rulez_demouri).yml` — deployeaza hardeningurile progresiv pentru contrast BEFORE/AFTER
 
 **Rezultat:** Sisteme configurate uniform, securizate, monitorizate și administrabile automat.
 
@@ -489,20 +491,14 @@ IT/
 │   │   ├── linux.yml                   # Variabile comune Linux VMs
 │   │   ├── windows.yml                 # Variabile WinRM (parola din vault)
 │   │   └── jumphost.yml                # Variabile specifice jumphost
-│   ├── host_vars/
-│   │   ├── vm-jmp-01/monitoring.yml    # Configurare monitoring per VM
-│   │   ├── vm-web-01/monitoring.yml
-│   │   ├── vm-app-01/monitoring.yml
-│   │   ├── vm-cms-01/monitoring.yml
-│   │   ├── vm-db-01/monitoring.yml
-│   │   └── vm-fs-01/monitoring.yml
+│   ├── run-playbook.sh                 # Wrapper execuție playbook + logging .log/.clean.log/.html
 │   ├── playbooks/
 │   │   ├── 1-setup-ssh-keys.yml        # Distribuire chei SSH pe Linux VMs
 │   │   ├── 2-site.yml                  # Playbook principal — deploy complet
 │   │   ├── 3-verify.yml                # Verificare servicii pe toate VM-urile
-│   │   ├── 4-harden-nginx-ssl.yml      # Hardening SSL/TLS nginx (A+ grade)
-│   │   ├── 5-harden-security.yml       # Hardening avansat (fail2ban, WAF, MySQL, TDE)
-│   │   ├── 6-monitoring.yml            # Deploy Azure Monitor Agent
+│   │   ├── 4-harden-nginx-ssl_ssllabs.com_ssltest.yml  # TLS hardening nginx (DH 4096, A+ grade)
+│   │   ├── harden-security(daca_nu_rulez_demouri).yml  # Hardening avansat (fail2ban, WAF, MySQL, TDE)
+│   │   ├── 6-monitoring.yml            # Health check scripts + cron/Scheduled Tasks
 │   │   ├── bootstrap-windows-winrm.yml # Activare WinRM manual (fallback)
 │   │   └── obsolete/                   # Playbook-uri depășite (nefolosite activ)
 │   │       ├── deploy-services.yml
@@ -510,24 +506,23 @@ IT/
 │   │       └── test-services.yml
 │   ├── roles/
 │   │   ├── common/                     # Baseline Linux (pachete, NTP, SSH, firewall)
-│   │   ├── nginx/                      # Reverse proxy + SSL/TLS + rate limiting
-│   │   ├── appserver/                  # REST API pe nginx:8080
+│   │   ├── nginx/                      # Reverse proxy + SSL/TLS + index.html cu live API fetch
+│   │   ├── appserver/                  # REST API pe nginx:8080, date business JSON statice
 │   │   ├── wordpress/                  # WordPress + PHP-FPM + WP-CLI
 │   │   ├── postfix/                    # SMTP relay
 │   │   ├── mysql/                      # MySQL 8.0 pe Windows + TDE + hardening
 │   │   ├── fileserver/                 # SMB File Server pe Windows
 │   │   ├── hardening/                  # CIS Benchmarks Linux + Windows
-│   │   ├── fail2ban/                   # Protecție brute-force SSH
+│   │   ├── fail2ban/                   # Protecție brute-force SSH; ignoreip mgmt subnet
 │   │   ├── ssh-hardening/              # Hardening avansat SSH
 │   │   ├── modsecurity/                # WAF ModSecurity pe nginx
-│   │   ├── monitoring/                 # Azure Monitor Agent pe toate VM-urile
+│   │   ├── monitoring/                 # Health check scripts (config inline în playbook 6)
 │   │   └── jumphost/                   # Configurare specifică jumphost
 │   ├── scripts/
 │   │   ├── create-ansible-vault.sh     # Preia secrete din KV via MSI + creeaza vault.yml
-│   │   ├── run-playbook.sh             # Wrapper execuție playbook + logging .log/.clean.log/.html
-│   │   ├── certbot-letsencrypt.sh      # Obținere/reînnoire certificat Let's Encrypt
+│   │   ├── certbot-letsencrypt.sh      # Obținere certificat Let's Encrypt (NSG temp open/close)
 │   │   ├── demo-1-rate-limiting.sh     # Demo: rate limiting nginx (429 Too Many Requests)
-│   │   ├── demo-2-fail2ban.sh          # Demo: blocare IP brute-force SSH cu fail2ban
+│   │   ├── demo-2-fail2ban.sh          # Demo: blocare IP brute-force SSH + ignoreip mgmt
 │   │   ├── demo-3-ssh-hardening.sh     # Demo: respingere algoritmi slabi SSH
 │   │   ├── demo-4-modsecurity.sh       # Demo: blocări WAF (SQLi, XSS, LFI, RCE)
 │   │   ├── demo-5-mysql-hardening.sh   # Demo: hardening MySQL + TDE + audit log
@@ -547,11 +542,13 @@ IT/
 │   ├── 2-deploy-teardown-bicep.ps1     # Deploy sau teardown infrastructura Bicep
 │   ├── 3-deploy-ansible-to-jumphost.ps1# Copiaza ansible/ pe jumphost + creeaza vault
 │   ├── 4-test-infrastructure.ps1       # Suite de teste infrastructura Azure
-│   ├── get-vm-ips.ps1                  # Afișare IP-uri VM-uri + generare inventory static
+│   ├── finalize-jumphost.sh            # Post-boot finalizare jumphost (rulat automat via CSE la deployment)
 │   ├── lib/
 │   │   └── Write-Log.ps1               # Librărie logging HTML + text (dot-sourced)
 │   └── obsolete/
+│       ├── get-vm-ips.ps1              # Afișare IP-uri VM-uri (utilitar, nu mai e necesar activ)
 │       ├── bootstrap-jumphost.sh       # Bootstrap jumphost manual (înlocuit de imaginea Packer)
+│       ├── create-ansible-vault.sh     # Versiune veche vault script (înlocuit de ansible/scripts/)
 │       └── 2-deploy-bicep.ps1          # Versiune veche script deploy (înlocuit de 2-deploy-teardown)
 │
 ├── logs/                               # Loguri de execuție generate automat (gitignored)
@@ -574,131 +571,58 @@ IT/
 
 ## 8. Cuprinsul final al lucrării de disertație
 
+> Structura reală a documentului depus (7 capitole + rezumat + bibliografie + 2 anexe).
+
+### Rezumat
+
 ### Capitolul 1 — Introducere
-- 1.1 Contextul actual al industriei IT
-- 1.2 Migrarea către cloud: tendințe și provocări
-- 1.3 Necesitatea automatizării infrastructurii
-- 1.4 Obiectivele lucrării
-- 1.5 Metodologia de cercetare și structura lucrării
+- 1.1 Contextul și motivația lucrării
+- 1.2 Obiective, contribuție și metodologie
+- 1.3 Structura lucrării
 
-### Capitolul 2 — Fundamente teoretice
-- 2.1 Cloud computing: modele, tipuri și furnizori
-- 2.2 Infrastructure as Code (IaC): principii și beneficii
-- 2.3 DevOps: cultură, practici și instrumente
-- 2.4 Prezentarea tehnologiilor utilizate
-  - 2.4.1 Microsoft Azure
-  - 2.4.2 Bicep (limbaj IaC nativ Azure)
-  - 2.4.3 Packer (construirea imaginilor personalizate)
-  - 2.4.4 Ansible (automatizarea configurării)
-  - 2.4.5 Azure DevOps (versionare și CI/CD)
+### Capitolul 2 — Fundamente teoretice și poziționare
+- 2.1 Calcul în cloud și responsabilitate operațională
+- 2.2 Infrastructură drept cod, DevOps și reproductibilitate
+- 2.3 Rolul tehnologiilor utilizate
+- 2.4 Observabilitate și limbaj comun
 
-### Capitolul 3 — Analiza cerințelor și scenariul de aplicabilitate
-- 3.1 Prezentarea companiei SC MEDIA SRL
-- 3.2 Prezentarea furnizorului SC IT SECURITY SRL
-- 3.3 Cerințe funcționale
-- 3.4 Cerințe non-funcționale (securitate, disponibilitate, scalabilitate)
-- 3.5 Justificarea alegerii soluției și a tehnologiilor
-- 3.6 Valoarea adăugată: de ce alege clientul externalizarea la SC IT SECURITY SRL
-  - 3.6.1 Automatizare completă — infrastructura, de la zero la funcțional în ~30 minute
-  - 3.6.2 Client fără personal IT — furnizorul preia tot (proiectare, implementare, securizare, mentenanță)
-  - 3.6.3 Reutilizabilitatea codului — același stack (Bicep + Packer + Ansible) poate fi aplicat oricărui client nou
-  - 3.6.4 Idempotență și disaster recovery — re-deploymentul complet durează minute, nu zile
-  - 3.6.5 Securitate by design — NSG, CIS Benchmarks, KV, Vault, WAF, fail2ban implementate din start
-  - 3.6.6 Transparență și auditabilitate — tot codul este versionat în Git; orice modificare este trasat
-  - 3.6.7 Cost optimizat — free tier Azure Monitor, VM-uri burstable (B-series), IP-uri persistente
-  - 3.6.8 Demonstrații live ale securității implementate — scripturi demo care dovedesc funcționalitatea
-  - 3.6.9 Independența de furnizor — IaC în formate standard (Bicep, Packer HCL, Ansible YAML)
+### Capitolul 3 — Analiza cerințelor și contextul organizațional
+- 3.1 Actorii scenariului (SC MEDIA SRL + SC IT SECURITY SRL)
+- 3.2 Cerințe funcționale și non-funcționale
+- 3.3 Dimensiunea umană a cerințelor
+- 3.4 Riscuri inițiale și criterii de acceptanță
 
-### Capitolul 4 — Arhitectura și proiectarea soluției
-- 4.1 Arhitectura generală a soluției
-- 4.2 Topologia de rețea
-- 4.3 Rolul fiecărei tehnologii în arhitectură
-- 4.4 Modelul de securitate și controlul accesului
-- 4.5 Fluxuri de lucru (workflow-uri DevOps)
-- 4.6 Convenții de denumire și organizare
+### Capitolul 4 — Arhitectura soluției
+- 4.1 Viziune generală
+- 4.2 Separarea responsabilităților tehnice
+- 4.3 Fluxuri de livrare și organizarea depozitului
+- 4.4 Compromisuri arhitecturale
 
 ### Capitolul 5 — Implementarea practică
-- 5.1 Configurarea mediului de dezvoltare
-- 5.2 Gestionarea secretelor cu Azure Key Vault
-  - 5.2.1 Bootstrap Key Vault persistent (script 0-bootstrap-keyvault.ps1)
-  - 5.2.2 Managed Identity — autentificare fără credențiale hardcodate
-  - 5.2.3 Ansible Vault — creare automată din Key Vault via MSI
-- 5.3 Crearea imaginilor personalizate cu Packer
-  - 5.3.1 Imagine Ubuntu 22.04 LTS Base
-  - 5.3.2 Imagine Ubuntu 22.04 LTS Jumphost (XFCE + Ansible)
-  - 5.3.3 Imagine Windows Server 2022 (WinRM + hardening)
-  - 5.3.4 Publicarea în Azure Compute Gallery
-- 5.4 Definirea infrastructurii cu Bicep
-  - 5.4.1 Modulul de rețea (VNet, Subnets, NSG)
-  - 5.4.2 Modulul de calcul (VM-uri, WinRM bootstrap automat via runCommands)
-  - 5.4.3 Modulul de monitorizare (Log Analytics, Azure Monitor Agent, Alerte)
-  - 5.4.4 Modulul de guvernanță (Azure Policy, RBAC, KV access policies)
-  - 5.4.5 IP-uri publice persistente (Resource Group separat)
-  - 5.4.6 Orchestrarea și parametrizarea (main.bicep, prod.bicepparam)
-  - 5.4.7 Scriptul de deployment și teardown (2-deploy-teardown-bicep.ps1)
-  - 5.4.8 Loguri de execuție HTML (Write-Log.ps1)
-- 5.5 Automatizarea configurării cu Ansible
-  - 5.5.1 Configurări comune (baseline Linux)
-  - 5.5.2 Configurarea serverului web (nginx reverse proxy + SSL/TLS)
-  - 5.5.3 Configurarea serverului de aplicații (nginx backend API)
-  - 5.5.4 Configurarea serverului de bază de date (MySQL 8.0 pe Windows)
-  - 5.5.5 Configurarea serverului CMS/Mail (WordPress + Postfix)
-  - 5.5.6 Configurarea serverului de fișiere (SMB pe Windows)
-  - 5.5.7 Configurarea jumphost-ului (Ubuntu + Ansible Control Node)
-  - 5.5.8 Monitorizarea (Azure Monitor Agent — rol Ansible)
-  - 5.5.9 Script wrapper cu raportare HTML (run-playbook.sh)
-- 5.6 Integrarea în Azure DevOps
-  - 5.6.1 Structura repository-ului
-  - 5.6.2 Pipeline-uri CI/CD
-  - 5.6.3 Branch policies și code review
+- 5.1 Mediul de lucru, secretele și imaginile
+- 5.2 Definirea infrastructurii cu Bicep
+- 5.3 Configurarea serviciilor cu Ansible
+- 5.4 Scripturi operaționale și documentare
+- 5.5 Administrarea schimbării și mentenanța
 
-### Capitolul 6 — Securizarea infrastructurii
-- 6.1 Modelul de securitate în depth (Defense in Depth)
-- 6.2 Securizarea rețelei (NSG, segmentare, whitelist IP admin)
-- 6.3 Hardenizarea imaginilor (CIS Benchmarks via Packer + Ansible)
-- 6.4 Gestionarea secretelor (Azure Key Vault + Ansible Vault AES-256)
-- 6.5 Controlul accesului (RBAC, Least Privilege, Managed Identity)
-- 6.6 Guvernanța cu Azure Policy
-- 6.7 SSL/TLS cu Let's Encrypt (certificat automat, HSTS, OCSP stapling)
-- 6.8 Web Application Firewall (ModSecurity pe nginx)
-- 6.9 Protecție brute-force (fail2ban + SSH hardening avansat)
-- 6.10 Criptarea bazei de date (MySQL TDE — Transparent Data Encryption)
-- 6.11 Monitorizarea și alertele de securitate (Azure Monitor)
-- 6.12 Audit și conformitate (auditd Linux, Windows Event Log)
-- 6.13 Demonstrații practice ale securității (demo scripts)
+### Capitolul 6 — Securizare, monitorizare și validare
+- 6.1 Modelul de securitate
+- 6.2 Gestionarea parolelor și controlul accesului
+- 6.3 Monitorizare și răspuns operațional
+- 6.4 Testare și validare
+- 6.5 Limite ale validării
 
-### Capitolul 7 — Testare și validare
-- 7.1 Metodologii de testare aplicate
-- 7.2 Teste funcționale (infrastructură + servicii)
-  - 7.2.1 Suite PowerShell (4-test-infrastructure.ps1)
-  - 7.2.2 Suite Ansible (playbooks/obsolete/test-services.yml)
-- 7.3 Teste de idempotență (Bicep what-if → 0 modificări)
-- 7.4 Teste de securitate (NSG, KV, Policies, taguri)
-- 7.5 Teste de performanță (response time, connect time)
-- 7.6 Demonstrații de securitate live (cele 6 demo scripts)
-- 7.7 Probleme identificate pe parcurs și soluții aplicate
-  - 7.7.1 Limita lungime cmd.exe (CSE) → migrat la runCommands
-  - 7.7.2 Recovery Services Vault blochează teardown-ul → dezactivat backup în Bicep
-  - 7.7.3 StrictMode PowerShell → verificări PSObject.Properties sigure
-  - 7.7.4 MSI fără acces KV → adăugat modul kv-access-policy.bicep
-
-### Capitolul 8 — Concluzii și recomandări
-- 8.1 Sinteza rezultatelor
-- 8.2 Contribuțiile lucrării
-- 8.3 Valoarea comercială și reutilizabilitatea soluției
-- 8.4 Limitări ale studiului
-- 8.5 Direcții de cercetare viitoare
+### Capitolul 7 — Concluzii și direcții de dezvoltare
+- 7.1 Rezultatele obținute
+- 7.2 Contribuții și valoare practică
+- 7.3 Limitări și dezvoltări viitoare
+- 7.4 Concluzie finală
 
 ### Bibliografie
 
 ### Anexe
-- Anexa A: Cod sursă Bicep (module complete)
-- Anexa B: Template-uri Packer
-- Anexa C: Playbook-uri Ansible
-- Anexa D: Pipeline-uri Azure DevOps (YAML)
-- Anexa E: Diagrame de arhitectură
-- Anexa F: Rezultate teste și loguri HTML de execuție
-- Anexa G: Demo-uri de securitate — output-uri capturate
+- Anexa 1: Glosar de termeni tehnici utilizați
+- Anexa 2: Matrice sintetică de verificare
 
 ---
 
@@ -782,21 +706,26 @@ IT/
                   ansible-playbook playbooks/3-verify.yml
                             │
                             ▼
-                  [Securizare avansată]
-                  ansible-playbook playbooks/4-harden-nginx-ssl.yml
-                  ansible-playbook playbooks/5-harden-security.yml
+                  [Certificat SSL]
+                  bash scripts/certbot-letsencrypt.sh
+                            │
+                            ▼
+                  [TLS Hardening]
+                  ansible-playbook playbooks/4-harden-nginx-ssl_ssllabs.com_ssltest.yml
+                            │
+                            ▼
+                  [Demo-uri securitate]  ← OBLIGATORIU înainte de playbook harden
+                  bash scripts/demo-all-hardenings.sh
+                  # SAU (fără demo-uri):
+                  # ansible-playbook playbooks/harden-security(daca_nu_rulez_demouri).yml
                             │
                             ▼
                   [Monitoring]
                   ansible-playbook playbooks/6-monitoring.yml
-                            │
-                            ▼
-                  [Demo-uri securitate]
-                  ansible/scripts/demo-all-hardenings.sh
 ```
 
 
 ---
 
 *Plan generat: 5 februarie 2026*
-*Ultima actualizare: 12 iunie 2026*
+*Ultima actualizare: 16 iunie 2026*

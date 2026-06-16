@@ -11,7 +11,7 @@ set -euo pipefail
 
 DOMAIN="mediasrl.swedencentral.cloudapp.azure.com"
 ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
+DEMO_DIR="${ANSIBLE_DIR}/logs"
 BEFORE_FILE="${DEMO_DIR}/modsecurity-before.txt"
 AFTER_FILE="${DEMO_DIR}/modsecurity-after.txt"
 TARGET_HOST="vm-web-01"
@@ -139,12 +139,14 @@ echo ""
 # Generate HTML report
 DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
 python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
-    --title    "ModSecurity WAF — OWASP CRS 3.2.1" \
-    --subtitle "SQLi, XSS, Path Traversal, RFI, Command Injection blocate cu HTTP 403" \
-    --before   "${BEFORE_FILE}" \
-    --after    "${AFTER_FILE}" \
-    --target   "${DOMAIN}" \
-    --demo-num 4 \
-    --duration "${DEMO_ELAPSED}s" \
-    --html     "${HTML_FILE}" || true
+    --title        "ModSecurity WAF — OWASP CRS 3.2.1" \
+    --subtitle     "SQLi, XSS, Path Traversal, RFI, Command Injection — toate blocate cu HTTP 403 Forbidden" \
+    --before       "${BEFORE_FILE}" \
+    --after        "${AFTER_FILE}" \
+    --before-label "BEFORE — Fără WAF: atacurile OWASP ajung la backend (200/404)" \
+    --after-label  "AFTER — ModSecurity activ: toate atacurile blocate cu 403 Forbidden" \
+    --target       "${DOMAIN}" \
+    --demo-num     4 \
+    --duration     "${DEMO_ELAPSED}s" \
+    --html         "${HTML_FILE}" || true
 echo -e "    HTML Report: ${HTML_FILE}"

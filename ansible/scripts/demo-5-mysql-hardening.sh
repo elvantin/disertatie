@@ -13,7 +13,7 @@
 set -euo pipefail
 
 ANSIBLE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DEMO_DIR="${ANSIBLE_DIR}/logs/security-demos"
+DEMO_DIR="${ANSIBLE_DIR}/logs"
 BEFORE_FILE="${DEMO_DIR}/mysql-hardening-before.txt"
 AFTER_FILE="${DEMO_DIR}/mysql-hardening-after.txt"
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
@@ -179,12 +179,14 @@ echo ""
 # Generate HTML report
 DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
 python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
-    --title    "MySQL Hardening + TDE (Transparent Data Encryption)" \
-    --subtitle "Utilizatori anonimi eliminați, test DB șters, tablespace-uri InnoDB criptate" \
-    --before   "${BEFORE_FILE}" \
-    --after    "${AFTER_FILE}" \
-    --target   "${DB_HOST}" \
-    --demo-num 5 \
-    --duration "${DEMO_ELAPSED}s" \
-    --html     "${HTML_FILE}" || true
+    --title        "MySQL Hardening + TDE (Transparent Data Encryption)" \
+    --subtitle     "Utilizatori anonimi eliminați, test DB șters, tablespace-uri InnoDB criptate AES-256" \
+    --before       "${BEFORE_FILE}" \
+    --after        "${AFTER_FILE}" \
+    --before-label "BEFORE — MySQL implicit: utilizatori anonimi, test DB, date plaintext pe disk" \
+    --after-label  "AFTER — MySQL hardened: anonimi eliminați, TDE activ, fișiere .ibd criptate" \
+    --target       "${DB_HOST}" \
+    --demo-num     5 \
+    --duration     "${DEMO_ELAPSED}s" \
+    --html         "${HTML_FILE}" || true
 echo -e "    HTML Report: ${HTML_FILE}"

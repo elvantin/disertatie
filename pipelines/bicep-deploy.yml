@@ -11,8 +11,7 @@ trigger:
   paths:
     include:
       - bicep/*
-      - scripts/bootstrap-jumphost.sh
-      - scripts/bootstrap-windows-winrm.ps1
+      - scripts/finalize-jumphost.sh
 
 # Also run on Pull Requests targeting master (validation only)
 pr:

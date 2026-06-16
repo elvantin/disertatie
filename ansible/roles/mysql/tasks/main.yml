@@ -41,7 +41,7 @@
   when: not (mysql_service_check.exists | default(false))
   tags: [mysql, download]
 
-- name: Download MySQL Installer MSI (~350MB, please wait)
+- name: Download MySQL Installer MSI (~350MB)
   ansible.windows.win_get_url:
     url: "{{ mysql_download_url }}"
     dest: 'C:\Temp\mysql-installer.msi'

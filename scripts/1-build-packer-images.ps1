@@ -4,7 +4,7 @@
 # - Auto-increment versiune per imagine
 # - Confirmare interactiva per imagine
 # - Output salvat in fisier log
-# Rulare: .\scripts\build-packer-images.ps1 [-SkipGallery] [-NoConfirm]
+# Rulare: .\scripts\1-build-packer-images.ps1 [-SkipGallery] [-NoConfirm]
 # ============================================================
 
 param(
@@ -366,7 +366,7 @@ foreach ($entry in $buildResults.GetEnumerator()) {
 }
 
 if ($failCount -eq 0 -and $buildResults.Count -gt 0) {
-    Write-Log-Info "Pasul următor: setează useMarketplaceImages = false în prod.bicepparam"
+    Write-Log-Info "Pasul urmator: .\scripts\2-deploy-teardown-bicep.ps1 -Action deploy -Environment prod"
 }
 
 Stop-LogSession

@@ -1,6 +1,6 @@
 # Architecture Quick Reference — SC MEDIA SRL
 
-**Last Updated:** 2026-06-12
+**Last Updated:** 2026-06-16
 
 ---
 
@@ -42,7 +42,7 @@ Admin PC ──[RDP:3389]──► vm-jmp-01 (xRDP)
 Admin PC ──[SSH:22]────► vm-jmp-01
 
 vm-jmp-01 ──[SSH:22]────► vm-web-01, vm-app-01, vm-cms-01
-vm-jmp-01 ──[WinRM:5985]► vm-db-01, vm-fs-01
+vm-jmp-01 ──[WinRM:5985]► vm-db-01, vm-fs-01  (transport: basic)
 vm-jmp-01 ──[RDP:3389]──► vm-db-01, vm-fs-01  (via Remmina)
 ```
 
@@ -69,21 +69,24 @@ vm-jmp-01 ──[RDP:3389]──► vm-db-01, vm-fs-01  (via Remmina)
 - **Managed Identity:** Reader pe `rg-mediasrl-persistent`, Key Vault Secrets User pe `kv-mediasrl-persistent`
 - **Workspace Ansible:** `~/ansible`
 - **Demo scripts:** `~/ansible/scripts/demo-*.sh`
+- **Post-boot finalizare:** `scripts/finalize-jumphost.sh` rulat via Azure Custom Script Extension la primul boot
 
 ### vm-web-01 (Web Server)
 - **nginx:** reverse proxy, HTTP/2, gzip, server_tokens off
-- **SSL/TLS:** Let's Encrypt (certbot), TLS 1.2/1.3 only, ECDHE/DHE ciphers
+- **SSL/TLS:** Let's Encrypt (certbot via `scripts/certbot-letsencrypt.sh`), TLS 1.2/1.3 only, ECDHE/DHE ciphers, DH 4096-bit
 - **HSTS:** max-age 31536000 (1 an), OCSP stapling
-- **Security headers:** X-Frame-Options, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy
-- **ModSecurity WAF:** OWASP CRS 3.2.1, mod: On (block+log), paranoia level 1, audit log JSON la `/var/log/nginx/modsec_audit.log`; WordPress exclusions activate
-- **Rate limiting:** activat de `playbooks/5-harden-security.yml` (--tags rate_limiting)
-- **fail2ban:** jails SSH + nginx-http-auth + nginx-req-limit + nginx-botsearch; ban 1h / 5 încercări
+- **Security headers:** X-Frame-Options DENY, X-Content-Type-Options, Referrer-Policy, CSP, Permissions-Policy
+- **ModSecurity WAF:** OWASP CRS 3.2.1, mod: On (block+log), paranoia level 1, audit log JSON la `/var/log/nginx/modsec_audit.log`; WordPress exclusions active
+- **Rate limiting:** activat de `harden-security(daca_nu_rulez_demouri).yml` sau demo-1 (5 req/min pe /wp-login.php, /wp-admin/, /xmlrpc.php, /api/)
+- **fail2ban:** jails SSH + nginx-http-auth + nginx-req-limit + nginx-botsearch; ban 1h / 5 încercări; ignoreip 10.10.12.0/24
 - **DNS:** `mediasrl.swedencentral.cloudapp.azure.com`
 
 ### vm-app-01 (Application Server)
 - REST API pe nginx:8080
 - 6 endpoint-uri JSON: `/api/services`, `/api/clients`, `/api/projects`, `/api/team`, `/api/stats`, `/health`
-- Acces restrictionat: doar din VNet (nu expus direct la Internet)
+- Date business statice SC MEDIA SRL (fișiere JSON servite de nginx)
+- Acces restrictionat: doar din VNet (nu expus direct la Internet); accesat de vm-web-01 via proxy_pass
+- `index.html` pe vm-web-01 afișează date live din `/api/stats` via fetch JavaScript
 
 ### vm-cms-01 (CMS + Mail)
 - **WordPress** + PHP 8.1 + PHP-FPM (nginx local frontend pe port 80)
@@ -101,9 +104,8 @@ vm-jmp-01 ──[RDP:3389]──► vm-db-01, vm-fs-01  (via Remmina)
   - `api_user` — REST API (`mediasrl_business`)
   - `monitoring` — monitoring read-only
 - **TDE (Transparent Data Encryption):** keyring file plugin, date criptate la rest
-- **Audit log:** activat via `5-harden-security.yml`
 - **Port:** 3306 | **Bind:** 0.0.0.0 (filtrat de NSG)
-- **WinRM:** configurat automat la deployment via `runCommands`
+- **WinRM:** configurat automat la deployment via `runCommands`; transport Ansible: `basic` (nu ntlm — MD4 dezactivat pe OpenSSL 3.x)
 - **Backup local:** `C:\MySQL\Backups` (retenție 7 zile)
 
 ### vm-fs-01 (File Server)
@@ -111,7 +113,7 @@ vm-jmp-01 ──[RDP:3389]──► vm-db-01, vm-fs-01  (via Remmina)
 - **Storage Pool** `MediaSRL-FileData` pe D:\ (disk SCSI LUN 0 dedicat, init via `init-storage-pool.ps1`)
 - **SMB Shares:** Public, Marketing, IT, Backups (ACL-uri NTFS per departament)
 - **SMBv1 dezactivat** (securitate)
-- **WinRM:** configurat automat la deployment via `runCommands`
+- **WinRM:** configurat automat la deployment via `runCommands`; transport Ansible: `basic`
 
 ---
 
@@ -120,17 +122,17 @@ vm-jmp-01 ──[RDP:3389]──► vm-db-01, vm-fs-01  (via Remmina)
 | Rol | Target | Descriere |
 |-----|--------|-----------|
 | `common` | linux | Update apt, pachete comune, NTP, timezone, SSH de baza, firewalld |
-| `nginx` | vm-web-01 | Reverse proxy, SSL/TLS Let's Encrypt, HTTP/2, security headers, rate limiting |
-| `appserver` | vm-app-01 | REST API pe nginx:8080, 6 endpoint-uri JSON |
+| `nginx` | vm-web-01 | Reverse proxy, SSL/TLS, HTTP/2, security headers, index.html cu live API fetch |
+| `appserver` | vm-app-01 | REST API pe nginx:8080, 6 endpoint-uri JSON, date business statice |
 | `wordpress` | vm-cms-01 | WordPress + PHP 8.1-FPM + WP-CLI, wp-config din vault |
 | `postfix` | vm-cms-01 | SMTP relay, mail aliases, SPF/DKIM |
 | `mysql` | vm-db-01 | MySQL 8.0.45 pe Windows: instalare MSI, DB-uri, utilizatori, TDE, hardening, backup local |
 | `fileserver` | vm-fs-01 | Storage Pool D:\\, SMB shares, NTFS ACL-uri, dezactivare SMBv1, audit |
 | `hardening` | toate | CIS Benchmarks: kernel sysctl, auditd, servicii dezactivate, politici parole |
-| `fail2ban` | linux | Jails: SSH + nginx-http-auth + nginx-req-limit + botsearch; ban 1h / 5 fail |
+| `fail2ban` | linux | Jails: SSH + nginx-http-auth + nginx-req-limit + botsearch; ban 1h / 5 fail; ignoreip mgmt subnet |
 | `ssh-hardening` | linux | KexAlgorithms curve25519, Ciphers AEAD, MACs ETM; AllowUsers azureadmin; banner |
 | `modsecurity` | vm-web-01 | ModSecurity 3 + OWASP CRS 3.2.1, mod On, audit JSON, WordPress exclusions |
-| `monitoring` | toate | Azure Monitor Agent: health scripts (cron/Task Scheduler), metrici CPU/disk/mem/servicii |
+| `monitoring` | toate | Health scripts (cron/Task Scheduler la 5 min), metrici servicii/porturi per VM |
 | `jumphost` | vm-jmp-01 | Configurare Ansible workspace, Remmina profiles, MOTD, demo scripts |
 
 ---
@@ -142,12 +144,14 @@ vm-jmp-01 ──[RDP:3389]──► vm-db-01, vm-fs-01  (via Remmina)
 | `1-setup-ssh-keys.yml` | Generare + distribuire chei SSH pe Linux VMs |
 | `2-site.yml` | Deploy complet (toate rolurile de baza) |
 | `3-verify.yml` | Verificare servicii pe toate VM-urile (teste functionale) |
-| `4-harden-nginx-ssl.yml` | Hardening SSL/TLS nginx (A+ SSL Labs) |
-| `5-harden-security.yml` | Hardening avansat: fail2ban, WAF, ssh-hardening, MySQL TDE + audit |
-| `6-monitoring.yml` | Instalare + configurare Azure Monitor Agent |
+| `4-harden-nginx-ssl_ssllabs.com_ssltest.yml` | Hardening SSL/TLS nginx: DH 4096-bit, TLS 1.2/1.3, HSTS, OCSP stapling, security headers (A+ SSL Labs) |
+| `harden-security(daca_nu_rulez_demouri).yml` | Hardening avansat: fail2ban, WAF, ssh-hardening, MySQL TDE — alternativă la demo-uri |
+| `6-monitoring.yml` | Health check scripts + cron/Scheduled Tasks pe toate VM-urile |
 | `bootstrap-windows-winrm.yml` | Activare WinRM manual (fallback — in mod normal runCommands face asta automat) |
 
-**Script wrapper:** `ansible/scripts/run-playbook.sh` — genereaza automat `.log` + `.clean.log` + `.html` per executie.
+**Script wrapper:** `~/ansible/run-playbook.sh` — genereaza automat `.log` + `.clean.log` + `.html` per executie.
+
+**Script certbot:** `~/ansible/scripts/certbot-letsencrypt.sh` — obtine certificat Let's Encrypt, gestioneaza NSG temporar (port 80 deschis pentru challenge HTTP-01, inchis imediat dupa).
 
 ---
 
@@ -158,13 +162,15 @@ Scripturi interactive care demonstreaza masurile de securitate in actiune:
 | Script | Ce demonstreaza |
 |--------|-----------------|
 | `demo-1-rate-limiting.sh` | Rate limiting nginx: 429 Too Many Requests la depasirea limitei |
-| `demo-2-fail2ban.sh` | Blocare IP dupa 5 tentative SSH esuate (fail2ban jail) |
+| `demo-2-fail2ban.sh` | Blocare IP dupa 5 tentative SSH esuate; ignoreip arata ca mgmt subnet (10.10.12.0/24) nu poate fi banat |
 | `demo-3-ssh-hardening.sh` | Respingere algoritmi SSH slabi (MD5, arcfour, diffie-hellman-group1) |
 | `demo-4-modsecurity.sh` | Blocari WAF: SQL injection, XSS, LFI (path traversal), RCE |
 | `demo-5-mysql-hardening.sh` | Acces refuzat MySQL din exterior, TDE (fisiere .ibd criptate), audit log |
 | `demo-all-hardenings.sh` | Rulare secventiala a tuturor demo-urilor de mai sus |
 
 Rulare din jumphost: `cd ~/ansible && bash scripts/demo-all-hardenings.sh`
+
+> **Ordine obligatorie:** demo-urile trebuie rulate ÎNAINTE de `harden-security(daca_nu_rulez_demouri).yml` — deployeaza hardeningurile progresiv pentru contrast BEFORE/AFTER.
 
 ---
 
@@ -177,8 +183,9 @@ Retea                 NSG: whitelist IP admin         Bicep (nsg.bicep)
                       Segmentare mgmt/prod/dev        Bicep (networking.bicep)
                       WinRM restrictionat la mgmt     NSG nsg-prod regula 115
 
-Imagini               Hardening de baza la build      Packer (hardening.ps1)
+Imagini               Hardening de baza la build      Packer
                       WinRM pre-configurat             Packer (configure-winrm.ps1)
+                      Timezone corecta (RO)           Packer (toate 3 imaginile)
 
 IaC / Deployment      Secrets in Key Vault            Bicep (keyvault.bicep)
                       MSI fara credentiale            Bicep (role-assignment.bicep)
@@ -187,12 +194,12 @@ IaC / Deployment      Secrets in Key Vault            Bicep (keyvault.bicep)
 
 Ansible               CIS Benchmarks                  Rol hardening
                       SSH: algoritmi moderni, banner  Rol ssh-hardening
-                      Brute-force SSH/nginx           Rol fail2ban
+                      Brute-force SSH/nginx           Rol fail2ban (ignoreip mgmt)
                       WAF (OWASP CRS 3.2.1)           Rol modsecurity
-                      MySQL TDE + audit               Rol mysql (playbook 5)
-                      SSL/TLS A+ grade                Rol nginx + playbook 4
-                      HSTS, OCSP, security headers    Rol nginx
-                      Rate limiting nginx             Rol nginx (playbook 5)
+                      MySQL TDE + hardening           Rol mysql + playbook harden
+                      SSL/TLS A+ grade                Playbook 4-harden-nginx-ssl
+                      HSTS, OCSP, security headers    Playbook 4-harden-nginx-ssl
+                      Rate limiting nginx             Rol nginx + playbook harden
                       SMBv1 dezactivat               Rol fileserver
 
 Secrete               Azure Key Vault (infra)         0-bootstrap-keyvault.ps1
@@ -201,7 +208,7 @@ Secrete               Azure Key Vault (infra)         0-bootstrap-keyvault.ps1
                       Nicio parola hardcodata          Principiu de design
 
 Monitoring            Azure Monitor Agent             Rol monitoring + ama.bicep
-                      Health scripts per VM           Rol monitoring (host_vars)
+                      Health scripts per VM           Rol monitoring (inline config)
                       Alerte CPU/disk/mem             monitoring.bicep
                       Audit log Linux (auditd)        Rol hardening
                       Windows Event Log               Rol hardening
@@ -219,18 +226,18 @@ Monitoring            Azure Monitor Agent             Rol monitoring + ama.bicep
 | Health check Linux | `/usr/local/bin/check-health.sh` | Cron la 5 minute; scrie in syslog (tag: `mediasrl-health`) |
 | Health check Windows | `C:\Scripts\check-health.ps1` | Task Scheduler la 5 minute; scrie in Application Event Log (`mediasrl-health`) |
 | Alerte | Action Group (email) | CPU ≥ 90%, Disk ≥ 90%, Memory ≥ 90% |
-| Per VM | `host_vars/<vm>/monitoring.yml` | Defineste servicii monitorizate + porturi per VM |
+| Config per VM | inline in `playbooks/6-monitoring.yml` | `set_fact` cu `_vm_map` — fara dependenta de `host_vars` |
 
 **Servicii monitorizate per VM:**
 
 | VM | Servicii | Porturi |
 |----|---------|---------|
-| vm-web-01 | nginx, fail2ban | 443 (HTTPS) |
-| vm-app-01 | nginx (8080) | 8080 |
-| vm-cms-01 | nginx, php8.1-fpm, postfix | 80 |
+| vm-jmp-01 | sshd, xrdp | 22, 3389 |
+| vm-web-01 | nginx | 80, 443 |
+| vm-app-01 | nginx | 8080 |
+| vm-cms-01 | nginx, php8.1-fpm, postfix | 80, 25 |
 | vm-db-01 | MySQL80 | 3306 |
-| vm-fs-01 | LanmanServer, WinRM | 445, 5985 |
-| vm-jmp-01 | xrdp, sshd | 3389, 22 |
+| vm-fs-01 | LanmanServer | 445 |
 
 ---
 
@@ -246,9 +253,9 @@ Subscription (7a0255bf-...)
 │
 ├── rg-mediasrl-packer-swedencentral/
 │   └── gal_mediasrl  (Azure Compute Gallery)
-│       ├── imgdef-ubuntu2204            (Ubuntu 22.04 LTS base hardened)
-│       ├── imgdef-ubuntu2204-jumphost   (Ubuntu 22.04 + XFCE + Ansible + tools)
-│       └── imgdef-winserver2022         (Windows Server 2022 + WinRM + hardening)
+│       ├── imgdef-ubuntu2204            (Ubuntu 22.04 LTS base hardened + timezone RO)
+│       ├── imgdef-ubuntu2204-jumphost   (Ubuntu 22.04 + XFCE + Ansible + tools + timezone RO)
+│       └── imgdef-winserver2022         (Windows Server 2022 + WinRM + timezone E. Europe Std Time)
 │
 └── rg-mediasrl-productie-swedencentral/
     ├── vnet-mediasrl-productie  (10.10.0.0/20)
@@ -289,6 +296,8 @@ la deployment via `Microsoft.Compute/virtualMachines/runCommands`.
 
 Pasi: PSRemoting → WinRM service → HTTP listener:5985 → auth methods → firewall rule → network profile Private → CredSSP → test local.
 
+**Transport Ansible:** `basic` (nu `ntlm`) — NTLM/MD4 este dezactivat implicit pe Ubuntu 22.04 cu OpenSSL 3.x.
+
 **Nu este necesara nicio configurare manuala.**
 Log: `C:\Logs\mediasrl\winrm-bootstrap-*.log`
 
@@ -310,9 +319,13 @@ Log: `C:\Logs\mediasrl\winrm-bootstrap-*.log`
 .\scripts\3-deploy-ansible-to-jumphost.ps1 -Environment prod
 
 # 4. Configurare VM-uri (din jumphost, via RDP)
+#    ansible-playbook playbooks/1-setup-ssh-keys.yml
 #    ansible-playbook playbooks/2-site.yml
-#    ansible-playbook playbooks/4-harden-nginx-ssl.yml
-#    ansible-playbook playbooks/5-harden-security.yml
+#    ansible-playbook playbooks/3-verify.yml
+#    bash scripts/certbot-letsencrypt.sh
+#    ansible-playbook playbooks/4-harden-nginx-ssl_ssllabs.com_ssltest.yml
+#    bash scripts/demo-all-hardenings.sh      # SAU:
+#    ansible-playbook playbooks/harden-security\(daca_nu_rulez_demouri\).yml
 #    ansible-playbook playbooks/6-monitoring.yml
 
 # 5. Teste infrastructura
@@ -320,9 +333,6 @@ Log: `C:\Logs\mediasrl\winrm-bootstrap-*.log`
 
 # Teardown environment (KV persistent + IP-urile supravietuiesc)
 .\scripts\2-deploy-teardown-bicep.ps1 -Action teardown -Environment prod
-
-# Utilitar: afiseaza IP-uri VM-uri + genereaza inventory static
-.\scripts\get-vm-ips.ps1
 ```
 
 Toate scripturile genereaza loguri in `logs/`: `.log` (ANSI color), `.clean.log` (text), `.html` (raport colorat).
