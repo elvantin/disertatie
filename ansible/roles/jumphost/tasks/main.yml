@@ -48,22 +48,36 @@
 # Firefox is pre-installed in the Packer image; only deploy policy here.
 # ============================================================
 
-- name: Create Firefox system policy directory
+# Deploy Firefox policy to all possible locations — the PPA build may read
+# from any of these depending on packaging version:
+#   /etc/firefox-esr/policies/  — Debian/Ubuntu ESR packaging
+#   /etc/firefox/policies/      — generic Firefox path (some PPA builds use this)
+#   /usr/lib/firefox-esr/distribution/ — built-in distribution dir (always checked)
+
+- name: Create Firefox policy directories (all possible paths)
   ansible.builtin.file:
-    path: /etc/firefox/policies
+    path: "{{ item }}"
     state: directory
     owner: root
     group: root
     mode: '0755'
+  loop:
+    - /etc/firefox-esr/policies
+    - /etc/firefox/policies
+    - /usr/lib/firefox-esr/distribution
   tags: [jumphost, firefox]
 
-- name: Deploy Firefox bookmarks and homepage policy
+- name: Deploy Firefox bookmarks policy (all possible paths)
   ansible.builtin.template:
     src: firefox-policies.json.j2
-    dest: /etc/firefox/policies/policies.json
+    dest: "{{ item }}"
     owner: root
     group: root
     mode: '0644'
+  loop:
+    - /etc/firefox-esr/policies/policies.json
+    - /etc/firefox/policies/policies.json
+    - /usr/lib/firefox-esr/distribution/policies.json
   tags: [jumphost, firefox]
 
 # ============================================================

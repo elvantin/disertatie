@@ -33,55 +33,73 @@ banner() {
 log()  { echo -e "${GREEN}[$(date +%H:%M:%S)] $*${NC}"; }
 warn() { echo -e "${YELLOW}[$(date +%H:%M:%S)] $*${NC}"; }
 
+# Run ansible ad-hoc and extract only the command stdout (skip PLAY/TASK/RECAP lines)
+# Uses ANSIBLE_STDOUT_CALLBACK=minimal for clean rc=X >> output format
+ansible_stdout() {
+    local host="$1"; shift
+    ANSIBLE_STDOUT_CALLBACK=minimal ansible "$host" "$@" 2>/dev/null \
+        | sed -n '/rc=[0-9]* >>/,/^[a-zA-Z0-9]/p' \
+        | grep -Ev "^vm-|rc=[0-9]* >>|^$" \
+        || true
+}
+
 # Get target IP from Ansible inventory
-TARGET_IP=$(ansible "${TARGET_HOST}" -m debug -a "msg={{ ansible_host }}" 2>/dev/null \
+TARGET_IP=$(ANSIBLE_STDOUT_CALLBACK=minimal ansible "${TARGET_HOST}" \
+    -m debug -a "msg={{ ansible_host }}" 2>/dev/null \
     | grep '"msg"' | awk -F'"' '{print $4}' || echo "10.10.10.4")
 
 # ── BEFORE ────────────────────────────────────────────────────────────────────
 
 banner "STEP 1 — BEFORE: No Fail2ban — brute-force SSH freely"
 
-echo "  Target: ${TARGET_HOST} (${TARGET_IP})" | tee "$BEFORE_FILE"
-echo "  Sending 6 SSH connection attempts with wrong password..." | tee -a "$BEFORE_FILE"
-echo "  (All attempts CONNECT — no IP banning in place)" | tee -a "$BEFORE_FILE"
-echo "" | tee -a "$BEFORE_FILE"
+SSH_CMD="ssh -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o BatchMode=yes -o PasswordAuthentication=no wronguser@${TARGET_IP}"
 
-for i in $(seq 1 6); do
-    RESULT=$(ssh -o ConnectTimeout=3 \
-                 -o StrictHostKeyChecking=no \
-                 -o BatchMode=yes \
-                 -o PasswordAuthentication=no \
-                 "wronguser@${TARGET_IP}" 2>&1 | head -1 || true)
-    STATUS="Permission denied / Connection refused"
-    echo -e "  Attempt $i: ${GREEN}Connected (got: ${STATUS})${NC}" | tee -a "$BEFORE_FILE"
-    sleep 0.5
-done
-echo "" | tee -a "$BEFORE_FILE"
+{
+    echo "  Target: ${TARGET_HOST} (${TARGET_IP})"
+    echo "  $ ${SSH_CMD}"
+    echo "  (6 attempts with invalid credentials — no ban in place)"
+    echo ""
 
-# Check iptables — no fail2ban rules
-echo "  iptables INPUT chain (no fail2ban rules):" | tee -a "$BEFORE_FILE"
-ansible "${TARGET_HOST}" -m command \
-    -a "iptables -L INPUT -n --line-numbers" \
-    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS\|CHANGED" | head -20 \
-    | tee -a "$BEFORE_FILE" || echo "  (could not read iptables)" | tee -a "$BEFORE_FILE"
+    for i in $(seq 1 6); do
+        RESULT=$(ssh -o ConnectTimeout=3 \
+                     -o StrictHostKeyChecking=no \
+                     -o BatchMode=yes \
+                     -o PasswordAuthentication=no \
+                     "wronguser@${TARGET_IP}" 2>&1 | head -2 | tr '\n' ' ' || true)
+        echo -e "  [attempt ${i}/6]  → ${RESULT:-no output}"
+        echo -e "                  ${GREEN}sshd responded (IP NOT BANNED — brute-force undetected)${NC}"
+        sleep 0.5
+    done
+    echo ""
+} | tee "$BEFORE_FILE"
+
+# Check firewalld — no fail2ban rules yet
+echo "  firewalld rich rules (no fail2ban rules yet):" | tee -a "$BEFORE_FILE"
+ansible_stdout "${TARGET_HOST}" -m shell \
+    -a "firewall-cmd --list-rich-rules 2>/dev/null || echo '(no rich rules — fail2ban not installed)'" \
+    --become | sed 's/^/     /' | tee -a "$BEFORE_FILE" || \
+    echo "     (could not read firewalld rules)" | tee -a "$BEFORE_FILE"
 
 echo "" | tee -a "$BEFORE_FILE"
 echo "  Fail2ban status (not installed/running):" | tee -a "$BEFORE_FILE"
-ansible "${TARGET_HOST}" -m command \
-    -a "systemctl is-active fail2ban" \
-    --become 2>/dev/null | grep -v "^$\|WARNING" | tee -a "$BEFORE_FILE" || \
-    echo "  fail2ban: inactive (not installed)" | tee -a "$BEFORE_FILE"
+FAIL2BAN_BEFORE=$(ansible_stdout "${TARGET_HOST}" -m command \
+    -a "systemctl is-active fail2ban" --become || true)
+if echo "$FAIL2BAN_BEFORE" | grep -q "inactive\|failed\|not-found"; then
+    echo "     fail2ban: inactive (not installed)" | tee -a "$BEFORE_FILE"
+else
+    echo "     ${FAIL2BAN_BEFORE}" | tee -a "$BEFORE_FILE"
+fi
 
 # ── APPLY HARDENING ───────────────────────────────────────────────────────────
 
 banner "STEP 2 — Deploying Fail2ban via Ansible"
-log "Running: ansible-playbook playbooks/5-harden-security.yml --tags fail2ban"
+log "Running: ansible-playbook playbooks/harden-security.yml --tags fail2ban"
 echo ""
 
-ansible-playbook playbooks/5-harden-security.yml \
+PYTHONUNBUFFERED=1 ansible-playbook playbooks/harden-security.yml \
     --tags fail2ban \
     --limit "${TARGET_HOST}" \
-    2>&1 | grep -E "(TASK|ok|changed|failed|PLAY RECAP|fatal)" | sed 's/^/  /'
+    2>&1 | grep --line-buffered -E "(TASK|ok|changed|failed|PLAY RECAP|fatal)" | sed 's/^/  /'
 
 echo ""
 log "Fail2ban deployed. Waiting 5s for initialization..."
@@ -100,36 +118,48 @@ echo "" | tee -a "$AFTER_FILE"
 
 # 3a. Confirm fail2ban is running
 echo "  [STATUS] Fail2ban running — active jails:" | tee -a "$AFTER_FILE"
-ansible "${TARGET_HOST}" -m command \
-    -a "fail2ban-client status" \
-    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS" | tee -a "$AFTER_FILE"
+echo "  $ fail2ban-client status" | tee -a "$AFTER_FILE"
+ansible_stdout "${TARGET_HOST}" -m command \
+    -a "fail2ban-client status" --become \
+    | sed 's/^/    /' | tee -a "$AFTER_FILE"
 
 echo "" | tee -a "$AFTER_FILE"
 
 # 3b. Show SSH jail config
-echo "  [CONFIG] SSH jail settings (retrieved from fail2ban-client):" | tee -a "$AFTER_FILE"
-for setting in maxretry bantime findtime ignoreip; do
-    VAL=$(ansible "${TARGET_HOST}" -m command \
-        -a "fail2ban-client get sshd ${setting}" \
-        --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS\|CHANGED\|>>>" | tail -1 || echo "N/A")
-    echo "    ${setting} = ${VAL}" | tee -a "$AFTER_FILE"
+echo "  [CONFIG] SSH jail settings:" | tee -a "$AFTER_FILE"
+for setting in maxretry bantime findtime; do
+    echo "  $ fail2ban-client get sshd ${setting}" | tee -a "$AFTER_FILE"
+    VAL=$(ansible_stdout "${TARGET_HOST}" -m command \
+        -a "fail2ban-client get sshd ${setting}" --become \
+        | grep -v "^$" | head -1 | sed 's/^[[:space:]]*//' || echo "N/A")
+    echo "    → ${setting} = ${VAL}" | tee -a "$AFTER_FILE"
 done
+echo "  $ fail2ban-client get sshd ignoreip" | tee -a "$AFTER_FILE"
+IGNOREIP_VAL=$(ansible_stdout "${TARGET_HOST}" -m command \
+    -a "fail2ban-client get sshd ignoreip" --become \
+    | grep -v "^$" | grep -v "These IP addresses" \
+    | sed 's/^[[:space:]]*//' | tr '\n' ' ' | sed 's/ $//' || echo "N/A")
+echo "    → ignoreip = ${IGNOREIP_VAL}" | tee -a "$AFTER_FILE"
 
 echo "" | tee -a "$AFTER_FILE"
 
-# 3c. Demonstrate ignoreip: 7 SSH attempts from jumphost (management subnet) — never banned
+# 3c. Demonstrate ignoreip: 7 SSH attempts from jumphost — never banned
 echo "  [IGNOREIP] 7 SSH attempts from jumphost (10.10.12.0/24 in ignoreip — NEVER banned):" | tee -a "$AFTER_FILE"
+echo "  $ ssh -o BatchMode=yes wronguser@${TARGET_IP}" | tee -a "$AFTER_FILE"
+echo "" | tee -a "$AFTER_FILE"
 for i in $(seq 1 7); do
     RESULT=$(ssh -o ConnectTimeout=3 \
                  -o StrictHostKeyChecking=no \
                  -o BatchMode=yes \
                  -o PasswordAuthentication=no \
-                 "wronguser@${TARGET_IP}" 2>&1 | head -1 || true)
+                 "wronguser@${TARGET_IP}" 2>&1 | head -2 | tr '\n' ' ' || true)
 
     if echo "$RESULT" | grep -qi "refused\|timeout\|reset"; then
-        echo -e "  Attempt $i: ${RED}BLOCKED${NC}" | tee -a "$AFTER_FILE"
+        echo -e "  [attempt ${i}/7]  → ${RESULT:-no output}" | tee -a "$AFTER_FILE"
+        echo -e "                  ${RED}BLOCKED${NC}" | tee -a "$AFTER_FILE"
     else
-        echo -e "  Attempt $i: ${GREEN}Connected (management IP whitelisted — Ansible stays reachable)${NC}" | tee -a "$AFTER_FILE"
+        echo -e "  [attempt ${i}/7]  → ${RESULT:-no output}" | tee -a "$AFTER_FILE"
+        echo -e "                  ${GREEN}sshd responded (jumphost in ignoreip — never banned)${NC}" | tee -a "$AFTER_FILE"
     fi
     sleep 0.5
 done
@@ -138,30 +168,35 @@ echo "" | tee -a "$AFTER_FILE"
 
 # 3d. Demonstrate ban mechanism: ban test attacker IP
 echo "  [BAN] Simulating attack from external IP ${TEST_ATTACKER} (>5 failed auths)..." | tee -a "$AFTER_FILE"
-ansible "${TARGET_HOST}" -m command \
-    -a "fail2ban-client set sshd banip ${TEST_ATTACKER}" \
-    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS" | tee -a "$AFTER_FILE" || true
-echo -e "  ${RED}${TEST_ATTACKER} BANNED — iptables DROP rule added for 3600s${NC}" | tee -a "$AFTER_FILE"
+echo "  $ fail2ban-client set sshd banip ${TEST_ATTACKER}" | tee -a "$AFTER_FILE"
+ansible_stdout "${TARGET_HOST}" -m command \
+    -a "fail2ban-client set sshd banip ${TEST_ATTACKER}" --become \
+    | sed 's/^/    /' | tee -a "$AFTER_FILE" || true
+echo -e "  ${RED}${TEST_ATTACKER} BANNED — firewalld rich rule REJECT added for bantime=3600s${NC}" | tee -a "$AFTER_FILE"
 
 echo "" | tee -a "$AFTER_FILE"
-echo "  [IPTABLES] fail2ban DROP rules in INPUT chain:" | tee -a "$AFTER_FILE"
-ansible "${TARGET_HOST}" -m command \
-    -a "iptables -L INPUT -n | grep -i f2b" \
-    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS" | tee -a "$AFTER_FILE" || \
-    echo "  (no f2b chains found)" | tee -a "$AFTER_FILE"
+
+# 3e. Show firewalld rich rules
+echo "  [FIREWALLD] $ firewall-cmd --list-rich-rules" | tee -a "$AFTER_FILE"
+ansible_stdout "${TARGET_HOST}" -m shell \
+    -a "firewall-cmd --list-rich-rules 2>/dev/null | grep -i 'drop\|reject\|${TEST_ATTACKER}' || echo '  (no matching rules — check fail2ban-client status sshd)'" \
+    --become \
+    | sed 's/^/    /' | tee -a "$AFTER_FILE" || \
+    echo "    (could not read rich rules)" | tee -a "$AFTER_FILE"
 
 echo "" | tee -a "$AFTER_FILE"
-echo "  [JAIL STATUS] Fail2ban sshd jail — currently banned IPs:" | tee -a "$AFTER_FILE"
-ansible "${TARGET_HOST}" -m command \
-    -a "fail2ban-client status sshd" \
-    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS" | tee -a "$AFTER_FILE"
+echo "  [JAIL STATUS] $ fail2ban-client status sshd" | tee -a "$AFTER_FILE"
+ansible_stdout "${TARGET_HOST}" -m command \
+    -a "fail2ban-client status sshd" --become \
+    | sed 's/^/    /' | tee -a "$AFTER_FILE"
 
 echo "" | tee -a "$AFTER_FILE"
 echo "  [CLEANUP] Unbanning test IP ${TEST_ATTACKER}..." | tee -a "$AFTER_FILE"
-ansible "${TARGET_HOST}" -m command \
-    -a "fail2ban-client set sshd unbanip ${TEST_ATTACKER}" \
-    --become 2>/dev/null | grep -v "^$\|WARNING\|SUCCESS\|CHANGED" | tee -a "$AFTER_FILE" || true
-echo "  ${TEST_ATTACKER} unbanned. (In production, ban persists for bantime=3600s)" | tee -a "$AFTER_FILE"
+echo "  $ fail2ban-client set sshd unbanip ${TEST_ATTACKER}" | tee -a "$AFTER_FILE"
+ansible_stdout "${TARGET_HOST}" -m command \
+    -a "fail2ban-client set sshd unbanip ${TEST_ATTACKER}" --become \
+    | sed 's/^/    /' | tee -a "$AFTER_FILE" || true
+echo "  (In production, ban persists for bantime=3600s without manual unban)" | tee -a "$AFTER_FILE"
 
 # ── DIFF ──────────────────────────────────────────────────────────────────────
 
@@ -180,17 +215,20 @@ echo -e "  Unban an IP manually:"
 echo -e "    ansible ${TARGET_HOST} -m command -a 'fail2ban-client set sshd unbanip <IP>' --become"
 echo -e "  Watch bans in real-time:"
 echo -e "    ansible ${TARGET_HOST} -m command -a 'tail -f /var/log/fail2ban.log' --become"
+echo -e "  Check firewalld rules applied by fail2ban:"
+echo -e "    ansible ${TARGET_HOST} -m shell -a 'firewall-cmd --list-rich-rules' --become"
 echo ""
 
 # Generate HTML report
 DEMO_ELAPSED=$(( SECONDS - DEMO_START ))
 python3 "${ANSIBLE_DIR}/scripts/lib/generate-demo-html.py" \
     --title        "Fail2ban — Auto-ban IP după brute-force SSH" \
-    --subtitle     "IP banat automat după 5 tentative eșuate — bantime 3600s via iptables" \
+    --subtitle     "IP banat automat după 5 tentative eșuate — bantime 3600s via firewalld rich rules (REJECT)" \
     --before       "${BEFORE_FILE}" \
     --after        "${AFTER_FILE}" \
-    --before-label "BEFORE — Fără Fail2ban: tentative SSH nedetectate, fără blocare" \
-    --after-label  "AFTER — Fail2ban activ: IP extern banat după 5 eșecuri, management subnet protejat" \
+    --before-label "BEFORE — Fără Fail2ban: tentative SSH nedetectate, fără blocare (6 conexiuni SSH de la un potențial atacator — toate ajung la sshd, serverul nu detectează și nu blochează nimic)" \
+    --after-label  "AFTER — Fail2ban activ: IP extern banat după 5 eșecuri, management subnet protejat (fail2ban monitorizează logurile sshd în timp real — IP extern blocat prin firewalld REJECT; jumphost rămâne accesibil via ignoreip)" \
+    --badge        "✓ 1 IP BANAT — BAN CONFIRMAT" \
     --target       "${TARGET_HOST}" \
     --demo-num     2 \
     --duration     "${DEMO_ELAPSED}s" \

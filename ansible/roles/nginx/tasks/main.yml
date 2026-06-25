@@ -37,7 +37,31 @@
   tags: [nginx, packages]
 
 # ============================================================
-# Phase 2: Directory structure
+# Phase 2: OpenSSL baseline — coborare MinProtocol pentru demo
+# Ubuntu 22.04 are implicit MinProtocol=TLSv1.2 in openssl.cnf.
+# Daca nu il coboram, nginx ignora silentios TLSv1.1 din ssl_protocols
+# si SSL Labs nu vede nicio diferenta fata de TLSv1.2.
+# Playbook 4-harden-nginx-ssl.yml restaureaza TLSv1.2 + SECLEVEL=2 (Phase 0).
+# ============================================================
+
+- name: Set OpenSSL MinProtocol to TLSv1.1 (demo baseline — SSL Labs Grade B)
+  ansible.builtin.lineinfile:
+    path: /etc/ssl/openssl.cnf
+    regexp: '^\s*MinProtocol\s*='
+    line: 'MinProtocol = TLSv1.1'
+  notify: restart nginx
+  tags: [nginx, ssl, openssl]
+
+- name: Set OpenSSL CipherString to SECLEVEL=1 (allows SHA-1 HMAC in baseline ciphers)
+  ansible.builtin.lineinfile:
+    path: /etc/ssl/openssl.cnf
+    regexp: '^\s*CipherString\s*='
+    line: 'CipherString = DEFAULT@SECLEVEL=1'
+  notify: restart nginx
+  tags: [nginx, ssl, openssl]
+
+# ============================================================
+# Phase 3: Directory structure
 # ============================================================
 
 - name: Create website directory structure
@@ -66,7 +90,7 @@
   tags: [nginx, content]
 
 # ============================================================
-# Phase 3: Initial HTTP-only configuration (needed for certbot)
+# Phase 4: Initial HTTP-only configuration (needed for certbot)
 # ============================================================
 
 # Auto-detect if ModSecurity module was compiled and installed.
@@ -372,15 +396,14 @@
   tags: [nginx, verify]
 
 - name: Verify nginx is responding on HTTPS
-  uri:
-    url: "https://localhost:{{ nginx_https_port }}/health"
-    status_code: 200
-    return_content: yes
-    validate_certs: no
+  ansible.builtin.command: >
+    curl -sk -o /dev/null -w '%{http_code}'
+    https://localhost:{{ nginx_https_port }}/health
   register: nginx_https_check
   retries: 3
   delay: 5
-  until: nginx_https_check.status == 200
+  until: nginx_https_check.stdout | trim == '200'
+  changed_when: false
   when: ssl_cert_after_certbot.stat.exists
   tags: [nginx, verify, ssl]
 

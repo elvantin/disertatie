@@ -89,18 +89,62 @@ Start-Process -FilePath $vcRedistPath -ArgumentList "/install", "/quiet", "/nore
 Remove-Item $vcRedistPath -Force -ErrorAction SilentlyContinue
 Write-Output "  Visual C++ Redistributable installed"
 
-# ----- Install Windows Updates -----
-Write-Output "[6/6] Installing Windows Updates..."
+# ----- Install Windows Updates (Round 1) -----
+Write-Output "[6/6] Installing Windows Updates (Round 1 — via COM)..."
+Write-Output "  This can take 30-90 min on a fresh marketplace image."
 
-# Install PSWindowsUpdate module for update management
-Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null
-Install-Module -Name PSWindowsUpdate -Force -Confirm:$false | Out-Null
-Import-Module PSWindowsUpdate
+$ErrorActionPreference = "Continue"
 
-# Install all available updates (critical + security)
-Write-Output "  Downloading and installing updates (this may take a while)..."
-Get-WindowsUpdate -AcceptAll -Install -IgnoreReboot -ErrorAction SilentlyContinue | Out-Null
+try {
+    $UpdateSession  = New-Object -ComObject Microsoft.Update.Session
+    $UpdateSearcher = $UpdateSession.CreateUpdateSearcher()
+
+    Write-Output "  Searching for available updates..."
+    $SearchResult = $UpdateSearcher.Search("IsInstalled=0 AND IsHidden=0 AND Type='Software'")
+    Write-Output "  Updates found: $($SearchResult.Updates.Count)"
+
+    if ($SearchResult.Updates.Count -gt 0) {
+        $Updates = New-Object -ComObject Microsoft.Update.UpdateColl
+        foreach ($Update in $SearchResult.Updates) {
+            Write-Output "    - $($Update.Title)"
+            $Updates.Add($Update) | Out-Null
+        }
+
+        Write-Output "  Downloading updates..."
+        $Downloader = $UpdateSession.CreateUpdateDownloader()
+        $Downloader.Updates = $Updates
+        $Downloader.Download() | Out-Null
+
+        Write-Output "  Installing updates..."
+        $Installer = $UpdateSession.CreateUpdateInstaller()
+        $Installer.Updates = $Updates
+        $InstallResult = $Installer.Install()
+
+        Write-Output "  Install result code : $($InstallResult.ResultCode)"
+        Write-Output "  Reboot required     : $($InstallResult.RebootRequired)"
+        # Packer's windows-restart provisioner handles the actual reboot.
+    } else {
+        Write-Output "  No updates available on this image."
+    }
+} catch {
+    # Fallback: PSWindowsUpdate (requires internet access to PSGallery)
+    Write-Output "  COM approach failed: $_"
+    Write-Output "  Falling back to PSWindowsUpdate module..."
+    try {
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null
+        Install-Module -Name PSWindowsUpdate -Force -Confirm:$false | Out-Null
+        Import-Module PSWindowsUpdate
+        Get-WindowsUpdate -AcceptAll -Install -IgnoreReboot -ErrorAction SilentlyContinue | Out-Null
+        Write-Output "  PSWindowsUpdate completed."
+    } catch {
+        Write-Output "  WARNING: Both update methods failed: $_"
+        Write-Output "  The Packer build will continue. Re-run or investigate manually."
+    }
+}
+
+$ErrorActionPreference = "Stop"
 
 Write-Output "========================================="
 Write-Output " Base Setup Complete"
+Write-Output " (Packer will reboot next to clear pending ops)"
 Write-Output "========================================="

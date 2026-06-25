@@ -54,9 +54,11 @@ server {
     resolver_timeout 5s;
 {% endif %}
 
-    # HSTS: max-age=0 disables HSTS (safe for self-signed certs).
-    # Set nginx_hsts_max_age=31536000 in group_vars after obtaining a valid LE certificate.
+    # HSTS: disabled in baseline (nginx_hsts_max_age=0) so SSL Labs cannot give A+.
+    # Playbook 4-harden-nginx-ssl.yml adds HSTS via snippets/security-headers.conf.
+{% if nginx_hsts_max_age | int > 0 %}
     add_header Strict-Transport-Security "max-age={{ nginx_hsts_max_age }}" always;
+{% endif %}
 
     # Access and error logs
     access_log /var/www/mediasrl/logs/access.log main;

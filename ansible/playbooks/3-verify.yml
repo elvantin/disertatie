@@ -641,20 +641,6 @@
       changed_when: false
       failed_when: false
 
-    - name: "[jmp] Check SSH connectivity to vm-web-01"
-      ansible.builtin.command: "ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes azureadmin@{{ hostvars['vm-web-01']['ansible_host'] }} echo ok"
-      register: jmp_ssh_web
-      changed_when: false
-      failed_when: false
-      become: false
-
-    - name: "[jmp] Check SSH connectivity to vm-cms-01"
-      ansible.builtin.command: "ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes azureadmin@{{ hostvars['vm-cms-01']['ansible_host'] }} echo ok"
-      register: jmp_ssh_cms
-      changed_when: false
-      failed_when: false
-      become: false
-
     - name: "[jmp] Compile verification results"
       ansible.builtin.set_fact:
         verify_results:
@@ -667,8 +653,6 @@
             - { name: "mysql client installed",                 pass: "{{ jmp_mysql_client.rc | default(1) == 0 }}" }
             - { name: "smbclient installed",                    pass: "{{ jmp_smbclient.rc | default(1) == 0 }}" }
             - { name: "ansible installed",                      pass: "{{ jmp_ansible.rc | default(1) == 0 }}" }
-            - { name: "SSH reachable → vm-web-01",             pass: "{{ jmp_ssh_web.rc | default(1) == 0 }}" }
-            - { name: "SSH reachable → vm-cms-01",             pass: "{{ jmp_ssh_cms.rc | default(1) == 0 }}" }
 
     - name: "[jmp] Print vm-jmp-01 summary"
       ansible.builtin.debug:

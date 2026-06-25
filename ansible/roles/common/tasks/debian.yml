@@ -29,15 +29,9 @@
   delay: 10
   until: apt_update is succeeded
 
-- name: Upgrade all packages to the latest version
-  apt:
-    upgrade: dist
-    autoremove: yes
-    autoclean: yes
-  register: apt_upgrade
-  retries: 3
-  delay: 10
-  until: apt_upgrade is succeeded
+# ── All apt-install tasks grouped BEFORE the async upgrade ────────────────────
+# apt upgrade: dist runs async below; it holds the dpkg lock for its entire
+# duration. All other apt operations must complete before it starts.
 
 - name: Remove UFW and replace with firewalld
   block:
@@ -71,7 +65,6 @@
       delay: 15
       until: ufw_remove is succeeded
 
-
 - name: Install common packages
   apt:
     name: "{{ common_packages }}"
@@ -94,6 +87,23 @@
   apt:
     name: python3-apt
     state: present
+
+# ── Start full upgrade async after all other apt tasks are done ───────────────
+# async: 3600 — job valid on remote for up to 1 hour.
+# poll: 0     — fire-and-forget; Ansible moves to the next task immediately.
+# The dpkg lock is held by this background job; NO further apt tasks should
+# run after this point (and none do — all installs are above).
+# Verification is at the end of this file, after all non-apt config tasks.
+- name: Upgrade all packages to the latest version (async)
+  apt:
+    upgrade: dist
+    autoremove: yes
+    autoclean: yes
+  async: 3600
+  poll: 0
+  register: apt_upgrade_job
+
+# ── Non-apt configuration runs while the upgrade is in the background ─────────
 
 - name: Configure unattended-upgrades for automatic security updates
   block:
@@ -170,57 +180,30 @@
     reload: yes
     sysctl_file: /etc/sysctl.d/99-security-hardening.conf
   loop:
-    # IP forwarding (disable unless needed for routing)
     - { name: 'net.ipv4.ip_forward', value: '0' }
     - { name: 'net.ipv6.conf.all.forwarding', value: '0' }
-
-    # ICMP redirects (disable)
     - { name: 'net.ipv4.conf.all.accept_redirects', value: '0' }
     - { name: 'net.ipv4.conf.default.accept_redirects', value: '0' }
     - { name: 'net.ipv6.conf.all.accept_redirects', value: '0' }
     - { name: 'net.ipv6.conf.default.accept_redirects', value: '0' }
-
-    # Secure redirects
     - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
     - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
-
-    # Send ICMP redirects (disable)
     - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
     - { name: 'net.ipv4.conf.default.send_redirects', value: '0' }
-
-    # Source packet routing (disable)
     - { name: 'net.ipv4.conf.all.accept_source_route', value: '0' }
     - { name: 'net.ipv4.conf.default.accept_source_route', value: '0' }
     - { name: 'net.ipv6.conf.all.accept_source_route', value: '0' }
     - { name: 'net.ipv6.conf.default.accept_source_route', value: '0' }
-
-    # Log martians (spoofed packets)
     - { name: 'net.ipv4.conf.all.log_martians', value: '1' }
     - { name: 'net.ipv4.conf.default.log_martians', value: '1' }
-
-    # Ignore ICMP ping requests (optional - disabled for monitoring)
     - { name: 'net.ipv4.icmp_echo_ignore_all', value: '0' }
-
-    # Ignore broadcast ICMP requests
     - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
-
-    # Ignore bogus ICMP error responses
     - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
-
-    # Enable TCP SYN cookies (DDoS protection)
     - { name: 'net.ipv4.tcp_syncookies', value: '1' }
-
-    # Reverse path filtering (anti-spoofing)
     - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
     - { name: 'net.ipv4.conf.default.rp_filter', value: '1' }
-
-    # Increase system file descriptor limit
     - { name: 'fs.file-max', value: '65536' }
-
-    # Kernel pointer protection
     - { name: 'kernel.kptr_restrict', value: '2' }
-
-    # Restrict kernel logs to root only
     - { name: 'kernel.dmesg_restrict', value: '1' }
   when: kernel_hardening_enabled
 
@@ -235,6 +218,16 @@
     line: "127.0.1.1 {{ inventory_hostname }}"
     state: present
 
+# ── Wait for the background apt upgrade to finish ─────────────────────────────
+# Polls every 30s; retries * delay = 3600s matches async: above.
+- name: Wait for package upgrade to complete
+  ansible.builtin.async_status:
+    jid: "{{ apt_upgrade_job.ansible_job_id }}"
+  register: apt_upgrade_result
+  until: apt_upgrade_result.finished
+  retries: 120
+  delay: 30
+
 - name: Display baseline configuration status
   debug:
     msg: |
@@ -244,7 +237,7 @@
       Hostname: {{ inventory_hostname }}
       OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
       Kernel: {{ ansible_kernel }}
-      Packages updated: {{ apt_upgrade.changed }}
+      Packages upgraded: {{ apt_upgrade_result.changed }}
       Firewall enabled: {{ firewall_enabled }}
       SSH hardening: {{ ssh_hardening_enabled }}
       Kernel hardening: {{ kernel_hardening_enabled }}

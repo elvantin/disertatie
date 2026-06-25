@@ -1,9 +1,34 @@
 ---
 # ============================================================
 # Ansible Role: ssh-hardening
-# Enforces strong ciphers/MACs/KexAlgorithms via drop-in config
-# Does NOT modify /etc/ssh/sshd_config directly — uses sshd_config.d/
+# Enforces strong ciphers/MACs/KexAlgorithms via drop-in config.
+# Minimal changes to /etc/ssh/sshd_config:
+#   1. Ensures Include /etc/ssh/sshd_config.d/*.conf is present (BOF)
+#   2. Removes old common-role cipher block that conflicted with drop-in
+# All algorithm configuration lives in sshd_config.d/99-hardening.conf.
 # ============================================================
+
+# Ensure the drop-in directory Include is present in sshd_config so that
+# 99-hardening.conf is actually loaded by sshd (Packer images may lack it).
+- name: Ensure sshd_config includes sshd_config.d drop-in directory
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^Include /etc/ssh/sshd_config\.d/\*\.conf'
+    line: 'Include /etc/ssh/sshd_config.d/*.conf'
+    insertbefore: BOF
+    state: present
+  notify: restart sshd
+  tags: [ssh_hardening]
+
+# Remove the old cipher block that the common role used to inject directly into
+# sshd_config — that block included non-ETM MACs and overrode the drop-in.
+- name: Remove legacy common-role SSH cipher block from sshd_config
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config
+    marker: "# {mark} ANSIBLE MANAGED - SSH CIPHERS"
+    state: absent
+  notify: restart sshd
+  tags: [ssh_hardening]
 
 - name: Ensure sshd_config.d directory exists
   ansible.builtin.file:

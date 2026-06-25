@@ -52,17 +52,27 @@
 
 # ── Phase 2: Password policy ──────────────────────────────────────────────────
 
-- name: "[mysql-hardening] Enable password validation plugin"
+- name: "[mysql-hardening] Install validate_password component and enforce STRONG policy"
   ansible.windows.win_shell: |
     $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
-    $sql = "INSTALL PLUGIN IF NOT EXISTS validate_password SONAME 'validate_password.dll'; " +
-           "SET GLOBAL validate_password.policy = 'STRONG'; " +
+    # Use MySQL 8.0 component API (dot notation) — not the deprecated plugin
+    # (plugin uses validate_password_policy with underscore; SET GLOBAL dot-notation fails silently)
+    $check = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+      -e "SELECT COUNT(*) FROM mysql.component WHERE component_urn LIKE '%validate_password%';" 2>$null
+    if ($check -notmatch '^\s*1\s*$') {
+        & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+          -e "INSTALL COMPONENT 'file://component_validate_password';" 2>$null
+        Write-Output "validate_password component installed"
+    } else {
+        Write-Output "validate_password component already present"
+    }
+    $sql = "SET GLOBAL validate_password.policy = 'STRONG'; " +
            "SET GLOBAL validate_password.length = 12; " +
            "SET GLOBAL validate_password.mixed_case_count = 1; " +
            "SET GLOBAL validate_password.number_count = 1; " +
            "SET GLOBAL validate_password.special_char_count = 1;"
     $result = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 -e $sql 2>$null
-    Write-Output $result
+    Write-Output "validate_password STRONG policy applied (min 12 chars, mixed/digits/special)"
   register: password_policy
   changed_when: true
   tags: [mysql_hardening]

@@ -195,6 +195,7 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
       osDisk: {
         name: osDiskName
         createOption: 'FromImage'
+        deleteOption: 'Delete'
         diskSizeGB: osDiskSizeGb
         managedDisk: {
           storageAccountType: osDiskStorageType
@@ -232,6 +233,9 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
       networkInterfaces: [
         {
           id: nic.id
+          properties: {
+            deleteOption: 'Delete'
+          }
         }
       ]
     }
@@ -324,13 +328,44 @@ resource winrmRunCommand 'Microsoft.Compute/virtualMachines/runCommands@2023-09-
 // Grants the VM's managed identity read access to all resources in the RG.
 // Required for Ansible azure_rm inventory plugin with auth_source: msi.
 
+// Role assignment names are deterministic (RG + vmName + roleId).
+// Orphaned assignments (left after VM deletion) are cleaned up by 2-deploy-teardown-bicep.ps1
+// before each deploy, avoiding RoleAssignmentUpdateNotPermitted on VM recreate.
+
 resource roleAssignmentReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignManagedIdentity) {
   name: guid(resourceGroup().id, vmName, readerRoleDefinitionId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', readerRoleDefinitionId)
     principalId: vm.identity.principalId
     principalType: 'ServicePrincipal'
-    description: 'Ansible dynamic inventory: ${vmName} MSI reads Azure resources in this RG'
+    description: 'Ansible MSI: ${vmName} reads Azure resources in this RG (dynamic inventory)'
+  }
+}
+
+// Virtual Machine Contributor — needed for az vm run-command invoke (SSH key injection playbook)
+var vmContributorRoleDefinitionId = '9980e02c-c2be-4d73-94e8-173b1dc7cf3c'
+
+resource roleAssignmentVmContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignManagedIdentity) {
+  name: guid(resourceGroup().id, vmName, vmContributorRoleDefinitionId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', vmContributorRoleDefinitionId)
+    principalId: vm.identity.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Ansible MSI: ${vmName} manages VMs in this RG (run-command, SSH key injection)'
+  }
+}
+
+// Network Contributor — needed for az network nsg rule update
+// Used by certbot-letsencrypt.sh to temporarily open port 80 for HTTP-01 challenge
+var networkContributorRoleDefinitionId = '4d97b98b-1d4f-4787-a291-c67834d212e7'
+
+resource roleAssignmentNetworkContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignManagedIdentity) {
+  name: guid(resourceGroup().id, vmName, networkContributorRoleDefinitionId)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', networkContributorRoleDefinitionId)
+    principalId: vm.identity.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Ansible MSI: ${vmName} manages network resources in this RG (NSG rules for certbot)'
   }
 }
 

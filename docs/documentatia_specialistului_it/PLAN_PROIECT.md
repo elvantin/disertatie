@@ -18,8 +18,6 @@ Titlul reflectă fidel:
 - contextul cloud și platforma aleasă (Microsoft Azure);
 - existența unui studiu de caz, cerință frecventă pentru lucrările de nivel master.
 
-Formularea este conformă cu stilul academic recomandat în lucrările tehnice de specialitate și evită ambiguitățile sau formulările prea comerciale.
-
 ---
 
 ## 2. Scenariul de studiu de caz
@@ -357,7 +355,7 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
   - `2-site.yml` — playbook principal de deployment complet (toate rolurile)
   - `3-verify.yml` — verificare servicii pe toate VM-urile (teste funcționale)
   - `4-harden-nginx-ssl_ssllabs.com_ssltest.yml` — hardening SSL/TLS nginx (DH 4096-bit, TLS 1.2/1.3, HSTS, A+ SSL Labs)
-  - `harden-security(daca_nu_rulez_demouri).yml` — hardening avansat: fail2ban, ssh-hardening, modsecurity, mysql hardening, TDE (alternativă la demo-uri)
+  - `harden-security.yml` — hardening avansat: fail2ban, ssh-hardening, modsecurity, mysql hardening, TDE (alternativă daca nu se ruleaza demo-uri)
   - `6-monitoring.yml` — health check scripts + cron/Scheduled Tasks pe toate VM-urile
 - **Playbook suplimentar:**
   - `bootstrap-windows-winrm.yml` — activare WinRM manual (fallback dacă runCommands a eșuat)
@@ -374,7 +372,7 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
   - `ansible/scripts/demo-5-mysql-hardening.sh` — demonstrare hardening MySQL: acces refuzat, TDE, audit log
   - `ansible/scripts/demo-all-hardenings.sh` — rulare secvențială a tuturor demo-urilor
 - **Script certbot:** `ansible/scripts/certbot-letsencrypt.sh` — obținere certificat Let's Encrypt (deschide temporar port 80 în NSG, rulează challenge HTTP-01, închide NSG)
-- **Ordine obligatorie demo-uri:** demo-urile trebuie rulate ÎNAINTE de `harden-security(daca_nu_rulez_demouri).yml` — deployeaza hardeningurile progresiv pentru contrast BEFORE/AFTER
+- **Ordine obligatorie demo-uri:** demo-urile trebuie rulate ÎNAINTE de `harden-security.yml` — deployeaza hardeningurile progresiv pentru contrast BEFORE/AFTER
 
 **Rezultat:** Sisteme configurate uniform, securizate, monitorizate și administrabile automat.
 
@@ -419,13 +417,13 @@ Dacă se activează VM Insights (opțional): +1–1.5 GB/VM/lună → total ~9�
 - **Demo-uri de securitate (6 scripturi)** — demonstrații live ale măsurilor de securitate implementate
   - Rate limiting nginx, fail2ban, SSH hardening, ModSecurity WAF, MySQL hardening + TDE, demo complet combinat
   - Fiecare demo include atac simulat + dovada blocării + logging
-- **Conținut demo generat** (coerent și interconectat):
+- **Conținut demo al companiei MEDIA SRL** (coerent și interconectat):
   - **WordPress** (vm-cms-01): 5 pagini + 3 articole blog
   - **MySQL** (vm-db-01): baza `mediasrl_business` cu 5 tabele + date seed + views
   - **API REST** (vm-app-01): 6 endpoint-uri JSON
   - **File Server** (vm-fs-01): 6 documente demo departamentale
 - **Logging execuție scripturi** (`scripts/lib/Write-Log.ps1`):
-  - Toate scripturile PowerShell generează loguri `.log` (text) + `.html` (raport colorat, colapsibil) în `logs/`
+  - Toate scripturile PowerShell generează loguri `.log` (text) + `.html` (raport colorat, colapsabil) în `logs/`
   - Raportul HTML al execuției include: rezultate comenzilor az CLI, stare per resursă, timp de execuție
 
 **Rezultat:** Infrastructura complet validată, cu demonstrații de securitate funcționale și conținut demo pentru prezentare.
@@ -571,7 +569,7 @@ IT/
 
 ## 8. Cuprinsul final al lucrării de disertație
 
-> Structura reală a documentului depus (7 capitole + rezumat + bibliografie + 2 anexe).
+> Structura reală a documentului depus (7 capitole + rezumat + bibliografie + 4 anexe).
 
 ### Rezumat
 
@@ -621,8 +619,12 @@ IT/
 ### Bibliografie
 
 ### Anexe
-- Anexa 1: Glosar de termeni tehnici utilizați
-- Anexa 2: Matrice sintetică de verificare
+Anexa 1: Codul sursă al proiectului
+Anexa 2. Glosar de termeni tehnici utilizați
+Anexa 3. Matrice sintetică de verificare
+Anexa 4: Arhitectura cloud
+Anexa 5: Firul de execuție
+
 
 ---
 

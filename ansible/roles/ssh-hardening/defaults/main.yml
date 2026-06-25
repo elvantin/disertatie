@@ -4,14 +4,18 @@
 # Based on Mozilla OpenSSH Security Guide + BSI TR-02102-4
 # ============================================================
 
-# Key Exchange Algorithms (only modern, PFS — single line required by sshd)
-ssh_kex_algorithms: "curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp521,ecdh-sha2-nistp384,ecdh-sha2-nistp256,diffie-hellman-group-exchange-sha256"
+# Key Exchange Algorithms — NIST-P curves (nistp256/384/521) removed (weak elliptic curves, ssh-audit [fail])
+# DH group14/16/18 added as recommended by ssh-audit for full compatibility
+ssh_kex_algorithms: "curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group14-sha256"
 
-# Symmetric ciphers (AEAD preferred — single line required by sshd)
+# Symmetric ciphers (AEAD preferred — ChaCha20 first, then AES-GCM, then AES-CTR)
 ssh_ciphers: "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr"
 
-# Message Authentication Codes (ETM required — single line required by sshd)
-ssh_macs: "hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha2-512,hmac-sha2-256"
+# Message Authentication Codes — ETM (Encrypt-then-MAC) ONLY; non-ETM variants removed (ssh-audit [warn])
+ssh_macs: "hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com"
+
+# Host Key Algorithms — ecdsa-sha2-nistp256 removed (weak elliptic curve, ssh-audit [fail])
+ssh_host_key_algorithms: "ssh-ed25519,rsa-sha2-512,rsa-sha2-256"
 
 # Connection limits
 ssh_max_auth_tries: 3

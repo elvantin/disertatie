@@ -128,18 +128,37 @@ function Write-Log-Block {
 function Write-Log-AzDeployment {
     param(
         [string]$DeploymentName,
-        [PSObject]$Result
+        [PSObject]$Result,
+        [System.Collections.Generic.List[PSObject]]$Operations = $null
     )
-    $state    = if ($Result.properties.PSObject.Properties['provisioningState']) { [string]$Result.properties.provisioningState } else { 'Unknown' }
-    $resCount = if ($Result.properties.PSObject.Properties['outputResources'] -and $Result.properties.outputResources) { @($Result.properties.outputResources).Count } else { 0 }
-    $color    = if ($state -eq 'Succeeded') { 'Green' } elseif ($state -eq 'Failed') { 'Red' } else { 'Yellow' }
-    Write-Host "  [AZ] $DeploymentName" -ForegroundColor Cyan
-    Write-Host "       $state  |  $resCount resurse" -ForegroundColor $color
+    $state = if ($Result.properties.PSObject.Properties['provisioningState']) { [string]$Result.properties.provisioningState } else { 'Unknown' }
+    $color = if ($state -eq 'Succeeded') { 'Green' } elseif ($state -eq 'Failed') { 'Red' } else { 'Yellow' }
+
+    if ($Operations -and $Operations.Count -gt 0) {
+        $skipOps   = @('Wait','EvaluateDeploymentOutput','DeploymentCleanup')
+        $skipTypes = @('Microsoft.Resources/deployments','Microsoft.Authorization/roleAssignments')
+        $relevant  = @($Operations | Where-Object {
+            $_.properties.targetResource -and
+            ($skipOps   -notcontains [string]$_.properties.provisioningOperation) -and
+            ($skipTypes -notcontains [string]$_.properties.targetResource.resourceType)
+        })
+        $nCreate = @($relevant | Where-Object { [string]$_.properties.provisioningOperation -eq 'Create' }).Count
+        $nUpdate = @($relevant | Where-Object { [string]$_.properties.provisioningOperation -eq 'Update' }).Count
+        $nSkip   = @($relevant | Where-Object { [string]$_.properties.provisioningOperation -eq 'Read'   }).Count
+        Write-Host "  [AZ] $DeploymentName" -ForegroundColor Cyan
+        Write-Host "       $state  |  +$nCreate create  ~$nUpdate update  =$nSkip no-change" -ForegroundColor $color
+    } else {
+        $resCount = if ($Result.properties.PSObject.Properties['outputResources'] -and $Result.properties.outputResources) { @($Result.properties.outputResources).Count } else { 0 }
+        Write-Host "  [AZ] $DeploymentName" -ForegroundColor Cyan
+        Write-Host "       $state  |  $resCount resurse" -ForegroundColor $color
+    }
+
     $script:_Entries.Add(@{
         Type           = 'DeployResult'
         Message        = $DeploymentName
         DeploymentName = $DeploymentName
         Result         = $Result
+        Operations     = $Operations
         Time           = (Get-Date)
     })
 }
@@ -230,31 +249,96 @@ function _Export-HtmlReport {
             if ($durHuman) { $body += "<span class='az-deploy-dur'>&#9201;&nbsp;$durHuman</span>" }
             $body += "</div>"
 
-            # Resources grouped by provider/type
-            $outRes = if ($props.PSObject.Properties['outputResources'] -and $props.outputResources) { @($props.outputResources) } else { @() }
-            if ($outRes.Count -gt 0) {
-                $grouped = [ordered]@{}
-                foreach ($res in $outRes) {
-                    if (-not $res.PSObject.Properties['id']) { continue }
-                    if ($res.id -notmatch '/providers/([^/]+)/([^/]+)/([^/]+)') { continue }
-                    $ns   = $Matches[1]
-                    $type = $Matches[2]
-                    $name = $Matches[3]
-                    # Skip sub-deployments and role assignment GUIDs — not useful in summary
-                    if ($ns -eq 'Microsoft.Resources' -and $type -eq 'deployments') { continue }
-                    if ($ns -eq 'Microsoft.Authorization' -and $type -eq 'roleAssignments') { continue }
-                    $gk = "$ns / $type"
-                    if (-not $grouped.Contains($gk)) { $grouped[$gk] = [System.Collections.Generic.List[string]]::new() }
-                    if (-not $grouped[$gk].Contains($name)) { [void]$grouped[$gk].Add($name) }
-                }
-                if ($grouped.Count -gt 0) {
-                    $body += "<div class='az-deploy-body'>"
-                    foreach ($gk in $grouped.Keys) {
-                        $body += "<div class='res-group'><div class='res-group-title'>$(_HtmlEnc $gk)</div><div class='res-group-items'>"
-                        foreach ($rn in $grouped[$gk]) { $body += "<div class='res-item'>$(_HtmlEnc $rn)</div>" }
-                        $body += "</div></div>"
+            # Per-resource operations (create/update/no-change) — accurate source
+            $ops = if ($e.ContainsKey('Operations') -and $e.Operations -and $e.Operations.Count -gt 0) { @($e.Operations) } else { @() }
+
+            if ($ops.Count -gt 0) {
+                $skipOps   = @('Wait','EvaluateDeploymentOutput','DeploymentCleanup')
+                $skipTypes = @('Microsoft.Resources/deployments','Microsoft.Authorization/roleAssignments')
+
+                # Priority per resource: Create(3) > Update(2) > Read(1)
+                # ARM emits both Create AND Read for newly-created resources (Read = post-create verify).
+                # Without deduplication the same resource appears in both CREATE and NO CHANGE.
+                $resOps = [ordered]@{}
+                foreach ($op in $ops) {
+                    $p = $op.properties
+                    if (-not $p.targetResource) { continue }
+                    $opKind  = [string]$p.provisioningOperation
+                    $resType = [string]$p.targetResource.resourceType
+                    $resName = [string]$p.targetResource.resourceName
+                    if ($skipOps   -contains $opKind)  { continue }
+                    if ($skipTypes -contains $resType)  { continue }
+                    $shortType = ($resType -split '/')[-1]
+                    $priority  = switch ($opKind) { 'Create' { 3 } 'Update' { 2 } 'Read' { 1 } default { 0 } }
+                    if ($priority -eq 0) { continue }
+                    $key = "$shortType/$resName"
+                    if (-not $resOps.Contains($key) -or $priority -gt $resOps[$key].Priority) {
+                        $resOps[$key] = @{ ShortType = $shortType; ResName = $resName; OpKind = $opKind; Priority = $priority }
                     }
-                    $body += "</div>"
+                }
+
+                $created   = [ordered]@{}
+                $updated   = [ordered]@{}
+                $unchanged = [ordered]@{}
+                foreach ($key in $resOps.Keys) {
+                    $item = $resOps[$key]; $st = $item.ShortType; $rn = $item.ResName
+                    switch ($item.OpKind) {
+                        'Create' {
+                            if (-not $created[$st])   { $created[$st]   = [System.Collections.Generic.List[string]]::new() }
+                            [void]$created[$st].Add($rn)
+                        }
+                        'Update' {
+                            if (-not $updated[$st])   { $updated[$st]   = [System.Collections.Generic.List[string]]::new() }
+                            [void]$updated[$st].Add($rn)
+                        }
+                        'Read' {
+                            if (-not $unchanged[$st]) { $unchanged[$st] = [System.Collections.Generic.List[string]]::new() }
+                            [void]$unchanged[$st].Add($rn)
+                        }
+                    }
+                }
+
+                $body += "<div class='az-deploy-body'>"
+                foreach ($gk in $created.Keys) {
+                    $body += "<div class='res-group'><div class='res-group-title op-create'>&#43; CREATE &middot; $(_HtmlEnc $gk)</div><div class='res-group-items'>"
+                    foreach ($rn in $created[$gk]) { $body += "<div class='res-item op-create'>$(_HtmlEnc $rn)</div>" }
+                    $body += "</div></div>"
+                }
+                foreach ($gk in $updated.Keys) {
+                    $body += "<div class='res-group'><div class='res-group-title op-update'>&#8593; UPDATE &middot; $(_HtmlEnc $gk)</div><div class='res-group-items'>"
+                    foreach ($rn in $updated[$gk]) { $body += "<div class='res-item op-update'>$(_HtmlEnc $rn)</div>" }
+                    $body += "</div></div>"
+                }
+                foreach ($gk in $unchanged.Keys) {
+                    $body += "<div class='res-group'><div class='res-group-title op-skip'>&#8211; NO CHANGE &middot; $(_HtmlEnc $gk)</div><div class='res-group-items'>"
+                    foreach ($rn in $unchanged[$gk]) { $body += "<div class='res-item op-skip'>$(_HtmlEnc $rn)</div>" }
+                    $body += "</div></div>"
+                }
+                $body += "</div>"
+            } else {
+                # Fallback to outputResources when operations data is unavailable
+                $outRes = if ($props.PSObject.Properties['outputResources'] -and $props.outputResources) { @($props.outputResources) } else { @() }
+                if ($outRes.Count -gt 0) {
+                    $grouped = [ordered]@{}
+                    foreach ($res in $outRes) {
+                        if (-not $res.PSObject.Properties['id']) { continue }
+                        if ($res.id -notmatch '/providers/([^/]+)/([^/]+)/([^/]+)') { continue }
+                        $ns = $Matches[1]; $type = $Matches[2]; $name = $Matches[3]
+                        if ($ns -eq 'Microsoft.Resources' -and $type -eq 'deployments') { continue }
+                        if ($ns -eq 'Microsoft.Authorization' -and $type -eq 'roleAssignments') { continue }
+                        $gk = "$ns / $type"
+                        if (-not $grouped.Contains($gk)) { $grouped[$gk] = [System.Collections.Generic.List[string]]::new() }
+                        if (-not $grouped[$gk].Contains($name)) { [void]$grouped[$gk].Add($name) }
+                    }
+                    if ($grouped.Count -gt 0) {
+                        $body += "<div class='az-deploy-body'>"
+                        foreach ($gk in $grouped.Keys) {
+                            $body += "<div class='res-group'><div class='res-group-title'>$(_HtmlEnc $gk)</div><div class='res-group-items'>"
+                            foreach ($rn in $grouped[$gk]) { $body += "<div class='res-item'>$(_HtmlEnc $rn)</div>" }
+                            $body += "</div></div>"
+                        }
+                        $body += "</div>"
+                    }
                 }
             }
 
@@ -290,7 +374,7 @@ function _Export-HtmlReport {
 <title>$titleEnc — Execution Log</title>
 <style>
 :root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--bdr:#30363d;--txt:#c9d1d9;--muted:#8b949e;
-      --blue:#58a6ff;--green:#3fb950;--yel:#d29922;--red:#f85149;--cyan:#39c5cf;}
+      --blue:#58a6ff;--green:#3fb950;--yel:#d29922;--red:#f85149;--cyan:#39c5cf;--orange:#e88020;}
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Segoe UI',Consolas,monospace;background:var(--bg);color:var(--txt);padding:24px;line-height:1.55;}
 .wrap{max-width:960px;margin:0 auto;}
@@ -371,6 +455,12 @@ details.log-block>summary:hover{color:var(--cyan);}
 .res-group-items{padding:3px 0;}
 .res-item{padding:2px 12px;font-size:.8em;font-family:Consolas,monospace;color:var(--txt);}
 .res-item::before{content:'» ';color:var(--muted);}
+.res-group-title.op-create{color:var(--green)!important;background:rgba(63,185,80,.1)!important;}
+.res-group-title.op-update{color:var(--orange)!important;background:rgba(232,128,32,.1)!important;}
+.res-group-title.op-skip{color:var(--blue)!important;background:rgba(88,166,255,.07)!important;}
+.res-item.op-create{color:var(--green);}
+.res-item.op-update{color:var(--orange);}
+.res-item.op-skip{color:var(--blue);}
 .az-outputs{border-top:1px solid var(--bdr);padding:8px 16px 10px;}
 .az-outputs-title{font-size:.69em;color:var(--muted);text-transform:uppercase;
   letter-spacing:.4px;margin-bottom:5px;}

@@ -56,6 +56,7 @@ apt install -y \
     curl wget vim nano \
     net-tools dnsutils \
     jq tree unzip \
+    dos2unix \
     ca-certificates gnupg lsb-release \
     python3 python3-apt \
     apt-transport-https software-properties-common

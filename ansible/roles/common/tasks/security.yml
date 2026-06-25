@@ -14,18 +14,30 @@
   notify: restart sshd
   tags: [security, ssh, linux]
 
-- name: Configure SSH to use strong ciphers only (Linux)
+# Remove old cipher block injected directly into sshd_config (replaced by
+# ssh-hardening role which uses /etc/ssh/sshd_config.d/99-hardening.conf).
+# This block had incorrect MACs (non-ETM included) and incomplete KexAlgorithms.
+- name: Remove old SSH cipher block from sshd_config (managed by ssh-hardening role)
   ansible.builtin.blockinfile:
     path: /etc/ssh/sshd_config
-    block: |
-      # Strong cryptographic algorithms
-      Ciphers aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
-      MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
-      KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group-exchange-sha256
     marker: "# {mark} ANSIBLE MANAGED - SSH CIPHERS"
+    state: absent
   when: ansible_os_family != 'Windows'
   notify: restart sshd
   tags: [security, ssh, linux, hardening]
+
+# Ensure drop-in directory is included — critical for 99-hardening.conf to be loaded.
+# Ubuntu 22.04 has this by default but Packer images or manual edits may have removed it.
+- name: Ensure sshd_config includes drop-in directory
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^Include /etc/ssh/sshd_config\.d/\*\.conf'
+    line: 'Include /etc/ssh/sshd_config.d/*.conf'
+    insertbefore: BOF
+    state: present
+  when: ansible_os_family != 'Windows'
+  notify: restart sshd
+  tags: [security, ssh, linux]
 
 - name: Set correct permissions on sensitive files (Linux)
   ansible.builtin.file:

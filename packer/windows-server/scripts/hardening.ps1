@@ -209,9 +209,11 @@ New-Item -Path "HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop"
 Set-ItemProperty -Path "HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop" -Name "ScreenSaveTimeOut" -Value "900" -ErrorAction SilentlyContinue
 Set-ItemProperty -Path "HKCU:\Software\Policies\Microsoft\Windows\Control Panel\Desktop" -Name "ScreenSaverIsSecure" -Value "1" -ErrorAction SilentlyContinue
 
-# Disable Windows Script Host (CIS 18.9.x)
-New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows Script Host\Settings" -Force | Out-Null
-Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Script Host\Settings" -Name "Enabled" -Value 0 -Type DWord
+# Windows Script Host — NOT disabled here (applied by Ansible post-provisioning).
+# Azure Guest Agent uses WSH to inject provisioning scripts during OOBE (first boot
+# from a sysprepped image). Disabling WSH in the Packer image causes
+# OSProvisioningTimedOut when Azure tries to set the admin password and hostname.
+# Ansible's harden-security.yml applies this control after provisioning completes.
 
 # =============================================================
 # 8. LEGAL NOTICE BANNER (CIS 2.3.7.x)

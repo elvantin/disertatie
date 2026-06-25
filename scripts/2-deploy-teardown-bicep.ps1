@@ -257,6 +257,59 @@ if ($Action -eq 'deploy') {
         }
     }
 
+    # --- Curatare role assignments orfane ---
+    # Cand un VM cu MSI este sters si recreat, Bicep incearca sa actualizeze RA-ul existent
+    # (acelasi GUID deterministic) cu noul principalId → RoleAssignmentUpdateNotPermitted.
+    #
+    # Strategie: comparam principalId-ul din RA cu MSI-ul CURENT al VM-ului din Azure.
+    # Sursa de adevar = VM (nu AAD), pentru a evita erorile de permisiuni din az ad sp show.
+    #   - VM inexistent           → RA orfan → stergem
+    #   - VM existent, MSI diferit → RA stale (VM recreat) → stergem
+    #   - VM existent, MSI egal   → RA valid → pastram
+
+    $rgExists = az group exists --name $MainRgName -o tsv
+    if ($rgExists -eq 'true') {
+        Write-Log-Header "Curatare role assignments orfane — $MainRgName"
+
+        $managedRAs = @(az role assignment list `
+            --scope "/subscriptions/$subId/resourceGroups/$MainRgName" `
+            -o json 2>$null | ConvertFrom-Json |
+            Where-Object { $_.description -like 'Ansible MSI:*' })
+
+        Write-Log-Info "$($managedRAs.Count) role assignment(s) Bicep-MSI gasite"
+        $cleaned = 0
+        foreach ($ra in $managedRAs) {
+            # Extrage numele VM-ului din descriere: "Ansible MSI: <vmName> ..."
+            if ($ra.description -notmatch 'Ansible MSI:\s+(\S+)\s+') {
+                Write-Log-Warn "Nu pot parsa VM name din descriere — skip: $($ra.description)"
+                continue
+            }
+            $raVmName   = $Matches[1]
+            $currentMsi = az vm show -g $MainRgName -n $raVmName `
+                --query identity.principalId -o tsv 2>$null
+
+            if (-not $currentMsi) {
+                Write-Log-Step "VM $raVmName nu exista → RA orfan: $($ra.roleDefinitionName)"
+            } elseif ($currentMsi -ne $ra.principalId) {
+                Write-Log-Step "VM $raVmName MSI schimbat ($($ra.principalId) → $currentMsi) → RA stale: $($ra.roleDefinitionName)"
+            } else {
+                Write-Log-Info "VM $raVmName MSI valid — RA pastrat: $($ra.roleDefinitionName)"
+                continue
+            }
+
+            az role assignment delete --ids $ra.id 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log-OK "RA sters" -Detail "$raVmName / $($ra.roleDefinitionName)"
+                $cleaned++
+            } else {
+                Write-Log-Warn "Nu s-a putut sterge RA" -Detail $ra.id
+            }
+        }
+        if ($managedRAs.Count -eq 0 -or $cleaned -eq 0) {
+            Write-Log-Info "Niciun RA orfan detectat"
+        }
+    }
+
     # --- Deploy ---
 
     Write-Header "DEPLOY 3/3 — $EnvLabel"
@@ -283,10 +336,29 @@ if ($Action -eq 'deploy') {
     $duration = [int]((Get-Date) - $startTime).TotalMinutes
     Write-Log-OK "Deployment complet" -Detail "~$duration minute(e) · $DeployName"
 
-    # Fetch structured result and render as a formatted HTML card
+    # Fetch deployment result + per-resource operations for accurate create/update/skip reporting
     $deployResultJson = az deployment sub show --name $DeployName -o json 2>$null | ConvertFrom-Json
+
+    $deployOps = [System.Collections.Generic.List[PSObject]]::new()
+    $subLevelOps = az deployment operation sub list --name $DeployName -o json 2>$null | ConvertFrom-Json
+    if ($subLevelOps) {
+        foreach ($op in @($subLevelOps)) {
+            $tgt = $op.properties.targetResource
+            if ($tgt -and [string]$tgt.resourceType -eq 'Microsoft.Resources/deployments') {
+                # Extract actual RG from the operation ID — may differ from MainRgName
+                # (e.g. persistent RG public-IP deployments go to rg-mediasrl-persistent)
+                $tgtId = if ($tgt.PSObject.Properties['id']) { [string]$tgt.id } else { '' }
+                $tgtRg = if ($tgtId -match '/resourceGroups/([^/]+)/') { $Matches[1] } else { $MainRgName }
+                $rgOps = az deployment operation group list `
+                    --name ([string]$tgt.resourceName) `
+                    --resource-group $tgtRg -o json 2>$null | ConvertFrom-Json
+                if ($rgOps) { foreach ($ro in @($rgOps)) { [void]$deployOps.Add($ro) } }
+            }
+        }
+    }
+
     if ($deployResultJson) {
-        Write-Log-AzDeployment -DeploymentName $DeployName -Result $deployResultJson
+        Write-Log-AzDeployment -DeploymentName $DeployName -Result $deployResultJson -Operations $deployOps
     }
 
     # --- Output-uri ---
@@ -335,7 +407,7 @@ if ($Action -eq 'deploy') {
     Write-Log-Info "     ./run-playbook.sh 3-wordpress-config.yml"
     Write-Log-Info "     ./run-playbook.sh 4-harden-nginx-ssl_ssllabs.com_ssltest.yml"
     Write-Log-Info "     bash scripts/certbot-letsencrypt.sh --env prod"
-    Write-Log-Info "     ./run-playbook.sh 'harden-security(daca_nu_rulez_demouri).yml'"
+    Write-Log-Info "     ./run-playbook.sh 'harden-security19.yml'"
     Write-Log-Info "     ./run-playbook.sh 6-monitoring.yml"
 
     Write-Log-OK "Deploy $EnvLabel — FINALIZAT"

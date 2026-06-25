@@ -39,6 +39,13 @@ HTML_FILE="${LOGS_DIR}/${TIMESTAMP}_${PLAYBOOK_NAME}.html"
 # ── Force colors even when stdout is piped ────────────────────────────────────
 export ANSIBLE_FORCE_COLOR=1
 
+# ── Suppress paramiko TripleDES deprecation warnings (system library issue) ──
+export PYTHONWARNINGS="ignore::DeprecationWarning"
+
+# ── Suppress Ansible reserved-variable warnings (azure_rm plugin sets         ──
+# ──   'name' and 'tags' as host vars which collide with Ansible magic vars)   ──
+export ANSIBLE_SYSTEM_WARNINGS=false
+
 # ── Record start time ─────────────────────────────────────────────────────────
 START_SECONDS="${SECONDS}"
 START_TIME="$(date '+%Y-%m-%d %H:%M:%S %Z')"
@@ -65,9 +72,14 @@ echo "${HEADER}" | tee "${LOG_FILE}" | tee >(strip_ansi >> "${LOG_FILE_CLEAN}") 
 echo "${HEADER}"
 
 # ── Run playbook ──────────────────────────────────────────────────────────────
-ansible-playbook "${PLAYBOOK}" "$@" 2>&1 \
-    | tee >(strip_ansi >> "${LOG_FILE_CLEAN}") \
-    | tee -a "${LOG_FILE}"
+# Pipeline: raw output → ANSI log (full) → filter warnings → clean log + terminal
+# stdbuf -oL forces line-buffered mode on each stage so output streams in real-time.
+WARN_RE='\[WARNING\]: Found variable using reserved name: (name|tags)$'
+export PYTHONUNBUFFERED=1
+stdbuf -oL ansible-playbook "${PLAYBOOK}" "$@" 2>&1 \
+    | stdbuf -oL tee -a "${LOG_FILE}" \
+    | stdbuf -oL grep --line-buffered -Ev "${WARN_RE}" \
+    | tee >(stdbuf -oL sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[ABCD]//g' >> "${LOG_FILE_CLEAN}")
 EXIT_CODE="${PIPESTATUS[0]}"
 
 # ── Duration ──────────────────────────────────────────────────────────────────
@@ -115,10 +127,7 @@ python3 - \
     "${PLAYBOOK}" "${START_TIME}" "${END_TIME}" "${DURATION_STR}" \
     "${EXIT_CODE}" "$(whoami)@$(hostname)" "${ANSIBLE_DIR}" "${EXTRA_ARGS}" \
 <<'PYEOF'
-import sys
-import re
-import html as H
-import os
+import sys, re, html as H, os
 
 log_file   = sys.argv[1]
 html_file  = sys.argv[2]
@@ -147,7 +156,6 @@ recap_lines = []
 in_recap = False
 
 for line in lines:
-
     if re.match(r'^PLAY RECAP', line):
         if current_task is not None and current_play is not None:
             current_task['lines'] = current_task_lines[:]
@@ -187,12 +195,12 @@ for line in lines:
 
     if current_task is not None:
         current_task_lines.append(line)
-        m = re.match(r'^(ok|changed|failed|fatal|skipping|unreachable|included|rescued|ignored): \[([^\]]+)\]', line)
-        if m:
-            st = m.group(1)
-            host = m.group(2)
+        m2 = re.match(r'^(ok|changed|failed|fatal|skipping|unreachable|included|rescued|ignored): \[([^\]]+)\]', line)
+        if m2:
+            st = m2.group(1)
+            host = m2.group(2)
             if st == 'skipping': st = 'skipped'
-            if st == 'fatal': st = 'failed'
+            if st == 'fatal':    st = 'failed'
             if not any(r['host'] == host and r['status'] == st for r in current_task['results']):
                 current_task['results'].append({'status': st, 'host': host})
 
@@ -215,276 +223,400 @@ for line in recap_lines:
             'ignored':     int(m.group(8)),
         }
 
-# ── Aggregate totals ───────────────────────────────────────────────────────────
+# ── Aggregates ────────────────────────────────────────────────────────────────
 status        = 'SUCCESS' if exit_code == 0 else 'FAILED'
-status_color  = '#2ea043' if exit_code == 0 else '#da3633'
-total_ok      = sum(v['ok']          for v in recap_data.values())
-total_changed = sum(v['changed']     for v in recap_data.values())
+total_ok      = sum(v['ok']                      for v in recap_data.values())
+total_changed = sum(v['changed']                 for v in recap_data.values())
 total_failed  = sum(v['failed'] + v['unreachable'] for v in recap_data.values())
-total_skipped = sum(v['skipped']     for v in recap_data.values())
-total_tasks   = sum(len(p['tasks'])  for p in plays)
+total_skipped = sum(v['skipped']                 for v in recap_data.values())
+total_tasks   = sum(len(p['tasks'])              for p in plays)
+num_plays     = len(plays)
 
-# ── Color map ──────────────────────────────────────────────────────────────────
-COLORS = {
-    'ok':          ('#2ea043', '#fff'),
-    'changed':     ('#d29922', '#fff'),
-    'failed':      ('#da3633', '#fff'),
-    'unreachable': ('#b91c1c', '#fff'),
-    'skipped':     ('#6e7681', '#fff'),
-    'included':    ('#2d7dd2', '#fff'),
-    'rescued':     ('#8957e5', '#fff'),
-    'ignored':     ('#6e7681', '#fff'),
+# Collect changed / failed tasks for the summary section
+changed_rows_html = []
+for play in plays:
+    for task in play['tasks']:
+        ch = [r['host'] for r in task['results'] if r['status'] == 'changed']
+        fa = [r['host'] for r in task['results'] if r['status'] in ('failed', 'unreachable')]
+        if ch:
+            hosts_str = ', '.join(H.escape(h) for h in ch)
+            changed_rows_html.append(
+                f'<div class="row chg">'
+                f'<span class="badge yel-b">CHANGED</span>'
+                f'<span class="rdet">{H.escape(task["name"])}</span>'
+                f'<span class="rhost-tag">{hosts_str}</span>'
+                f'</div>'
+            )
+        if fa:
+            hosts_str = ', '.join(H.escape(h) for h in fa)
+            changed_rows_html.append(
+                f'<div class="row fail">'
+                f'<span class="badge red-b">FAILED</span>'
+                f'<span class="rdet">{H.escape(task["name"])}</span>'
+                f'<span class="rhost-tag">{hosts_str}</span>'
+                f'</div>'
+            )
+
+if changed_rows_html:
+    changes_section = f'''
+<div class="section" style="margin-bottom:22px">
+  <div class="sec-title">&#9998; Ce s-a modificat / aplicat</div>
+  <div class="sec-body">
+    {''.join(changed_rows_html)}
+  </div>
+</div>'''
+else:
+    changes_section = f'''
+<div class="section" style="margin-bottom:22px">
+  <div class="sec-title">&#9998; Ce s-a modificat / aplicat</div>
+  <div class="sec-body">
+    <div class="row info" style="padding:10px 18px;font-style:italic">Nicio modificare — totul era deja in starea dorita (idempotent).</div>
+  </div>
+</div>'''
+
+# ── Build per-play sections ────────────────────────────────────────────────────
+STATUS_ICON = {
+    'ok':          '&#9679;',
+    'changed':     '&#9650;',
+    'failed':      '&#10007;',
+    'unreachable': '&#10007;',
+    'skipped':     '&#8212;',
+    'included':    '&#8618;',
+    'rescued':     '&#9733;',
+    'ignored':     '&#126;',
+}
+STATUS_ROW_CLS = {
+    'ok':          'ok',
+    'changed':     'chg',
+    'failed':      'fail',
+    'unreachable': 'fail',
+    'skipped':     'skip',
+    'included':    'info',
+    'rescued':     'info',
+    'ignored':     'skip',
 }
 
-def host_badge(st, host):
-    bg, fg = COLORS.get(st, ('#555', '#fff'))
-    return (f'<span class="hbadge" style="background:{bg};color:{fg}">'
-            f'{H.escape(host)}: {H.escape(st)}</span>')
+def host_badge_html(st, host):
+    cls = {'ok': 'grn-b', 'changed': 'yel-b', 'failed': 'red-b',
+           'unreachable': 'red-b', 'skipped': 'dim-b', 'included': 'blu-b',
+           'rescued': 'pur-b', 'ignored': 'dim-b'}.get(st, 'dim-b')
+    return f'<span class="badge {cls}">{H.escape(host)}</span>'
 
-def task_row_class(results):
-    statuses = [r['status'] for r in results]
-    if 'failed' in statuses or 'unreachable' in statuses: return 'tr-failed'
-    if 'changed' in statuses:                              return 'tr-changed'
-    if statuses and all(s == 'skipped' for s in statuses): return 'tr-skipped'
-    return 'tr-ok'
-
-def recap_td(val, key):
-    if val == 0:
-        return f'<td class="rz">{val}</td>'
-    bg, fg = COLORS.get(key, ('#555', '#fff'))
-    return f'<td class="rnz" style="background:{bg};color:{fg}">{val}</td>'
-
-# ── Build plays HTML ───────────────────────────────────────────────────────────
-plays_html_parts = []
-for play in plays:
-    rows = []
+play_sections = []
+for pi, play in enumerate(plays):
+    task_rows = []
     for task in play['tasks']:
-        badges = ' '.join(host_badge(r['status'], r['host']) for r in task['results'])
-        if not badges:
-            badges = '<span class="no-result">—</span>'
+        results = task['results']
+        statuses = [r['status'] for r in results]
 
-        row_cls = task_row_class(task['results'])
+        if 'failed' in statuses or 'unreachable' in statuses:
+            row_cls = 'fail'
+        elif 'changed' in statuses:
+            row_cls = 'chg'
+        elif statuses and all(s == 'skipped' for s in statuses):
+            row_cls = 'skip'
+        else:
+            row_cls = 'ok'
+
+        badges = ' '.join(host_badge_html(r['status'], r['host']) for r in results)
+        if not badges:
+            badges = '<span style="color:#3d444d">—</span>'
 
         raw_lines = [l for l in task['lines'] if l.strip()]
         if raw_lines:
-            raw_html = H.escape('\n'.join(raw_lines))
-            detail = (f'<details class="tdet"><summary>Show output</summary>'
-                      f'<pre class="tout">{raw_html}</pre></details>')
+            pre_content = H.escape('\n'.join(raw_lines))
+            # Auto-expand if task failed/changed or output is substantial (>5 lines)
+            auto_open = row_cls in ('fail', 'chg') or len(raw_lines) > 5
+            open_attr = ' open' if auto_open else ''
+            detail_html = (
+                f'<details class="log-block"{open_attr}>'
+                f'<summary>&#128196; output ({len(raw_lines)} linii)</summary>'
+                f'<pre class="block-pre">{pre_content}</pre>'
+                f'</details>'
+            )
         else:
-            detail = ''
+            detail_html = ''
 
-        rows.append(
-            f'<tr class="{row_cls}">'
-            f'<td class="tname">{H.escape(task["name"])}</td>'
-            f'<td class="tres">{badges}</td>'
-            f'<td class="tdet-col">{detail}</td>'
-            f'</tr>'
+        task_rows.append(
+            f'<div class="trow {row_cls}">'
+            f'<div class="trow-name">{H.escape(task["name"])}</div>'
+            f'<div class="trow-badges">{badges}</div>'
+            f'{detail_html}'
+            f'</div>'
         )
 
-    tbody = '\n'.join(rows) if rows else '<tr><td colspan="3" class="no-result">No tasks recorded</td></tr>'
     tc = len(play['tasks'])
-    plays_html_parts.append(f'''
-<details class="play" open>
-  <summary>
-    <span class="play-arrow">▶</span>
-    <span class="play-name">{H.escape(play["name"])}</span>
-    <span class="play-count">{tc} task{"s" if tc != 1 else ""}</span>
+    ch_count = sum(1 for t in play['tasks']
+                   if any(r['status'] == 'changed' for r in t['results']))
+    fa_count = sum(1 for t in play['tasks']
+                   if any(r['status'] in ('failed','unreachable') for r in t['results']))
+
+    badges_summary = ''
+    if ch_count:
+        badges_summary += f'<span class="badge yel-b">{ch_count} changed</span> '
+    if fa_count:
+        badges_summary += f'<span class="badge red-b">{fa_count} failed</span> '
+
+    play_sections.append(f'''
+<details class="section play-det" open>
+  <summary class="sec-title play-sum">
+    <span class="sec-arrow">&#9654;</span>
+    <span style="flex:1">{H.escape(play["name"])}</span>
+    {badges_summary}
+    <span class="badge dim-b">{tc} task{"s" if tc != 1 else ""}</span>
   </summary>
-  <table class="ttable">
-    <thead><tr><th>Task</th><th>Result per host</th><th>Output</th></tr></thead>
-    <tbody>{tbody}</tbody>
-  </table>
+  <div class="sec-body">
+    {''.join(task_rows) if task_rows else '<div class="row info" style="padding:8px 18px">No tasks recorded.</div>'}
+  </div>
 </details>''')
 
-plays_html = '\n'.join(plays_html_parts)
+plays_html = '\n'.join(play_sections)
 
-# ── Build recap HTML ───────────────────────────────────────────────────────────
+# ── PLAY RECAP table ──────────────────────────────────────────────────────────
+def recap_cell(val, color, zero_color='#3d444d'):
+    c = color if val > 0 else zero_color
+    w = 'font-weight:700;' if val > 0 else ''
+    return f'<td style="text-align:center;color:{c};{w}">{val}</td>'
+
 if recap_data:
     recap_rows = []
     for host, s in sorted(recap_data.items()):
         if s['failed'] > 0 or s['unreachable'] > 0:
-            hcls = 'rh-failed'
+            row_cls = 'fail'
         elif s['changed'] > 0:
-            hcls = 'rh-changed'
+            row_cls = 'chg'
         else:
-            hcls = 'rh-ok'
+            row_cls = 'ok'
         recap_rows.append(
-            f'<tr class="{hcls}">'
-            f'<td class="rhost">{H.escape(host)}</td>'
-            f'{recap_td(s["ok"], "ok")}'
-            f'{recap_td(s["changed"], "changed")}'
-            f'{recap_td(s["unreachable"], "unreachable")}'
-            f'{recap_td(s["failed"], "failed")}'
-            f'{recap_td(s["skipped"], "skipped")}'
-            f'{recap_td(s["rescued"], "rescued")}'
-            f'{recap_td(s["ignored"], "ignored")}'
-            f'</tr>'
+            f'<tr class="rrow {row_cls}">'
+            f'<td class="rhost-cell">{H.escape(host)}</td>'
+            + recap_cell(s['ok'],          '#3fb950')
+            + recap_cell(s['changed'],     '#d29922')
+            + recap_cell(s['unreachable'], '#f85149')
+            + recap_cell(s['failed'],      '#f85149')
+            + recap_cell(s['skipped'],     '#8b949e')
+            + recap_cell(s['rescued'],     '#bc8cff')
+            + recap_cell(s['ignored'],     '#8b949e')
+            + '</tr>'
         )
     recap_html = f'''
-<section class="recap">
-  <h2 class="recap-title">PLAY RECAP</h2>
-  <table class="rtable">
-    <thead><tr>
-      <th>Host</th><th>ok</th><th>changed</th><th>unreachable</th>
-      <th>failed</th><th>skipped</th><th>rescued</th><th>ignored</th>
-    </tr></thead>
-    <tbody>{"".join(recap_rows)}</tbody>
-  </table>
-</section>'''
+<div class="section" style="margin-top:26px">
+  <div class="sec-title">&#9646;&#9646; PLAY RECAP</div>
+  <div class="sec-body" style="padding:0">
+    <table class="rtable">
+      <thead><tr>
+        <th style="text-align:left">Host</th>
+        <th>ok</th><th>changed</th><th>unreachable</th>
+        <th>failed</th><th>skipped</th><th>rescued</th><th>ignored</th>
+      </tr></thead>
+      <tbody>{''.join(recap_rows)}</tbody>
+    </table>
+  </div>
+</div>'''
 else:
     recap_html = ''
 
-# ── Assemble HTML ──────────────────────────────────────────────────────────────
-playbook_short = os.path.basename(playbook)
-icon = '✓' if exit_code == 0 else '✗'
+# ── Stats boxes ───────────────────────────────────────────────────────────────
+def stat_box(n, label, color, bg):
+    return (f'<div class="stat" style="border-color:{color}">'
+            f'<div class="stat-n" style="color:{color}">{n}</div>'
+            f'<div class="stat-l">{label}</div>'
+            f'</div>')
 
+stats_html = (
+    stat_box(total_ok,      'ok',             '#3fb950', 'rgba(63,185,80,.08)') +
+    stat_box(total_changed, 'changed',        '#d29922', 'rgba(210,153,34,.08)') +
+    stat_box(total_failed,  'failed',         '#f85149', 'rgba(248,81,73,.08)') +
+    stat_box(total_skipped, 'skipped',        '#8b949e', 'rgba(139,148,158,.06)') +
+    stat_box(total_tasks,   'total tasks',    '#58a6ff', 'rgba(88,166,255,.06)') +
+    stat_box(num_plays,     'plays',          '#79c0ff', 'rgba(121,192,255,.06)')
+)
+
+# ── Banner ────────────────────────────────────────────────────────────────────
+banner_cls  = 'ok'  if exit_code == 0 else 'fail'
+banner_icon = '&#10003;' if exit_code == 0 else '&#10007;'
+banner_txt  = 'EXECUȚIE REUȘITĂ — Toate taskurile au trecut' if exit_code == 0 \
+              else f'EXECUȚIE EȘUATĂ — exit code {exit_code}'
+
+# ── Playbook short name ───────────────────────────────────────────────────────
+playbook_short = os.path.basename(playbook)
+
+# ── Final HTML ────────────────────────────────────────────────────────────────
 HTML = f'''<!DOCTYPE html>
-<html lang="en">
+<html lang="ro">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ansible — {H.escape(playbook_short)}</title>
+<title>Ansible — {H.escape(playbook_short)} — SC MEDIA SRL</title>
 <style>
-*,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:"Segoe UI",system-ui,sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh;padding-bottom:60px}}
+:root{{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--bdr:#30363d;--txt:#c9d1d9;--muted:#8b949e;
+      --blue:#58a6ff;--green:#3fb950;--yel:#d29922;--red:#f85149;--cyan:#39c5cf;--pur:#bc8cff;}}
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:'Segoe UI',Consolas,monospace;background:var(--bg);color:var(--txt);
+      padding:24px;line-height:1.55;}}
+.wrap{{max-width:1100px;margin:0 auto;}}
 
-/* top bar */
-.topbar{{background:{status_color};color:#fff;padding:12px 24px;display:flex;align-items:center;gap:14px;
-         position:sticky;top:0;z-index:99;box-shadow:0 2px 10px rgba(0,0,0,.5)}}
-.topbar-icon{{font-size:1.5rem;font-weight:700}}
-.topbar-title{{flex:1;font-size:1.1rem;font-weight:700;letter-spacing:.03em}}
-.topbar-dur{{font-size:.9rem;opacity:.85}}
+/* header card */
+.hcard{{background:linear-gradient(135deg,#0d1117,#161b22);border:1px solid var(--bdr);
+        border-top:3px solid var(--cyan);border-radius:8px;padding:28px 32px;margin-bottom:18px;}}
+.hcard h1{{color:var(--cyan);font-size:1.4em;margin-bottom:6px;}}
+.hcard .sub{{color:var(--muted);font-size:.83em;margin-bottom:14px;}}
+.meta{{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px 24px;}}
+.meta-i{{font-size:.81em;color:var(--muted);}}
+.meta-i strong{{color:var(--txt);font-family:Consolas,monospace;}}
 
-/* container */
-.wrap{{max-width:1260px;margin:0 auto;padding:28px 18px}}
+/* banner */
+.banner{{text-align:center;padding:11px 20px;border-radius:6px;font-weight:700;
+         font-size:.95em;letter-spacing:1.2px;margin-bottom:18px;text-transform:uppercase;}}
+.banner.ok  {{background:rgba(63,185,80,.12); border:1px solid var(--green);color:var(--green);}}
+.banner.fail{{background:rgba(248,81,73,.12); border:1px solid var(--red);  color:var(--red);}}
 
-/* meta card */
-.meta{{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px 24px;
-       margin-bottom:22px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px 28px}}
-.ml{{font-size:.72rem;color:#8b949e;text-transform:uppercase;letter-spacing:.09em;margin-bottom:3px}}
-.mv{{font-size:.9rem;color:#e6edf3;font-family:"Consolas","Courier New",monospace;word-break:break-all}}
-.mv.status-ok{{color:{status_color};font-weight:700}}
+/* stats boxes */
+.stats{{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;}}
+.stat{{flex:1;min-width:100px;background:var(--bg2);border:1px solid var(--bdr);
+       border-radius:8px;padding:16px 12px;text-align:center;}}
+.stat-n{{font-size:2.2em;font-weight:700;line-height:1;}}
+.stat-l{{font-size:.7em;color:var(--muted);margin-top:5px;text-transform:uppercase;letter-spacing:.5px;}}
 
-/* stats strip */
-.stats{{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:26px}}
-.chip{{padding:6px 18px;border-radius:20px;font-size:.88rem;font-weight:600;display:flex;gap:7px;align-items:center}}
-.chip-lbl{{font-weight:400;opacity:.8}}
+/* sections */
+.section{{background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;
+          margin-bottom:12px;overflow:hidden;}}
+.sec-title{{background:var(--bg3);padding:9px 18px;font-weight:600;color:var(--cyan);
+            font-size:.88em;letter-spacing:.3px;border-bottom:1px solid var(--bdr);
+            display:flex;align-items:center;gap:8px;}}
+.sec-body{{padding:6px 0;}}
 
-/* section heading */
-.sh{{font-size:.78rem;text-transform:uppercase;letter-spacing:.1em;color:#8b949e;
-     margin:0 0 12px;padding-bottom:5px;border-bottom:1px solid #21262d}}
+/* play details */
+details.play-det{{background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;
+                  margin-bottom:12px;overflow:hidden;}}
+details.play-det>summary{{list-style:none;cursor:pointer;user-select:none;}}
+details.play-det>summary::-webkit-details-marker{{display:none;}}
+.play-sum{{background:var(--bg3);padding:9px 18px;font-weight:600;color:var(--cyan);
+           font-size:.88em;letter-spacing:.3px;border-bottom:1px solid var(--bdr);}}
+.play-sum:hover{{background:#2c333b;}}
+.sec-arrow{{font-size:.68em;color:var(--muted);transition:transform .15s;flex-shrink:0;}}
+details[open]>.play-sum .sec-arrow{{transform:rotate(90deg);}}
 
-/* play accordion */
-.play{{background:#161b22;border:1px solid #30363d;border-radius:9px;margin-bottom:14px;overflow:hidden}}
-.play>summary{{list-style:none;cursor:pointer;padding:13px 20px;background:#1c2128;
-               display:flex;align-items:center;gap:12px;user-select:none}}
-.play>summary::-webkit-details-marker{{display:none}}
-.play-arrow{{color:#58a6ff;font-size:.7rem;transition:transform .2s;flex-shrink:0}}
-.play[open]>.play>summary .play-arrow,
-.play[open]>summary .play-arrow{{transform:rotate(90deg)}}
-.play-name{{font-size:.98rem;font-weight:600;color:#58a6ff;flex:1}}
-.play-count{{font-size:.78rem;color:#8b949e;background:#21262d;padding:2px 10px;border-radius:12px}}
+/* task rows */
+.trow{{padding:5px 18px 5px 15px;border-left:3px solid transparent;
+       display:flex;flex-direction:column;gap:3px;font-size:.86em;
+       border-bottom:1px solid rgba(48,54,61,.5);}}
+.trow:last-child{{border-bottom:none;}}
+.trow.ok  {{border-left-color:var(--green);}}
+.trow.chg {{border-left-color:var(--yel);background:rgba(210,153,34,.04);}}
+.trow.fail{{border-left-color:var(--red); background:rgba(248,81,73,.06);}}
+.trow.skip{{border-left-color:#3d444d;opacity:.55;}}
+.trow.info{{border-left-color:var(--blue);}}
+.trow-name{{color:var(--txt);font-family:Consolas,monospace;font-size:.84em;padding-top:2px;}}
+.trow-badges{{display:flex;flex-wrap:wrap;gap:4px;}}
 
-/* task table */
-.ttable{{width:100%;border-collapse:collapse;font-size:.85rem}}
-.ttable thead tr{{background:#21262d;color:#8b949e;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}}
-.ttable th{{padding:7px 16px;text-align:left;border-bottom:1px solid #30363d;white-space:nowrap}}
-.ttable td{{padding:8px 16px;border-bottom:1px solid #1c2128;vertical-align:top}}
-.ttable tr:last-child td{{border-bottom:none}}
-.tr-ok     {{border-left:3px solid #2ea043}}
-.tr-changed{{border-left:3px solid #d29922}}
-.tr-failed {{border-left:3px solid #da3633;background:#160808}}
-.tr-skipped{{border-left:3px solid #6e7681;opacity:.6}}
-.tname{{color:#e6edf3;font-family:"Consolas",monospace;font-size:.82rem;max-width:360px;word-break:break-word}}
-.tres{{white-space:normal}}
-.no-result{{color:#484f58;font-size:.82rem;font-style:italic}}
+/* rows (changes summary) */
+.row{{display:flex;align-items:baseline;gap:8px;padding:4px 18px;font-size:.86em;
+      border-bottom:1px solid rgba(48,54,61,.4);}}
+.row:last-child{{border-bottom:none;}}
+.row.ok  {{color:var(--green);}}
+.row.chg {{color:var(--yel); background:rgba(210,153,34,.05);border-left:3px solid var(--yel);padding-left:15px;}}
+.row.fail{{color:var(--red);  background:rgba(248,81,73,.06); border-left:3px solid var(--red); padding-left:15px;}}
+.row.info{{color:var(--muted);}}
+.rdet{{flex:1;color:var(--txt);font-family:Consolas,monospace;font-size:.84em;}}
+.rhost-tag{{font-size:.8em;color:var(--muted);white-space:nowrap;}}
 
-/* host badges */
-.hbadge{{display:inline-block;padding:3px 10px;border-radius:14px;font-size:.78rem;font-weight:600;
-         margin:2px 3px 2px 0;white-space:nowrap}}
+/* badges */
+.badge{{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.72em;font-weight:700;
+        text-transform:uppercase;letter-spacing:.4px;flex-shrink:0;white-space:nowrap;}}
+.grn-b{{background:rgba(63,185,80,.18); color:var(--green);border:1px solid var(--green);}}
+.yel-b{{background:rgba(210,153,34,.18);color:var(--yel);  border:1px solid var(--yel);}}
+.red-b{{background:rgba(248,81,73,.18); color:var(--red);  border:1px solid var(--red);}}
+.blu-b{{background:rgba(88,166,255,.18);color:var(--blue); border:1px solid var(--blue);}}
+.dim-b{{background:rgba(139,148,158,.12);color:var(--muted);border:1px solid #3d444d;}}
+.pur-b{{background:rgba(188,140,255,.18);color:var(--pur); border:1px solid var(--pur);}}
 
-/* task detail */
-.tdet>summary{{list-style:none;cursor:pointer;color:#58a6ff;font-size:.78rem;user-select:none;white-space:nowrap}}
-.tdet>summary::-webkit-details-marker{{display:none}}
-.tout{{margin-top:8px;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;
-       font-family:"Consolas","Courier New",monospace;font-size:.76rem;color:#c9d1d9;
-       white-space:pre-wrap;word-break:break-word;max-height:420px;overflow-y:auto;line-height:1.5}}
+/* log block */
+details.log-block{{margin:4px 0;}}
+details.log-block>summary{{display:flex;gap:7px;align-items:center;padding:4px 0;cursor:pointer;
+  font-size:.82em;color:var(--blue);list-style:none;user-select:none;}}
+details.log-block>summary::-webkit-details-marker{{display:none;}}
+details.log-block>summary::before{{content:'&#9654;';font-size:.65em;color:var(--muted);
+  transition:transform .15s;flex-shrink:0;}}
+details.log-block[open]>summary::before{{transform:rotate(90deg);}}
+details.log-block>summary:hover{{color:var(--cyan);}}
+.block-pre{{background:#010409;border:1px solid var(--bdr);padding:10px 16px;
+  border-radius:0 0 4px 4px;font-family:Consolas,monospace;font-size:.75em;
+  color:#8b949e;white-space:pre-wrap;word-break:break-word;
+  max-height:440px;overflow-y:auto;border-left:3px solid var(--blue);}}
 
-/* recap */
-.recap{{background:#161b22;border:1px solid #30363d;border-radius:9px;overflow:hidden;margin-top:26px}}
-.recap-title{{padding:13px 20px;background:#1c2128;font-size:.9rem;font-weight:700;
-              letter-spacing:.05em;border-bottom:1px solid #30363d}}
-.rtable{{width:100%;border-collapse:collapse;font-size:.86rem}}
-.rtable thead tr{{background:#21262d;color:#8b949e;font-size:.75rem;text-transform:uppercase}}
-.rtable th{{padding:8px 16px;text-align:center;border-bottom:1px solid #30363d}}
-.rtable th:first-child{{text-align:left}}
-.rtable td{{padding:9px 16px;text-align:center;border-bottom:1px solid #1c2128}}
-.rtable tr:last-child td{{border-bottom:none}}
-.rhost{{text-align:left!important;font-family:monospace;color:#e6edf3;font-weight:600}}
-.rz{{color:#484f58}}
-.rnz{{font-weight:700;border-radius:4px}}
-.rh-ok{{border-left:3px solid #2ea043}}
-.rh-changed{{border-left:3px solid #d29922}}
-.rh-failed{{border-left:3px solid #da3633;background:#160808}}
+/* recap table */
+.rtable{{width:100%;border-collapse:collapse;font-size:.86em;}}
+.rtable thead tr{{background:var(--bg3);color:var(--muted);font-size:.75em;text-transform:uppercase;}}
+.rtable th{{padding:8px 16px;border-bottom:1px solid var(--bdr);}}
+.rtable td{{padding:8px 16px;border-bottom:1px solid #1c2128;}}
+.rtable tr:last-child td{{border-bottom:none;}}
+.rrow.ok  {{border-left:3px solid var(--green);}}
+.rrow.chg {{border-left:3px solid var(--yel);}}
+.rrow.fail{{border-left:3px solid var(--red);background:rgba(248,81,73,.05);}}
+.rhost-cell{{font-family:Consolas,monospace;color:var(--txt);font-weight:600;}}
 
 /* footer */
-.foot{{text-align:center;color:#484f58;font-size:.76rem;margin-top:44px}}
+.footer{{text-align:center;color:var(--muted);font-size:.73em;margin-top:28px;
+         padding-top:14px;border-top:1px solid var(--bdr);}}
+.footer strong{{color:var(--cyan);}}
+
+/* scrollbar */
+::-webkit-scrollbar{{width:6px;height:6px;}}
+::-webkit-scrollbar-track{{background:var(--bg);}}
+::-webkit-scrollbar-thumb{{background:var(--bdr);border-radius:3px;}}
+::-webkit-scrollbar-thumb:hover{{background:var(--muted);}}
+
+@media(max-width:700px){{
+  .stats{{flex-direction:column;}}
+  .meta{{grid-template-columns:1fr;}}
+}}
 </style>
 </head>
 <body>
-
-<div class="topbar">
-  <span class="topbar-icon">{icon}</span>
-  <span class="topbar-title">Ansible &mdash; {H.escape(playbook_short)}</span>
-  <span class="topbar-dur">{H.escape(duration)}</span>
-</div>
-
 <div class="wrap">
 
-  <!-- Metadata -->
+<!-- Header card -->
+<div class="hcard">
+  <h1>SC MEDIA SRL &mdash; Ansible: {H.escape(playbook_short)}</h1>
+  <p class="sub">Log de execuție generat automat &middot; Proiect disertație master</p>
   <div class="meta">
-    <div><div class="ml">Playbook</div><div class="mv">{H.escape(playbook)}</div></div>
-    <div><div class="ml">Status</div><div class="mv status-ok">{H.escape(status)}</div></div>
-    <div><div class="ml">Started</div><div class="mv">{H.escape(start_time)}</div></div>
-    <div><div class="ml">Finished</div><div class="mv">{H.escape(end_time)}</div></div>
-    <div><div class="ml">Duration</div><div class="mv">{H.escape(duration)}</div></div>
-    <div><div class="ml">User</div><div class="mv">{H.escape(user)}</div></div>
-    <div><div class="ml">Directory</div><div class="mv">{H.escape(workdir)}</div></div>
-    <div><div class="ml">Extra args</div><div class="mv">{H.escape(extra_args)}</div></div>
+    <div class="meta-i">Playbook: <strong>{H.escape(playbook)}</strong></div>
+    <div class="meta-i">Început: <strong>{H.escape(start_time)}</strong></div>
+    <div class="meta-i">Terminat: <strong>{H.escape(end_time)}</strong></div>
+    <div class="meta-i">Durată: <strong>{H.escape(duration)}</strong></div>
+    <div class="meta-i">Utilizator: <strong>{H.escape(user)}</strong></div>
+    <div class="meta-i">Extra args: <strong>{H.escape(extra_args)}</strong></div>
   </div>
+</div>
 
-  <!-- Stats -->
-  <div class="stats">
-    <div class="chip" style="background:#0d2a0d;color:#2ea043">
-      <span>{total_ok}</span><span class="chip-lbl">ok</span>
-    </div>
-    <div class="chip" style="background:#2a1f00;color:#d29922">
-      <span>{total_changed}</span><span class="chip-lbl">changed</span>
-    </div>
-    <div class="chip" style="background:#2a0808;color:#da3633">
-      <span>{total_failed}</span><span class="chip-lbl">failed / unreachable</span>
-    </div>
-    <div class="chip" style="background:#161b22;color:#6e7681">
-      <span>{total_skipped}</span><span class="chip-lbl">skipped</span>
-    </div>
-    <div class="chip" style="background:#0c1929;color:#58a6ff">
-      <span>{total_tasks}</span><span class="chip-lbl">tasks</span>
-    </div>
-    <div class="chip" style="background:#0c1929;color:#79c0ff">
-      <span>{len(plays)}</span><span class="chip-lbl">plays</span>
-    </div>
-  </div>
+<!-- Status banner -->
+<div class="banner {banner_cls}">{banner_icon} &nbsp; {H.escape(banner_txt)}</div>
 
-  <!-- Plays -->
-  <p class="sh">Execution detail</p>
-  {plays_html}
+<!-- Stats boxes -->
+<div class="stats">
+  {stats_html}
+</div>
 
-  <!-- Recap -->
-  {recap_html}
+<!-- Changes summary -->
+{changes_section}
 
-  <div class="foot">
-    Generated by run-playbook.sh &mdash; SC IT SECURITY SRL &mdash; {H.escape(end_time)}
-  </div>
+<!-- Per-play execution detail -->
+<div style="font-size:.78rem;text-transform:uppercase;letter-spacing:.1em;
+            color:var(--muted);margin-bottom:10px;padding-bottom:5px;
+            border-bottom:1px solid #21262d;">
+  &#9654; Detaliu execuție — {num_plays} play{"s" if num_plays != 1 else ""}
+</div>
+{plays_html}
+
+<!-- PLAY RECAP -->
+{recap_html}
+
+<!-- Footer -->
+<div class="footer">
+  Generat de <strong>run-playbook.sh</strong> &mdash;
+  <strong>SC IT SECURITY SRL</strong> &mdash; {H.escape(end_time)}
+</div>
 
 </div>
 </body>

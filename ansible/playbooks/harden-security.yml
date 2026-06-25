@@ -8,7 +8,8 @@
 #   2. Fail2ban                 (all Linux VMs)    --tags fail2ban
 #   3. SSH Hardening            (all Linux VMs)    --tags ssh_hardening
 #   4. ModSecurity WAF          (vm-web-01)        --tags modsecurity
-#   5. MySQL Hardening + TDE    (vm-db-01)         --tags mysql_hardening
+#   5. MySQL Hardening           (vm-db-01)         --tags mysql_hardening
+#   5b. MySQL TDE               (vm-db-01)         --tags tde
 #
 # Usage (run from ~/ansible/ on jumphost):
 #   # All hardenings at once:
@@ -20,6 +21,7 @@
 #   ansible-playbook playbooks/5-harden-security.yml --tags ssh_hardening
 #   ansible-playbook playbooks/5-harden-security.yml --tags modsecurity
 #   ansible-playbook playbooks/5-harden-security.yml --tags mysql_hardening
+#   ansible-playbook playbooks/5-harden-security.yml --tags tde
 #
 # Demo scripts (before/after with diff):
 #   ./scripts/demo-1-rate-limiting.sh
@@ -103,13 +105,11 @@
 # Strong ciphers, MACs, KexAlgorithms — removes legacy/weak algorithms
 # =============================================================================
 
-- name: "Hardening 3 — SSH Hardening"
+- name: "Hardening 3 — SSH Hardening (web / app / cms)"
   hosts: webserver:appserver:cmsserver
   become: true
   gather_facts: true
   tags: [security, ssh_hardening]
-  # NOTE: jumphost excluded intentionally — it is the primary access point.
-  # Modifying SSH on the jumphost risks losing all remote access.
 
   roles:
     - role: ssh-hardening
@@ -120,11 +120,45 @@
       ansible.builtin.debug:
         msg: |
           [DONE] SSH hardened on {{ inventory_hostname }}:
-            - Only curve25519 + ECDH key exchange
-            - Only AES-256-GCM + ChaCha20 ciphers
-            - Only ETM MACs (SHA-256/512)
-            - MaxAuthTries: 3, LoginGraceTime: 30s
-            - PermitRootLogin: no, X11Forwarding: no
+            - ecdsa-sha2-nistp256 removed (was [fail] in ssh-audit)
+            - chacha20-poly1305 + AES-256-GCM ciphers (AEAD)
+            - ETM MACs only: hmac-sha2-*-etm, umac-128-etm
+            - KexAlgorithms: curve25519 + DH group14/16/18 SHA-512/256
+            - MaxAuthTries: 3, LoginGraceTime: 30s, PermitRootLogin: no
+          Verify: ssh-audit {{ ansible_host }}
+
+# =============================================================================
+# HARDENING 3b: SSH Hardening — Jumphost (vm-jmp-01)
+# Separate play so jumphost can be rolled back independently if needed.
+# ssh-audit on jmp shows extra issues vs. web/app/cms:
+#   [fail] ecdh-sha2-nistp256/384/521 in KexAlgorithms
+#   [warn] sntrup761x25519-sha512 (experimental), umac-64-etm (64-bit tag),
+#          hmac-sha1 + hmac-sha1-etm (weak hash), multiple non-ETM MACs
+# Risk assessment: safe to harden — ssh-hardening role uses validate: sshd -t
+# before deploying; xRDP access remains unaffected (xRDP uses port 3389, not SSH)
+# =============================================================================
+
+- name: "Hardening 3b — SSH Hardening (jumphost)"
+  hosts: jumphost
+  become: true
+  gather_facts: true
+  tags: [security, ssh_hardening]
+
+  roles:
+    - role: ssh-hardening
+      tags: [ssh_hardening]
+
+  post_tasks:
+    - name: "SSH hardening summary (jumphost)"
+      ansible.builtin.debug:
+        msg: |
+          [DONE] SSH hardened on jumphost ({{ inventory_hostname }}):
+            - ecdh-sha2-nistp256/384/521 removed from KexAlgorithms ([fail])
+            - sntrup761x25519-sha512 removed (experimental [warn])
+            - ecdsa-sha2-nistp256 removed from HostKeyAlgorithms ([fail])
+            - hmac-sha1 + hmac-sha1-etm removed (weak hash [warn])
+            - umac-64-etm + all non-ETM MACs removed ([warn])
+            - Only: curve25519 + DH group14/16/18, chacha20/AES-256-GCM, ETM MACs
           Verify: ssh-audit {{ ansible_host }}
 
 # =============================================================================
@@ -170,14 +204,14 @@
           Expected: 403 Forbidden
 
 # =============================================================================
-# HARDENING 5: MySQL Hardening + TDE (vm-db-01)
-# Removes anonymous users, restricts root, enables tablespace encryption
+# HARDENING 5: MySQL Hardening (vm-db-01)
+# Removes anonymous users, restricts root, hardens password policy
 # =============================================================================
 
-- name: "Hardening 5 — MySQL Hardening + TDE"
+- name: "Hardening 5 — MySQL Hardening"
   hosts: database
   gather_facts: true
-  tags: [security, mysql_hardening, tde]
+  tags: [security, mysql_hardening]
 
   vars:
     ansible_connection: winrm
@@ -195,19 +229,54 @@
       ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/mysql/tasks/hardening.yml"
       tags: [mysql_hardening]
 
-    - name: "Include MySQL TDE tasks"
-      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/mysql/tasks/tde.yml"
-      tags: [tde]
-
     - name: "MySQL hardening summary"
       ansible.builtin.debug:
         msg: |
-          [DONE] MySQL Hardening + TDE applied:
+          [DONE] MySQL Hardening applied:
             - Anonymous users removed
             - Test database removed
             - Root login restricted to localhost only
             - Password policy: complexity + 90-day expiry
             - local_infile=OFF, require_secure_transport=ON
-            - TDE: InnoDB tablespace encryption enabled (keyring_file)
-            - wordpress_db and mediasrl_business tablespaces encrypted
-          Verify: SELECT NAME, ENCRYPTION FROM information_schema.INNODB_TABLESPACES;
+            - max_connect_errors=10, skip_name_resolve=ON
+            - Slow query log enabled (long_query_time=2s)
+          Verify: mysql -u root -p -e "SELECT User, Host FROM mysql.user;"
+
+# =============================================================================
+# HARDENING 5b: MySQL TDE — Transparent Data Encryption (vm-db-01)
+# InnoDB tablespace encryption via keyring_file plugin (early-plugin-load).
+# Note: keyring_file is deprecated in MySQL 8.0.34+; component_keyring_file
+# is the recommended approach for production environments.
+# =============================================================================
+
+- name: "Hardening 5b — MySQL TDE (Transparent Data Encryption)"
+  hosts: database
+  gather_facts: true
+  tags: [security, tde]
+
+  vars:
+    ansible_connection: winrm
+    ansible_port: 5985
+    ansible_winrm_transport: basic
+    ansible_winrm_server_cert_validation: ignore
+    ansible_become: false
+    mysql_root_password: "{{ vault_mysql_root_password }}"
+    mysql_install_dir: "C:\\Program Files\\MySQL\\MySQL Server 8.0"
+    mysql_data_dir: "C:\\ProgramData\\MySQL\\MySQL Server 8.0\\Data"
+
+  tasks:
+    - name: "Include MySQL TDE tasks"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/../roles/mysql/tasks/tde.yml"
+      tags: [tde]
+
+    - name: "MySQL TDE summary"
+      ansible.builtin.debug:
+        msg: |
+          [DONE] MySQL TDE (Transparent Data Encryption) applied:
+            - keyring_file plugin loaded via early-plugin-load (my.ini)
+            - keyring file: C:/ProgramData/MySQL/MySQL Server 8.0/Data/keyring
+            - default_table_encryption=ON (new tables encrypted by default)
+            - wordpress_db: all InnoDB tablespaces ENCRYPTION=Y
+            - mediasrl_business: all InnoDB tablespaces ENCRYPTION=Y
+          Note: keyring_file plugin deprecated in 8.0.34+; functional in 8.0.45.
+          Verify: mysql -u root -p -e "SELECT NAME, ENCRYPTION FROM information_schema.INNODB_TABLESPACES WHERE NAME LIKE 'wordpress_db/%';"

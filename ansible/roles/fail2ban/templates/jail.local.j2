@@ -20,9 +20,10 @@ backend  = {{ fail2ban_backend }}
 # Never ban these IPs — management subnet keeps Ansible connectivity intact
 ignoreip = {{ fail2ban_ignoreip }}
 
-# Action: ban only (iptables DROP)
-banaction = iptables-multiport
-banaction_allports = iptables-allports
+# Action: ban via firewalld (Ubuntu 22.04 uses firewalld + nftables backend;
+# iptables-multiport rules are bypassed by nftables — use firewallcmd instead)
+banaction = firewallcmd-rich-rules
+banaction_allports = firewallcmd-allports
 
 # Notification (optional — configure postfix to use)
 destemail = {{ fail2ban_destemail }}
@@ -37,7 +38,6 @@ action    = %(action_)s
 enabled  = {{ fail2ban_ssh_enabled | lower }}
 port     = {{ fail2ban_ssh_port }}
 logpath  = %(sshd_log)s
-backend  = %(default_backend)s
 maxretry = {{ fail2ban_ssh_maxretry }}
 bantime  = {{ fail2ban_ssh_bantime }}
 

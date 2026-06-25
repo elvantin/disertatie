@@ -34,8 +34,12 @@
     ssl_ecdh_curve: "secp384r1"
 
     # DH parameters file path and key size
+    # 2048-bit: sufficient for A+ on SSL Labs, generates in ~30s (4096 takes 5-15 min)
     dhparam_path: "/etc/ssl/certs/dhparam.pem"
-    dhparam_size: 4096
+    dhparam_size: 2048
+
+    # Let's Encrypt certificate path (uses website_domain from group_vars/linux.yml)
+    certbot_cert_path: "/etc/letsencrypt/live/{{ website_domain | default('mediasrl.swedencentral.cloudapp.azure.com') }}/fullchain.pem"
 
     # Session settings
     ssl_session_cache: "shared:SSL:10m"
@@ -57,6 +61,28 @@
     # website_domain comes from group_vars/linux.yml (patched per-environment by deploy script)
 
   tasks:
+
+    # ============================================================
+    # Phase 0: Ensure OpenSSL system security level is at secure defaults.
+    # The nginx role no longer downgrades these, but run idempotently as
+    # a safety net in case openssl.cnf was modified manually or by other tools.
+    # ============================================================
+
+    - name: Restore OpenSSL MinProtocol to TLSv1.2
+      ansible.builtin.lineinfile:
+        path: /etc/ssl/openssl.cnf
+        regexp: '^\s*MinProtocol\s*='
+        line: 'MinProtocol = TLSv1.2'
+      notify: reload nginx
+      tags: [ssl, config, openssl]
+
+    - name: Restore OpenSSL CipherString to SECLEVEL=2
+      ansible.builtin.lineinfile:
+        path: /etc/ssl/openssl.cnf
+        regexp: '^\s*CipherString\s*='
+        line: 'CipherString = DEFAULT@SECLEVEL=2'
+      notify: reload nginx
+      tags: [ssl, config, openssl]
 
     # ============================================================
     # Phase 1: Generate DH Parameters (4096-bit)
@@ -81,6 +107,36 @@
         group: root
         mode: '0644'
       tags: [ssl, dhparam]
+
+    # ============================================================
+    # Phase 1b: Detect OCSP responder URL in certificate
+    # ssl_stapling requires the cert to have an OCSP URL; without it
+    # nginx prints a [warn] during 'nginx -t'. Let's Encrypt certs always
+    # have an OCSP URL, but self-signed fallbacks do not.
+    # ============================================================
+
+    - name: Check if SSL certificate exists
+      ansible.builtin.stat:
+        path: "{{ certbot_cert_path }}"
+      register: ssl_cert_stat
+      tags: [ssl, config]
+
+    - name: Check if SSL certificate has OCSP responder URL
+      ansible.builtin.shell: >
+        openssl x509 -in {{ certbot_cert_path }} -noout -text 2>/dev/null
+        | grep -c "OCSP" || true
+      register: ssl_ocsp_check
+      changed_when: false
+      failed_when: false
+      when: ssl_cert_stat.stat.exists | default(false)
+      tags: [ssl, config]
+
+    - name: Set ssl_stapling_active fact
+      ansible.builtin.set_fact:
+        ssl_stapling_active: >-
+          {{ ssl_cert_stat.stat.exists | default(false)
+             and (ssl_ocsp_check.stdout | default('0') | int) > 0 }}
+      tags: [ssl, config]
 
     # ============================================================
     # Phase 2: Create SSL parameters snippet
@@ -132,11 +188,16 @@
           ssl_session_timeout {{ ssl_session_timeout }};
           ssl_session_tickets off;
 
-          # OCSP Stapling (server fetches certificate status, not client)
+          # OCSP Stapling — enabled only when certificate has OCSP responder URL
+          # (Let's Encrypt certs: yes; self-signed fallback certs: no)
+          {% if ssl_stapling_active | default(false) %}
           ssl_stapling on;
           ssl_stapling_verify on;
           resolver {{ ssl_resolver }} valid=300s;
           resolver_timeout {{ ssl_resolver_timeout }};
+          {% else %}
+          ssl_stapling off;
+          {% endif %}
       notify: reload nginx
       tags: [ssl, config]
 
@@ -184,6 +245,9 @@
 
     # ============================================================
     # Phase 4: Update nginx.conf (global SSL settings)
+    # Replace individual ssl_ directives with a single include.
+    # Uses lineinfile (per-directive) instead of regex replace to
+    # avoid accidental duplication of ssl_session_cache shared zones.
     # ============================================================
 
     - name: Backup current nginx.conf
@@ -193,15 +257,27 @@
         remote_src: yes
       tags: [ssl, config, backup]
 
-    - name: Update nginx.conf - replace SSL block with include
-      replace:
+    - name: Remove ssl_ directives from nginx.conf (moved to ssl-params.conf)
+      ansible.builtin.lineinfile:
         path: /etc/nginx/nginx.conf
-        regexp: |
-          \s*# SSL/TLS settings.*?\n(?:\s+ssl_\w+[^;]*;\n)+\s*ssl_session_timeout[^;]*;
-        replace: |4
+        regexp: "{{ item }}"
+        state: absent
+      loop:
+        - '^\s*# SSL/TLS settings'
+        - '^\s*ssl_protocols\s'
+        - '^\s*ssl_prefer_server_ciphers\s'
+        - '^\s*ssl_ciphers\s'
+        - '^\s*ssl_session_cache\s'
+        - '^\s*ssl_session_timeout\s'
+      notify: reload nginx
+      tags: [ssl, config]
 
-              # SSL/TLS hardening (managed by harden-nginx-ssl.yml)
-              include /etc/nginx/snippets/ssl-params.conf;
+    - name: Add ssl-params include to nginx.conf http block
+      ansible.builtin.lineinfile:
+        path: /etc/nginx/nginx.conf
+        insertbefore: '^\s*# Include virtual host configurations'
+        line: '    include /etc/nginx/snippets/ssl-params.conf;'
+        state: present
       notify: reload nginx
       tags: [ssl, config]
 
@@ -288,12 +364,13 @@
           ============================================================
 
           Changes applied:
+            0. OpenSSL MinProtocol: TLSv1.1 → TLSv1.2 | CipherString: SECLEVEL=1 → SECLEVEL=2
             1. DH Parameters: {{ dhparam_path }} ({{ dhparam_size }}-bit)
-            2. SSL Protocols: {{ ssl_protocols }}
-            3. Cipher Suites: {{ ssl_ciphers }}
+            2. SSL Protocols: TLSv1.1+TLSv1.2 (weak) → {{ ssl_protocols }}
+            3. Cipher Suites: AES-CBC/SHA-1/RSA (weak) → {{ ssl_ciphers }}
             4. ECDH Curve: {{ ssl_ecdh_curve }}
             5. Session Tickets: OFF (Perfect Forward Secrecy)
-            6. OCSP Stapling: ON
+            6. OCSP Stapling: {{ "ON (Let's Encrypt cert detected)" if ssl_stapling_active | default(false) else "OFF (no OCSP URL in cert — self-signed?)" }}
             7. HSTS: {{ hsts_max_age }}s (1 year) with includeSubDomains
             8. Security Headers: X-Frame-Options DENY, CSP, Permissions-Policy
             9. Backups saved: *.pre-hardening
@@ -303,8 +380,8 @@
             - Security Headers: https://securityheaders.com/?q={{ website_domain | default('mediasrl.swedencentral.cloudapp.azure.com') }}
 
           Expected improvement:
-            Before hardening: Grade A- or B
-            After hardening:  Grade A or A+
+            Before hardening: Grade B  (TLS 1.1 activ, ciphers SHA-1 + RSA fara PFS)
+            After hardening:  Grade A+ (TLS 1.2+1.3, AES-GCM, ECDHE/DHE, HSTS, CSP)
 
           To rollback:
             sudo cp /etc/nginx/nginx.conf.pre-hardening /etc/nginx/nginx.conf

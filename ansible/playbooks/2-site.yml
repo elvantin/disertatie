@@ -195,6 +195,75 @@
       tags: [fileserver]
 
 # =============================================================================
+# Phase 4b: Desktop shortcut on jumphost → SMB fileshare (vm-fs-01)
+# Runs after Phase 4 so vm-fs-01 is already configured
+# =============================================================================
+
+- name: Create SMB Fileshare Desktop Shortcut on Jumphost (vm-jmp-01)
+  hosts: jumphost
+  become: true
+  gather_facts: true
+  tags: [jumphost, fileserver, smb, shortcut]
+
+  tasks:
+    - name: Ensure Desktop directory exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/Desktop"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags: [jumphost, fileserver, smb, shortcut]
+
+    - name: Create SMB fileshare desktop shortcut (vm-fs-01 → Public)
+      ansible.builtin.copy:
+        dest: "/home/{{ ansible_user }}/Desktop/Partajare-Fisiere.desktop"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+        content: |
+          [Desktop Entry]
+          Version=1.0
+          Type=Link
+          Name=Partajare Fisiere (vm-fs-01)
+          Comment=Acces SMB la serverul de fisiere SC MEDIA SRL
+          Icon=folder-remote
+          URL=smb://{{ hostvars['vm-fs-01']['ansible_host'] }}/Public
+      tags: [jumphost, fileserver, smb, shortcut]
+
+    - name: Ensure GTK-3.0 config directory exists (file manager bookmarks)
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.config/gtk-3.0"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      tags: [jumphost, fileserver, smb, shortcut]
+
+    - name: Add SMB shares to file manager sidebar bookmarks
+      ansible.builtin.lineinfile:
+        path: "/home/{{ ansible_user }}/.config/gtk-3.0/bookmarks"
+        line: "smb://{{ hostvars['vm-fs-01']['ansible_host'] }}/{{ item.share }} {{ item.label }}"
+        create: yes
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      loop:
+        - { share: 'Public',    label: 'Public (vm-fs-01)' }
+        - { share: 'Marketing', label: 'Marketing (vm-fs-01)' }
+        - { share: 'IT',        label: 'IT (vm-fs-01)' }
+        - { share: 'Backups',   label: 'Backups (vm-fs-01)' }
+      tags: [jumphost, fileserver, smb, shortcut]
+
+    - name: Display fileshare shortcut status
+      ansible.builtin.debug:
+        msg: |
+          Desktop shortcut creat: ~/Desktop/Partajare-Fisiere.desktop
+          SMB path: smb://{{ hostvars['vm-fs-01']['ansible_host'] }}/Public
+          Sidebar bookmarks: Public, Marketing, IT, Backups
+      tags: [jumphost, fileserver, smb, shortcut]
+
+# =============================================================================
 # Phase 5: Security Hardening (CIS Benchmarks)
 # =============================================================================
 

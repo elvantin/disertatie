@@ -1,151 +1,394 @@
 ---
 # ============================================================
 # MySQL Transparent Data Encryption (TDE)
-# InnoDB tablespace encryption via keyring_file plugin
-# MySQL 8.0 Community Edition — Windows Server 2022
-# Included by: ansible/playbooks/5-harden-security.yml
+# Uses keyring_file PLUGIN (early-plugin-load in my.ini).
+#
+# Why plugin instead of component_keyring_file:
+#   - 2 lines in my.ini + restart — no JSON CNF, no manifest
+#   - MySQL service has native ACL on its own datadir (no permission issues)
+#   - PLUGIN_STATUS in information_schema.PLUGINS gives clear pass/fail
+#
+# Note: keyring_file plugin is deprecated in MySQL 8.0.34+.
+# Production recommendation: component_keyring_file instead.
 # ============================================================
 
-# ── Phase 1: Configure keyring plugin in my.ini ───────────────────────────────
+# ── Phase 0: Capture BEFORE state ────────────────────────────────────────────
 
-- name: "[mysql-tde] Capture encryption status BEFORE enabling TDE"
+- name: "[mysql-tde] Capture tablespace encryption BEFORE"
   ansible.windows.win_shell: |
     $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
-    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+    $pass  = '{{ mysql_root_password }}'
+    Write-Output "--- keyring plugin ---"
+    & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+      -e "SELECT PLUGIN_NAME, PLUGIN_STATUS FROM information_schema.PLUGINS WHERE PLUGIN_NAME='keyring_file';" 2>$null
+    Write-Output "--- tablespace encryption ---"
+    & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
       -e "SELECT NAME, ENCRYPTION FROM information_schema.INNODB_TABLESPACES WHERE NAME LIKE 'wordpress_db/%' OR NAME LIKE 'mediasrl_business/%' ORDER BY NAME;" 2>$null
   register: tde_before
   changed_when: false
   failed_when: false
   tags: [tde]
 
-- name: "[mysql-tde] Show encryption status BEFORE TDE"
+- name: "[mysql-tde] Show BEFORE state"
   ansible.builtin.debug:
-    msg: "BEFORE TDE:\n{{ tde_before.stdout | default('(no data)') }}"
+    msg: "BEFORE TDE:\n{{ tde_before.stdout | default('(no output)') }}"
   tags: [tde]
 
-- name: "[mysql-tde] Add keyring_file plugin to my.ini"
+# ── Phase 1: Verify keyring_file.dll exists in plugin_dir ────────────────────
+
+- name: "[mysql-tde] Verify keyring_file.dll exists"
   ansible.windows.win_shell: |
-    $iniPath = 'C:\ProgramData\MySQL\MySQL Server 8.0\my.ini'
-    $settings = @(
-      'early-plugin-load=keyring_file.dll',
-      'keyring_file_data=C:/ProgramData/MySQL/MySQL Server 8.0/keyring',
-      'default_table_encryption=ON'
-    )
-    $content = Get-Content $iniPath -Raw
-    foreach ($line in $settings) {
-      if ($content -notmatch [regex]::Escape($line)) {
-        $content = $content -replace '(\[mysqld\])', "`$1`r`n$line"
-        Write-Output "Added: $line"
+    $mysql  = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $pass   = '{{ mysql_root_password }}'
+    $plugdir = (& $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+      --skip-column-names -e "SELECT @@global.plugin_dir;" 2>$null |
+      Select-Object -Last 1).Trim().TrimEnd('\/')
+    $dll = "$plugdir\keyring_file.dll"
+    if (Test-Path $dll) {
+      Write-Output "OK: keyring_file.dll found at $dll"
+    } else {
+      Write-Output "MISSING: keyring_file.dll not found in $plugdir"
+      Get-ChildItem $plugdir -Filter '*keyring*' -ErrorAction SilentlyContinue |
+        ForEach-Object { Write-Output "  available: $($_.Name)" }
+      exit 1
+    }
+  register: dll_check
+  changed_when: false
+  failed_when: dll_check.rc != 0
+  tags: [tde]
+
+- name: "[mysql-tde] Show plugin_dir check"
+  ansible.builtin.debug:
+    var: dll_check.stdout_lines
+  tags: [tde]
+
+# ── Phase 2: Add keyring_file settings to my.ini ─────────────────────────────
+# KEY: MySQL installer may configure the service WITHOUT --defaults-file, in which
+# case MySQL reads BASEDIR\my.ini (C:\Program Files\MySQL\...\my.ini), NOT
+# C:\ProgramData\...\my.ini. We detect the actual path from the service registry.
+# APPEND a new [mysqld] section — MySQL merges multiple [mysqld] sections.
+# If the file is empty (hardening.yml Set-Content bug), we recreate it minimal.
+
+- name: "[mysql-tde] Add keyring_file settings to my.ini"
+  ansible.windows.win_shell: |
+    # --- Detect which my.ini MySQL actually reads ---
+    $svcImg = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\MySQL80' `
+      -Name ImagePath -ErrorAction SilentlyContinue).ImagePath
+    Write-Output "MySQL80 service: $svcImg"
+
+    $iniPath = $null
+    if ($svcImg -match '--defaults-file=(?:"([^"]+)"|([^\s"]+))') {
+      $iniPath = if ($matches[1]) { $matches[1] } else { $matches[2] }
+      Write-Output "Detected --defaults-file: $iniPath"
+    } else {
+      # No --defaults-file in service → MySQL reads BASEDIR\my.ini
+      $iniPath = '{{ mysql_install_dir }}\my.ini'
+      Write-Output "No --defaults-file in service — using basedir\my.ini: $iniPath"
+    }
+    Write-Output "Target: $iniPath (exists: $(Test-Path $iniPath))"
+
+    $kfdLine = "keyring_file_data=C:/ProgramData/MySQL/MySQL Server 8.0/Data/keyring"
+    $eplLine = "early-plugin-load=keyring_file.dll"
+
+    # --- Read raw bytes (encoding-agnostic) ---
+    if (Test-Path $iniPath) {
+      $raw = [System.IO.File]::ReadAllBytes($iniPath)
+    } else {
+      $raw = @()
+    }
+    Write-Output "File size: $($raw.Length) bytes"
+
+    if ($raw.Length -eq 0) {
+      Write-Output "File empty/missing — creating minimal my.ini with TDE settings"
+      $minimal = "[mysqld]`r`n$kfdLine`r`n$eplLine`r`n"
+      [System.IO.File]::WriteAllText($iniPath, $minimal, [System.Text.Encoding]::ASCII)
+      Write-Output "Added: $eplLine"
+      Write-Output "Added: $kfdLine"
+    } else {
+      # BOM-aware decode
+      if ($raw.Length -ge 2 -and $raw[0] -eq 0xFF -and $raw[1] -eq 0xFE) {
+        $text = [System.Text.Encoding]::Unicode.GetString($raw, 2, $raw.Length - 2)
+        Write-Output "Encoding: UTF-16 LE"
+      } elseif ($raw.Length -ge 3 -and $raw[0] -eq 0xEF -and $raw[1] -eq 0xBB -and $raw[2] -eq 0xBF) {
+        $text = [System.Text.Encoding]::UTF8.GetString($raw, 3, $raw.Length - 3)
+        Write-Output "Encoding: UTF-8 BOM"
       } else {
-        Write-Output "Already present: $line"
+        $text = [System.Text.Encoding]::Default.GetString($raw)
+        Write-Output "Encoding: ANSI/ASCII"
+      }
+      Write-Output "First line: $(($text -split '\r?\n')[0])"
+
+      $needEPL = $text -notmatch 'early-plugin-load'
+      $needKFD = $text -notmatch 'keyring_file_data'
+
+      if (-not ($needEPL -or $needKFD)) {
+        Write-Output "Already present: early-plugin-load and keyring_file_data"
+      } else {
+        # Append new [mysqld] section (MySQL accepts multiple — last value wins)
+        $toAppend = "`r`n[mysqld]`r`n"
+        if ($needKFD) { $toAppend += "$kfdLine`r`n" }
+        if ($needEPL) { $toAppend += "$eplLine`r`n" }
+        [System.IO.File]::AppendAllText($iniPath, $toAppend, [System.Text.Encoding]::ASCII)
+        if ($needEPL) { Write-Output "Added: $eplLine" }
+        if ($needKFD) { Write-Output "Added: $kfdLine" }
       }
     }
-    Set-Content $iniPath -Value $content -NoNewline
-  register: tde_myini_update
-  changed_when: "'Added:' in tde_myini_update.stdout"
-  notify: restart MySQL80
-  tags: [tde]
 
-# ── Phase 2: Create keyring directory ────────────────────────────────────────
-
-- name: "[mysql-tde] Create keyring directory"
-  ansible.windows.win_shell: |
-    $keyringDir = 'C:\ProgramData\MySQL\MySQL Server 8.0\keyring'
-    if (-not (Test-Path $keyringDir)) {
-      New-Item -Path $keyringDir -ItemType Directory -Force | Out-Null
-      Write-Output "Created keyring directory"
+    # --- Verify ---
+    $verify = [System.Text.Encoding]::Default.GetString([System.IO.File]::ReadAllBytes($iniPath))
+    if (($verify -match 'early-plugin-load') -and ($verify -match 'keyring_file_data')) {
+      Write-Output "CONFIRMED in ${iniPath}: early-plugin-load and keyring_file_data present"
     } else {
-      Write-Output "Keyring directory already exists"
+      Write-Output "ERROR: keyring lines missing from $iniPath after write!"; exit 1
     }
-  register: keyring_dir
-  changed_when: "'Created' in keyring_dir.stdout"
+  register: myini_update
+  changed_when: "'Added:' in (myini_update.stdout | default(''))"
+  failed_when: myini_update.rc != 0
   tags: [tde]
 
-# ── Phase 3: Restart MySQL to load keyring plugin ────────────────────────────
+- name: "[mysql-tde] Show my.ini update result"
+  ansible.builtin.debug:
+    var: myini_update.stdout_lines
+  tags: [tde]
 
-- name: "[mysql-tde] Restart MySQL80 service to load keyring plugin"
+# ── Phase 3: Restart MySQL80 to load the keyring_file plugin ─────────────────
+
+- name: "[mysql-tde] Restart MySQL80 service"
   ansible.windows.win_service:
     name: MySQL80
     state: restarted
   tags: [tde]
 
-- name: "[mysql-tde] Wait for MySQL to be ready after restart"
-  ansible.windows.win_wait_for:
-    port: 3306
-    host: 127.0.0.1
-    timeout: 60
-    delay: 5
+# ── Phase 4: Wait for MySQL to accept connections after restart ───────────────
+
+- name: "[mysql-tde] Wait for MySQL to be ready (up to 60s)"
+  ansible.windows.win_shell: |
+    $mysql  = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $pass   = '{{ mysql_root_password }}'
+    $ready  = $false
+    $attempt = 0
+    for ($i = 1; $i -le 20; $i++) {
+      Start-Sleep -Seconds 3
+      $attempt = $i
+      $out = & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 --connect-timeout=5 `
+        -e "SELECT 1;" 2>$null
+      if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+    }
+    if ($ready) {
+      Write-Output "MySQL ready after attempt $attempt ($($attempt * 3)s)"
+    } else {
+      Write-Output "MySQL not ready after 60 seconds"
+      exit 1
+    }
+  register: mysql_wait
+  changed_when: false
+  failed_when: mysql_wait.rc != 0
   tags: [tde]
 
-# ── Phase 4: Encrypt existing tablespaces ────────────────────────────────────
+- name: "[mysql-tde] Show MySQL ready status"
+  ansible.builtin.debug:
+    var: mysql_wait.stdout_lines
+  tags: [tde]
 
-- name: "[mysql-tde] Verify keyring plugin is loaded"
+# ── Phase 5: Verify keyring_file plugin is ACTIVE ────────────────────────────
+# If early-plugin-load failed (wrong ini file, empty file, etc.), fall back to
+# runtime INSTALL PLUGIN. This is sufficient to encrypt tablespaces this session.
+# The early-plugin-load in the corrected my.ini handles future MySQL restarts
+# (required so InnoDB can open encrypted tablespaces before mysql.plugin is read).
+
+- name: "[mysql-tde] Verify keyring_file plugin status"
   ansible.windows.win_shell: |
     $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
-    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
-      -e "SELECT PLUGIN_NAME, PLUGIN_STATUS FROM information_schema.PLUGINS WHERE PLUGIN_NAME LIKE 'keyring%';" 2>$null
-  register: keyring_check
+    $pass  = '{{ mysql_root_password }}'
+
+    $check = & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+      -e "SELECT PLUGIN_NAME, PLUGIN_STATUS FROM information_schema.PLUGINS WHERE PLUGIN_NAME='keyring_file';" 2>$null
+    Write-Output $check
+
+    if ($check -match 'ACTIVE') {
+      Write-Output "KEYRING_ACTIVE=YES (early-plugin-load)"
+    } else {
+      Write-Output "NOTE: early-plugin-load did not activate keyring_file — trying runtime INSTALL PLUGIN"
+      $cnt = (& $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 --skip-column-names `
+        -e "SELECT COUNT(*) FROM information_schema.PLUGINS WHERE PLUGIN_NAME='keyring_file';" `
+        2>$null | Select-Object -Last 1).Trim()
+      if ([int]$cnt -eq 0) {
+        $installOut = & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+          -e "INSTALL PLUGIN keyring_file SONAME 'keyring_file.dll';" 2>&1
+        Write-Output "INSTALL PLUGIN: $installOut"
+      } else {
+        Write-Output "Plugin entry exists in information_schema but not ACTIVE"
+      }
+      # keyring_file_data defaults to <datadir>/keyring — same as what we set in my.ini
+      $kfd = 'C:/ProgramData/MySQL/MySQL Server 8.0/Data/keyring'
+      & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+        -e "SET GLOBAL keyring_file_data = '$kfd';" 2>$null
+      Write-Output "SET GLOBAL keyring_file_data = $kfd"
+
+      $check2 = & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+        -e "SELECT PLUGIN_NAME, PLUGIN_STATUS FROM information_schema.PLUGINS WHERE PLUGIN_NAME='keyring_file';" 2>$null
+      Write-Output $check2
+      if ($check2 -match 'ACTIVE') {
+        Write-Output "KEYRING_ACTIVE=YES (runtime INSTALL PLUGIN)"
+      } else {
+        Write-Output "KEYRING_ACTIVE=NO"
+        $logerr = (& $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 --skip-column-names `
+          -e "SELECT @@global.log_error;" 2>$null | Select-Object -Last 1).Trim()
+        if ($logerr -and (Test-Path $logerr)) {
+          Write-Output "--- MySQL error log (last 20 lines) ---"
+          Get-Content $logerr -Tail 20 | ForEach-Object { Write-Output "  LOG: $_" }
+        }
+      }
+    }
+  register: plugin_verify
   changed_when: false
   failed_when: false
   tags: [tde]
 
-- name: "[mysql-tde] Show keyring plugin status"
+- name: "[mysql-tde] Show plugin verification"
   ansible.builtin.debug:
-    msg: "Keyring status:\n{{ keyring_check.stdout | default('(no data)') }}"
+    var: plugin_verify.stdout_lines
   tags: [tde]
 
-- name: "[mysql-tde] Encrypt wordpress_db tablespaces"
+- name: "[mysql-tde] Abort if keyring_file plugin is not ACTIVE"
+  ansible.builtin.fail:
+    msg: |
+      keyring_file plugin is NOT ACTIVE after MySQL restart.
+      Check [mysql-tde] Show my.ini keyring lines output above — the lines must be present.
+  when: "'KEYRING_ACTIVE=NO' in (plugin_verify.stdout | default(''))"
+  tags: [tde]
+
+# ── Phase 6: Enable default_table_encryption globally + persist ───────────────
+
+- name: "[mysql-tde] SET GLOBAL default_table_encryption=ON"
   ansible.windows.win_shell: |
     $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
-    $tables = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
-      --skip-column-names -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='wordpress_db' AND ENGINE='InnoDB';" 2>$null
-    foreach ($table in ($tables -split "`n" | Where-Object { $_ -match '\S' })) {
-      $table = $table.Trim()
-      Write-Output "Encrypting wordpress_db.$table ..."
-      & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
-        -e "ALTER TABLE wordpress_db.``$table`` ENCRYPTION='Y';" 2>$null
-    }
-    Write-Output "wordpress_db encryption complete."
-  register: encrypt_wordpress
+    $pass  = '{{ mysql_root_password }}'
+    & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+      -e "SET GLOBAL default_table_encryption = ON;" 2>$null
+    Write-Output "SET GLOBAL default_table_encryption = ON: done"
+  register: tde_global_set
   changed_when: true
-  failed_when: "'complete' not in encrypt_wordpress.stdout"
+  tags: [tde]
+
+- name: "[mysql-tde] Persist default_table_encryption=ON to my.ini"
+  ansible.windows.win_shell: |
+    # Same dynamic path detection as Phase 2
+    $svcImg = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\MySQL80' `
+      -Name ImagePath -ErrorAction SilentlyContinue).ImagePath
+    $iniPath = $null
+    if ($svcImg -match '--defaults-file=(?:"([^"]+)"|([^\s"]+))') {
+      $iniPath = if ($matches[1]) { $matches[1] } else { $matches[2] }
+    } else {
+      $iniPath = '{{ mysql_install_dir }}\my.ini'
+    }
+    $text = if (Test-Path $iniPath) {
+      [System.Text.Encoding]::Default.GetString([System.IO.File]::ReadAllBytes($iniPath))
+    } else { "" }
+    if ($text -match 'default_table_encryption') {
+      Write-Output "Already present: default_table_encryption in $iniPath"
+    } else {
+      [System.IO.File]::AppendAllText($iniPath, "`r`n[mysqld]`r`ndefault_table_encryption=ON`r`n", [System.Text.Encoding]::ASCII)
+      Write-Output "Added: default_table_encryption=ON to $iniPath"
+    }
+  changed_when: true
+  tags: [tde]
+
+# ── Phase 7: Encrypt existing tablespaces ─────────────────────────────────────
+
+- name: "[mysql-tde] Encrypt wordpress_db tablespaces (ALTER TABLE ENCRYPTION='Y')"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $pass  = '{{ mysql_root_password }}'
+    $tables = & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+      --skip-column-names `
+      -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='wordpress_db' AND ENGINE='InnoDB';" 2>$null
+    $tableList = $tables -split "`n" | Where-Object { $_.Trim() -ne '' }
+    if (-not $tableList) {
+      Write-Output "wordpress_db: no InnoDB tables found (skip)"
+    } else {
+      $ok = 0; $err = 0
+      foreach ($t in $tableList) {
+        $tname = $t.Trim()
+        $out = & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+          -e "SET SESSION sql_mode=''; ALTER TABLE ``wordpress_db``.``$tname`` ENCRYPTION='Y';" 2>&1
+        if ($LASTEXITCODE -eq 0) { Write-Output "  [ok] $tname"; $ok++ }
+        else { Write-Output "  [err] ${tname}: $($out -join ' ')"; $err++ }
+      }
+      Write-Output "wordpress_db: $ok encrypted, $err errors"
+      if ($err -gt 0) { exit 1 }
+    }
+  register: encrypt_wp
+  changed_when: true
+  failed_when: encrypt_wp.rc != 0
+  tags: [tde]
+
+- name: "[mysql-tde] Show wordpress_db encryption result"
+  ansible.builtin.debug:
+    var: encrypt_wp.stdout_lines
   tags: [tde]
 
 - name: "[mysql-tde] Encrypt mediasrl_business tablespaces"
   ansible.windows.win_shell: |
     $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
-    $tables = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
-      --skip-column-names -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='mediasrl_business' AND ENGINE='InnoDB';" 2>$null
-    foreach ($table in ($tables -split "`n" | Where-Object { $_ -match '\S' })) {
-      $table = $table.Trim()
-      Write-Output "Encrypting mediasrl_business.$table ..."
-      & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
-        -e "ALTER TABLE mediasrl_business.``$table`` ENCRYPTION='Y';" 2>$null
+    $pass  = '{{ mysql_root_password }}'
+    $tables = & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+      --skip-column-names `
+      -e "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='mediasrl_business' AND ENGINE='InnoDB';" 2>$null
+    $tableList = $tables -split "`n" | Where-Object { $_.Trim() -ne '' }
+    if (-not $tableList) {
+      Write-Output "mediasrl_business: no InnoDB tables found (skip)"
+    } else {
+      $ok = 0; $err = 0
+      foreach ($t in $tableList) {
+        $tname = $t.Trim()
+        $out = & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+          -e "SET SESSION sql_mode=''; ALTER TABLE ``mediasrl_business``.``$tname`` ENCRYPTION='Y';" 2>&1
+        if ($LASTEXITCODE -eq 0) { Write-Output "  [ok] $tname"; $ok++ }
+        else { Write-Output "  [err] ${tname}: $($out -join ' ')"; $err++ }
+      }
+      Write-Output "mediasrl_business: $ok encrypted, $err errors"
+      if ($err -gt 0) { exit 1 }
     }
-    Write-Output "mediasrl_business encryption complete."
-  register: encrypt_business
+  register: encrypt_biz
   changed_when: true
-  failed_when: "'complete' not in encrypt_business.stdout"
+  failed_when: encrypt_biz.rc != 0
   tags: [tde]
 
-# ── Phase 5: Verify TDE ───────────────────────────────────────────────────────
+- name: "[mysql-tde] Show mediasrl_business encryption result"
+  ansible.builtin.debug:
+    var: encrypt_biz.stdout_lines
+  tags: [tde]
 
-- name: "[mysql-tde] Capture encryption status AFTER enabling TDE"
+# ── Phase 8: Verify TDE ────────────────────────────────────────────────────────
+
+- name: "[mysql-tde] Verify tablespace encryption AFTER"
   ansible.windows.win_shell: |
     $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
-    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P 3306 `
+    $pass  = '{{ mysql_root_password }}'
+    & $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
       -e "SELECT NAME, ENCRYPTION FROM information_schema.INNODB_TABLESPACES WHERE NAME LIKE 'wordpress_db/%' OR NAME LIKE 'mediasrl_business/%' ORDER BY NAME;" 2>$null
-  register: tde_after
+    $unenc = (& $mysql -u root -p"$pass" -h 127.0.0.1 -P 3306 `
+      --skip-column-names `
+      -e "SELECT COUNT(*) FROM information_schema.INNODB_TABLESPACES WHERE (NAME LIKE 'wordpress_db/%' OR NAME LIKE 'mediasrl_business/%') AND ENCRYPTION='N';" 2>$null |
+      Select-Object -Last 1).Trim()
+    if ([string]::IsNullOrWhiteSpace($unenc)) { $unenc = '0' }
+    if ([int]$unenc -eq 0) {
+      Write-Output "TDE_OK=YES — all tablespaces ENCRYPTION=Y"
+    } else {
+      Write-Output "TDE_OK=PARTIAL — $unenc tablespace(s) still ENCRYPTION=N"
+    }
+  register: tde_verify
   changed_when: false
   failed_when: false
   tags: [tde]
 
-- name: "[mysql-tde] Show encryption status AFTER TDE"
+- name: "[mysql-tde] Show TDE verification result"
   ansible.builtin.debug:
     msg: |
       AFTER TDE:
-      {{ tde_after.stdout | default('(no data)') }}
+      {{ tde_verify.stdout | default('(no data)') }}
 
-      wordpress_db encryption: {{ encrypt_wordpress.stdout | default('') }}
-      mediasrl_business encryption: {{ encrypt_business.stdout | default('') }}
+      wordpress_db  — {{ encrypt_wp.stdout_lines | select('match', '.*\[ok\].*') | list | length }} tables encrypted
+      mediasrl_biz  — {{ encrypt_biz.stdout_lines | select('match', '.*\[ok\].*') | list | length }} tables encrypted
   tags: [tde]

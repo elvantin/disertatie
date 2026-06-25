@@ -212,6 +212,7 @@ apt install -y \
     git vim nano mc wget curl htop tmux screen \
     net-tools dnsutils tcpdump nmap telnet netcat \
     jq tree bash-completion unzip zip tar build-essential \
+    dos2unix ssh-audit \
     mysql-client-core-8.0 smbclient
 
 # =============================================================================
@@ -447,7 +448,8 @@ Installed Tools:
 - Ansible, Azure CLI, Git, VS Code
 - Firefox ESR, Remmina (RDP/VNC)
 - MySQL Workbench 8.0.46 (connect to vm-db-01:3306)
-- DevOps utilities (htop, tmux, jq, etc.)
+- ssh-audit (SSH server/client audit tool)
+- DevOps utilities (htop, tmux, jq, dos2unix, etc.)
 
 Ansible Galaxy Collections (pre-installed):
 - ansible.windows, ansible.posix

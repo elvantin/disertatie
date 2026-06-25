@@ -106,6 +106,25 @@ Write-Log-Header "Copiere fișiere Ansible pe jumphost" -Step 1 -Total 3
 if ($SkipCopy) {
     Write-Log-Warn "SKIP: Copiere fișiere (-SkipCopy)" -Detail "Se presupune că fișierele există deja pe jumphost"
 } else {
+    # Convert CRLF -> LF on Windows before SCP.
+    # This is the only reliable fix: strip CR at the source so Linux never sees \r,
+    # regardless of git autocrlf settings or editor defaults.
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    $linuxExts = '*.sh','*.py','*.yml','*.yaml','*.j2','*.cfg','*.conf','*.ini','*.json'
+    $converted = 0
+    foreach ($ext in $linuxExts) {
+        Get-ChildItem -Path $LocalPath -Recurse -Include $ext -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            $raw = [System.IO.File]::ReadAllText($_.FullName)
+            $lf  = $raw -replace "`r`n", "`n" -replace "`r", "`n"
+            if ($lf -ne $raw) {
+                [System.IO.File]::WriteAllText($_.FullName, $lf, $utf8NoBom)
+                $converted++
+            }
+        }
+    }
+    Write-Log-OK "CRLF → LF" -Detail "$converted fisiere convertite inainte de SCP"
+
     Write-Log-Step "scp $LocalPath → ${SSHTarget}:${RemotePath} ..."
     scp @SSHOpts -r "${LocalPath}\*" "${SSHTarget}:${RemotePath}/"
 
@@ -134,7 +153,7 @@ if ($SkipConfig) {
 Write-Log-Step "Permisiuni, activare inventory ($SourceInventory → $ActiveInventory), domain: $DeployDomain"
 
 $sshStep2Lines = [System.Collections.Generic.List[string]]::new()
-ssh @SSHOpts $SSHTarget @"
+$step2Script = @"
 echo '========================================='
 echo 'STEP 3: Configurare finala'
 echo '========================================='
@@ -142,6 +161,7 @@ echo '========================================='
 echo ''
 echo '--- Permisiuni ---'
 chmod 755 ${RemotePath}
+mkdir -p ${RemotePath}/logs && chmod 775 ${RemotePath}/logs
 chmod 755 ${RemotePath}/inventory   2>/dev/null || true
 chmod 755 ${RemotePath}/group_vars  2>/dev/null || true
 chmod 755 ${RemotePath}/playbooks   2>/dev/null || true
@@ -153,6 +173,7 @@ find ${RemotePath} -name '*.yml' -exec chmod 644 {} + 2>/dev/null || true
 chmod +x ${RemotePath}/run-playbook.sh                  2>/dev/null || true
 chmod +x ${RemotePath}/scripts/*.sh                     2>/dev/null || true
 chmod +x ${RemotePath}/scripts/lib/*.sh                 2>/dev/null || true
+find ${RemotePath} -name '*.sh' -type f | xargs -r perl -pi -e 's/\r\n/\n/g; s/\r/\n/g'
 echo '  OK'
 
 echo ''
@@ -201,7 +222,9 @@ ansible --version 2>&1 | head -3
 
 echo ''
 echo '--- Lista hosturi ---'
-cd ${RemotePath} && ansible all --list-hosts 2>&1 | head -20
+# vault-pass nu exista inca la aceasta etapa (se creeaza in Step 3 din KV).
+# Eroarea de vault de mai jos este asteptata si nu opreste scriptul.
+cd ${RemotePath} && ansible all --list-hosts 2>&1 | head -20 || true
 
 echo ''
 echo '========================================='
@@ -221,7 +244,8 @@ echo '  bash scripts/certbot-letsencrypt.sh --env prod # certificat TLS Let'"'"'
 echo "  ./run-playbook.sh 'harden-security(daca_nu_rulez_demouri).yml'"
 echo '  ./run-playbook.sh 6-monitoring.yml             # Azure Monitor Agent'
 echo '========================================='
-"@ 2>&1 | ForEach-Object { Write-Host $_; [void]$sshStep2Lines.Add([string]$_) }
+"@ -replace "`r`n", "`n"
+$step2Script | ssh @SSHOpts $SSHTarget "bash" 2>&1 | ForEach-Object { Write-Host $_; [void]$sshStep2Lines.Add([string]$_) }
 $sshStep2Exit = $LASTEXITCODE
 Write-Log-Block -Label "Output SSH: configurare permisiuni, inventory, Ansible — $SSHTarget" -Content ($sshStep2Lines -join "`n")
 
@@ -242,35 +266,28 @@ Write-Log-Header "Ansible Vault — ~/.vault-pass din Key Vault (MSI)" -Step 3 -
 if ($SkipVault) {
     Write-Log-Warn "SKIP: Ansible Vault (-SkipVault)" -Detail "Se presupune ca ~/.vault-pass exista deja pe jumphost"
 } else {
-    Write-Log-Step "Fetch ansible-vault-password din kv-mediasrl-persistent via MSI → ~/.vault-pass..."
+    Write-Log-Step "Rulare create-ansible-vault.sh pe jumphost (MSI → KV → vault.yml AES-256)..."
 
     $vaultLines = [System.Collections.Generic.List[string]]::new()
-    ssh @SSHOpts $SSHTarget @"
-pass=`$(az keyvault secret show --vault-name kv-mediasrl-persistent --name ansible-vault-password --query value -o tsv 2>&1)
-if [ -z "`$pass" ] || echo "`$pass" | grep -qi 'error\|could not'; then
-    echo "[ERR] Nu s-a putut obtine ansible-vault-password din Key Vault"
-    echo "      Verifica ca VM MSI are rolul 'Key Vault Secrets User' pe kv-mediasrl-persistent"
-    exit 1
-fi
-printf '%s' "`$pass" > ~/.vault-pass
-chmod 600 ~/.vault-pass
-echo "[OK] ~/.vault-pass scris (mode 600)"
-vault_file="${RemotePath}/group_vars/all/vault.yml"
-if [ -f "`$vault_file" ]; then
-    echo "[OK] vault.yml prezent: `$vault_file"
-    ansible-vault view "`$vault_file" --vault-password-file ~/.vault-pass 2>&1 | head -3 || echo "  (verificare vault esuata)"
-else
-    echo "[WARN] vault.yml lipsa din `$vault_file — verifica repo-ul"
-fi
-"@ 2>&1 | ForEach-Object { Write-Host $_; [void]$vaultLines.Add([string]$_) }
+
+    # ANSIBLE_CONFIG trebuie setat explicit — sesiunile SSH non-interactive nu surseaza .bashrc
+    $vaultScript = @"
+#!/bin/bash
+set -e
+export ANSIBLE_CONFIG=${RemotePath}/ansible.cfg
+cd ${RemotePath}
+bash scripts/create-ansible-vault.sh
+"@ -replace "`r`n", "`n"
+
+    $vaultScript | ssh @SSHOpts $SSHTarget 'cat > /tmp/_vs.sh && sed -i "s/\r//" /tmp/_vs.sh && bash /tmp/_vs.sh; rc=$?; rm -f /tmp/_vs.sh; exit $rc' 2>&1 | ForEach-Object { Write-Host $_; [void]$vaultLines.Add([string]$_) }
     $vaultExit = $LASTEXITCODE
-    Write-Log-Block -Label "Output SSH: vault-pass setup" -Content ($vaultLines -join "`n")
+    Write-Log-Block -Label "Output SSH: create-ansible-vault.sh" -Content ($vaultLines -join "`n")
 
     if ($vaultExit -ne 0) {
-        Write-Log-Fail "Setarea vault-password a esuat" -Detail "Verifica ca VM MSI are 'Key Vault Secrets User' pe kv-mediasrl-persistent"
+        Write-Log-Fail "Vault setup esuat" -Detail "Verifica: MSI are 'Key Vault Secrets User' pe kv-mediasrl-persistent | toate secretele exista (ruleaza 0-bootstrap-keyvault.ps1)"
         Stop-LogSession; exit 1
     }
-    Write-Log-OK "~/.vault-pass setat" -Detail "kv-mediasrl-persistent → ansible-vault-password  |  vault.yml (AES-256) prezent  |  mode 600"
+    Write-Log-OK "Vault configurat" -Detail "~/.vault-pass + group_vars/all/vault.yml (AES-256, 6 variabile)"
 }
 
 # =============================================================================
@@ -290,7 +307,7 @@ Write-Log-Info "  ./run-playbook.sh 2-deploy-wordpress.yml"
 Write-Log-Info "  ./run-playbook.sh 3-wordpress-config.yml"
 Write-Log-Info "  ./run-playbook.sh 4-harden-nginx-ssl_ssllabs.com_ssltest.yml"
 Write-Log-Info "  bash scripts/certbot-letsencrypt.sh --env prod   # certificat TLS"
-Write-Log-Info "  ./run-playbook.sh 'harden-security(daca_nu_rulez_demouri).yml'"
+Write-Log-Info "  ./run-playbook.sh 'harden-security.yml'"
 Write-Log-Info "  ./run-playbook.sh 6-monitoring.yml"
 Write-Log-Info "Sau testeaza mai intai infrastructura Azure: .\scripts\4-test-infrastructure.ps1"
 

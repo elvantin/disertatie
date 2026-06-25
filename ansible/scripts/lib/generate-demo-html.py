@@ -59,6 +59,40 @@ def classify_line(raw_line: str) -> str:
     if re.search(r'[╔╠╚╗╝║╣]', strip_ansi(raw_line)):
         return 'banner'
 
+    # ssh-audit specific patterns — must be checked before general patterns
+    # because [FAIL]/[WARN] are embedded in structured lines like "(kex) ... -- [fail]"
+    if re.search(r'\[FAIL\]', s):
+        return 'sec-bad'   # bold red — cryptographic failure (weak curve, broken algo)
+    if re.search(r'\[INFO\]', s):
+        return 'ok'        # green — algorithm passes all checks
+    if re.search(r'^\(REC\) -', s):
+        return 'sec-bad'   # recommendation: algo to remove (bad, present but should go)
+    if re.search(r'^\(REC\) \+', s):
+        return 'sec-good'  # recommendation: algo to add (good, missing but should be there)
+    if s.startswith('# ') and re.search(r'^# [A-Z]', s):
+        return 'sec-hdr'   # ssh-audit section header (# key exchange algorithms, etc.)
+
+    # sshd -T capture section markers
+    if re.search(r'^\[DROP-IN\]|\[EFFECTIVE\]|\[CHECK\]', s):
+        return 'sec-hdr'
+
+    # sshd -T effective algorithm lines — color based on weak algorithm presence
+    if re.search(r'^(KEXALGORITHMS|HOSTKEYALGORITHMS|CIPHERS|MACS)\s', s):
+        _weak = [
+            r'ECDSA-SHA2-NISTP',          # weak NIST-P host key
+            r'ECDH-SHA2-NISTP',           # weak NIST-P key exchange
+            r'HMAC-SHA1(?!-ETM)',          # SHA-1 MAC (deprecated)
+            r'HMAC-SHA2-256(?!-ETM)',      # non-ETM: encrypt-and-MAC weakness
+            r'HMAC-SHA2-512(?!-ETM)',      # non-ETM: encrypt-and-MAC weakness
+            r'UMAC-64(?!-ETM)',            # 64-bit tag — too short
+            r'SNTRUP761',                  # experimental — not production-safe
+            r'AES128-CBC|AES192-CBC|AES256-CBC',  # CBC mode ciphers
+            r'ARCFOUR|3DES|BLOWFISH',     # broken stream/block ciphers
+        ]
+        if any(re.search(p, s) for p in _weak):
+            return 'sec-bad'
+        return 'ok'
+
     if re.search(
         r'BLOCKED|429 TOO MANY|IP BANNED|BANNED BY FAIL2BAN|'
         r'CONNECTION REFUSED|CONNECTION.*RESET.*BAN|'
@@ -224,86 +258,126 @@ DEMO_EXPLANATIONS = {
         'prot_title': 'Protecție implementată (după hardening)',
         'prot_body': (
             'Fail2ban monitorizează logurile SSH și HTTP în timp real și <strong>blochează automat '
-            'via iptables</strong> orice IP care eșuează autentificarea de <strong>5 ori în 10 minute</strong> '
-            '(ban de 1 oră). Subrețeaua de management <code>10.10.12.0/24</code> este în lista '
-            '<code>ignoreip</code> — jumphost-ul nu poate fi blocat accidental.'
+            'via firewalld rich rules</strong> (REJECT icmp-port-unreachable) orice IP care eșuează '
+            'autentificarea de <strong>5 ori în 10 minute</strong> (ban de 1 oră). '
+            'Subrețeaua de management <code>10.10.12.0/24</code> este în lista '
+            '<code>ignoreip</code> — jumphost-ul nu poate fi blocat accidental, '
+            'Ansible rămâne funcțional indiferent de câte tentative eșuate vin din subnet-ul de management.'
         ),
         'method': (
-            '6 tentative SSH eșuate simulate de la IP-ul extern 203.0.113.100 (RFC 5737 — IP de test). '
-            'BEFORE: nedetectate, toate conexiunile ajung la sshd. '
-            'AFTER: după 5 eșecuri IP-ul este banat automat, conexiunea a 6-a este refuzată (DROP iptables).'
+            '6 tentative SSH eșuate simulate de la IP-ul extern 203.0.113.100 (RFC 5737 — IP rezervat pentru testare). '
+            'BEFORE: nedetectate, toate conexiunile ajung la sshd (nicio regulă fail2ban). '
+            'AFTER: IP extern banat automat după 5 eșecuri via firewalld REJECT; '
+            '7 tentative de la jumphost (10.10.12.0/24) nu declanșează banul — ignoreip activ.'
         ),
-        'config':   'fail2ban: maxretry=5, findtime=600s, bantime=3600s, ignoreip=127.0.0.1/8 10.10.12.0/24',
+        'config':   'fail2ban: maxretry=5, findtime=600s, bantime=3600s, ignoreip=127.0.0.1/8 ::1 10.10.12.0/24 | banaction=firewallcmd-rich-rules (REJECT)',
         'standard': 'CIS Benchmark SSH Server Configuration + NIST SP 800-53 AC-7 (Unsuccessful Logon Attempts)',
         'conclusion': (
             'Fail2ban detectează și blochează automat atacurile brute-force prin monitorizarea în timp real '
             'a logurilor de autentificare. Subrețeaua de management este exclusă din blocare (<code>ignoreip</code>), '
             'garantând că jumphost-ul (vm-jmp-01) nu poate bloca accidental accesul administrativ Ansible. '
-            'Regulile iptables sunt <strong>persistente</strong> și se restaurează automat la repornire prin '
-            '<code>fail2ban.service</code>. Orice IP banat este vizibil în timp real cu '
-            '<code>fail2ban-client status sshd</code>.'
+            'Regulile <strong>firewalld rich rules</strong> sunt persistente și se restaurează automat la repornire prin '
+            '<code>fail2ban.service</code>. Tipul de blocare este <code>REJECT icmp-port-unreachable</code> '
+            '(nu DROP) — clientul primește imediat un răspuns de refuz, fără timeout. '
+            'Orice IP banat este vizibil în timp real cu <code>fail2ban-client status sshd</code>.'
         ),
     },
     '3': {
         'risk_title': 'Risc identificat (fără hardening)',
         'risk_body': (
-            'Configurația SSH implicită Ubuntu 22.04 permite algoritmi considerați <strong>slabi criptografic</strong>: '
-            '<code>diffie-hellman-group14-sha1</code> (KEX), <code>hmac-sha1</code> (MAC), '
-            '<code>aes128-cbc</code> (cipher). Aceștia pot fi compromiși prin atacuri '
-            'criptografice moderne (Logjam, SWEET32) sau prin putere de calcul viitoare.'
+            'Analiza <code>ssh-audit</code> identifică <strong>[fail] ecdsa-sha2-nistp256</strong> '
+            'ca algoritm de cheie de host — curba NIST-P256 este considerată slabă din cauza '
+            'riscului de RNG biased (backdoor-ul potențial al NIST). '
+            'De asemenea, <strong>[warn] hmac-sha2-256</strong> și <strong>hmac-sha2-512</strong> '
+            'în mod non-ETM (Encrypt-and-MAC) sunt vulnerabile la atacuri de tip '
+            'padding oracle față de varianta ETM (Encrypt-then-MAC). '
+            'Toate aceste conexiuni ar putea fi compromise prin atacuri criptanalitice '
+            'avansate sau de tip downgrade.'
         ),
         'prot_title': 'Protecție implementată (după hardening)',
         'prot_body': (
-            'sshd restricționează algoritmii acceptați exclusiv la cei moderni: '
-            '<code>curve25519-sha256</code> (KEX), <code>chacha20-poly1305 + aes256-gcm</code> (cipher), '
-            '<code>hmac-sha2-512-etm</code> (MAC). Conexiunile cu algoritmi slabi sunt '
-            '<strong>explicit respinse</strong> cu mesaj "no matching cipher/kex".'
+            'sshd restricționează algoritmii exclusiv la cei moderni prin '
+            '<code>/etc/ssh/sshd_config.d/99-hardening.conf</code>: '
+            '<code>curve25519-sha256 + DH-group{14,16,18}-sha{256,512}</code> (KEX), '
+            '<code>chacha20-poly1305 + aes256-gcm</code> (cipher AEAD), '
+            '<code>hmac-sha2-{512,256}-etm + umac-128-etm</code> (MAC ETM only), '
+            '<code>ssh-ed25519 + rsa-sha2-{512,256}</code> (host keys — fără ecdsa). '
+            'Conexiunile cu algoritmi slabi sunt <strong>explicit respinse</strong> '
+            '("no matching MAC/kex found").'
         ),
         'method': (
-            'ssh -vv captează algoritmii negociați înainte și după hardening. '
-            'Test explicit: tentativă de conexiune cu -o Ciphers=aes128-cbc (algoritm slab) — '
-            'BEFORE: posibil acceptat. AFTER: respins cu "no matching cipher".'
+            'Captură via <code>sshd -T | grep -iE "^(kexalgorithms|ciphers|macs|hostkeyalgorithms)"</code> '
+            'rulat pe server prin Ansible — returnează configurația runtime efectivă inclusiv valorile implicite. '
+            'BEFORE: fișierul 99-hardening.conf este absent — sshd include ecdsa-sha2-nistp256 și MACs non-ETM. '
+            'AFTER: 99-hardening.conf activ — algoritmii slabi eliminați complet din ofertă. '
+            'Test de respingere: ssh cu <code>-o MACs=hmac-sha2-256</code> și '
+            '<code>-o KexAlgorithms=ecdh-sha2-nistp256</code> — ambele refuzate cu "unable to negotiate".'
         ),
-        'config':   '/etc/ssh/sshd_config.d/99-hardening.conf — KexAlgorithms, Ciphers, MACs, HostKeyAlgorithms, PermitRootLogin no, MaxAuthTries 3',
+        'config':   '/etc/ssh/sshd_config.d/99-hardening.conf — KexAlgorithms, Ciphers, MACs, HostKeyAlgorithms, PermitRootLogin no, MaxAuthTries 3, LoginGraceTime 30',
         'standard': 'BSI TR-02102-4 (SSH), NIST SP 800-57, CIS Benchmark Level 2 — SSH Server',
         'conclusion': (
-            'SSH este configurat conform standardelor moderne de criptografie. Toți algoritmii legacy sunt '
-            'eliminați, prevenind atacuri de tip downgrade și criptanalitice. Configurația este plasată în '
-            '<code>/etc/ssh/sshd_config.d/99-hardening.conf</code> cu prioritate maximă (numărul 99 '
-            'override-uiește orice alt fișier de configurare). Verificarea cu '
-            '<code>ssh-audit</code> sau <code>nmap --script ssh2-enum-algos</code> confirmă '
+            'SSH Hardening elimină algoritmii clasificați <code>[fail]</code> și <code>[warn]</code> de <code>ssh-audit</code>. '
+            'Cheia de host <code>ecdsa-sha2-nistp256</code> (curba NIST-P slabă) este înlocuită cu '
+            '<code>ssh-ed25519</code> și <code>rsa-sha2-512</code>. '
+            'MAC-urile non-ETM (Encrypt-and-MAC) sunt eliminate — rămân exclusiv variantele '
+            '<code>-etm@openssh.com</code> (Encrypt-then-MAC, rezistente la padding oracle). '
+            'Configurația plasată în <code>/etc/ssh/sshd_config.d/99-hardening.conf</code> '
+            'are prioritate maximă (override 99) și este idempotentă. '
+            'Verificare: <code>ssh-audit VM_IP</code> sau '
+            '<code>sshd -T | grep -iE "^(kex|cipher|macs|hostkeyalg)"</code> confirmă '
             '<strong>absența completă a algoritmilor vulnerabili</strong>.'
         ),
     },
     '4': {
-        'risk_title': 'Risc identificat (fără hardening)',
+        'risk_title': 'Risc identificat (fără WAF)',
         'risk_body': (
-            'Fără WAF, atacurile <strong>OWASP Top 10</strong> ajung direct la aplicație: '
-            '<code>SQL Injection</code> poate exfiltra întreaga bază de date, '
-            '<code>XSS</code> poate fura sesiunile utilizatorilor, '
+            'Fără WAF (<strong>W</strong>eb <strong>A</strong>pplication <strong>F</strong>irewall), '
+            'atacurile din topul <strong>OWASP</strong> (<strong>O</strong>pen <strong>W</strong>eb '
+            '<strong>A</strong>pplication <strong>S</strong>ecurity <strong>P</strong>roject) ajung '
+            'direct la aplicație: <code>SQLi</code> (<strong>SQL</strong> <strong>I</strong>njection) '
+            'poate exfiltra întreaga bază de date, <code>XSS</code> (<strong>C</strong>ross-<strong>S</strong>ite '
+            '<strong>S</strong>cripting) poate fura sesiunile utilizatorilor, '
+            '<code>RFI</code> (<strong>R</strong>emote <strong>F</strong>ile <strong>I</strong>nclusion) '
+            'poate executa cod de pe servere externe, '
             '<code>Path Traversal</code> poate citi fișiere sistem (<code>/etc/passwd</code>), '
             '<code>Command Injection</code> poate prelua controlul serverului.'
         ),
-        'prot_title': 'Protecție implementată (după hardening)',
+        'prot_title': 'Protecție implementată (ModSecurity + OWASP CRS)',
         'prot_body': (
-            '<strong>ModSecurity</strong> cu <strong>OWASP CRS 3.2.1</strong> (~900 reguli) inspectează '
-            'fiecare request HTTP/HTTPS. Atacurile sunt detectate prin signature-matching și blocate cu '
-            '<strong>HTTP 403 Forbidden</strong> înainte de a ajunge la aplicație. '
-            'Fiecare blocare este logată cu detalii complete în <code>/var/log/nginx/modsec_audit.log</code>.'
+            '<strong>ModSecurity</strong> cu <strong>OWASP CRS</strong> (<strong>C</strong>ore '
+            '<strong>R</strong>ule <strong>S</strong>et) <strong>3.2.1</strong> (~900 reguli) inspectează '
+            'fiecare request HTTP/HTTPS. Operează la <strong>Paranoia Level 2</strong> (moderat) '
+            'pentru detecție fiabilă inclusiv a RFI și PHP Injection. Atacurile sunt blocate cu '
+            '<strong>HTTP 403 Forbidden</strong> înainte de a ajunge la aplicație și loggate complet în '
+            '<code>/var/log/nginx/modsec_audit.log</code>. '
+            '<strong>Cum verifici că WAF funcționează:</strong> '
+            '<code>curl -k "https://DOMAIN/?id=1+UNION+SELECT+1,2--"</code> → trebuie să returneze 403; '
+            '<code>tail -f /var/log/nginx/modsec_audit.log</code> → afișează detalii despre fiecare blocare.'
         ),
         'method': (
-            '8 tipuri de atacuri OWASP trimise cu curl la HTTPS endpoint (--insecure). '
-            'BEFORE: toate primesc 200/404 (ajung la backend — neprotejat). '
-            'AFTER: toate primesc 403 Forbidden (blocate de WAF înainte de backend).'
+            '8 tipuri de atacuri OWASP trimise cu curl la HTTPS endpoint (--insecure, fără SSL verify). '
+            'BEFORE: toate primesc 200/301/404 (ajung la backend — neprotejat). '
+            'AFTER (Paranoia Level 2): toate primesc 403 Forbidden (blocate de WAF înainte de backend). '
+            'Atacurile testate: SQLi UNION, SQLi OR-1=1, XSS script tag, XSS img onerror, '
+            'Path Traversal (/etc/passwd), RFI (http://evil.com/shell.php), Command Injection, PHP Injection.'
         ),
-        'config':   'nginx + ModSecurity: SecRuleEngine On, SecRequestBodyAccess On, OWASP CRS 3.2.1 (~900 reguli de detecție)',
-        'standard': 'OWASP Top 10 2021 — A01 Injection, A03 XSS, A06 Vulnerable Components; PCI-DSS Req. 6.6',
+        'config':   (
+            'nginx + ModSecurity 3: SecRuleEngine On  |  OWASP CRS 3.2.1 (~900 reguli)  |  '
+            'Paranoia Level 2 (moderat — RFI + PHP Injection active)  |  '
+            'Inbound anomaly score threshold: 5 (o singură regulă critică blochează)'
+        ),
+        'standard': 'OWASP Top 10 2021 — A03 Injection, A07 XSS, A06 Vulnerable Components; PCI-DSS Req. 6.6 (WAF obligatoriu); NIST SP 800-44',
         'conclusion': (
-            'ModSecurity WAF cu OWASP CRS blochează toate categoriile principale de atacuri web testate. '
-            'Fiecare atac blocat este înregistrat în <code>/var/log/nginx/modsec_audit.log</code> cu '
-            'detalii complete: IP sursă, URI, regulă CRS declanșată, timestamp — util pentru '
-            '<strong>investigație forensică</strong>. WAF operează transparent față de utilizatorii legitimi, '
-            'adăugând latență sub 1ms per request.'
+            'ModSecurity WAF cu OWASP CRS 3.2.1 la Paranoia Level 2 blochează toate cele 8 categorii '
+            'de atacuri web demonstrate. Fiecare atac blocat este înregistrat în '
+            '<code>/var/log/nginx/modsec_audit.log</code> cu detalii complete: IP sursă, URI, '
+            'regulă CRS declanșată (ex: <code>932160</code> pentru RFI, <code>941100</code> pentru XSS, '
+            '<code>942100</code> pentru SQLi), timestamp — util pentru <strong>investigație forensică</strong>. '
+            'WAF operează transparent față de utilizatorii legitimi. '
+            '<strong>Verificare rapidă:</strong> '
+            '<code>curl -k "https://DOMAIN/?cmd=;cat+/etc/passwd"</code> → HTTP 403 = WAF activ; '
+            '<code>fail2ban-client status</code> + <code>grep "ModSecurity" /var/log/nginx/error.log</code> '
+            '= confirmare blocare în loguri.'
         ),
     },
     '5': {
@@ -640,7 +714,8 @@ def conclusion_section_html(num: str) -> str:
 # ---------------------------------------------------------------------------
 # Individual demo HTML
 # ---------------------------------------------------------------------------
-def generate_individual_html(args, before_lines, after_lines, full_log_lines) -> str:
+def generate_individual_html(args, before_lines, after_lines, full_log_lines,
+                             tde_before_lines=None, tde_after_lines=None) -> str:
     now = datetime.now().strftime('%d %B %Y, %H:%M:%S')
     num = args.demo_num or '?'
     meta = DEMO_META.get(num, DEMO_META['ALL'])
@@ -653,7 +728,10 @@ def generate_individual_html(args, before_lines, after_lines, full_log_lines) ->
     target = args.target or 'N/A'
     duration = args.duration or 'N/A'
 
-    if stats['blocked_after'] > 0:
+    if args.badge_text:
+        badge_cls = 'badge-ok'
+        badge_txt = args.badge_text
+    elif stats['blocked_after'] > 0:
         badge_cls = 'badge-ok'
         badge_txt = f'✓ {stats["blocked_after"]} ATACURI BLOCATE'
     elif stats['changed'] > 0:
@@ -670,6 +748,29 @@ def generate_individual_html(args, before_lines, after_lines, full_log_lines) ->
     d_html = diff_html(before_lines, after_lines)
     expl_html = explanation_section_html(num)
     concl_html = conclusion_section_html(num)
+
+    tde_section = ''
+    if tde_before_lines or tde_after_lines:
+        tb_lines = tde_before_lines or []
+        ta_lines = tde_after_lines or []
+        tb_html = render_lines(tb_lines)
+        ta_html = render_lines(ta_lines)
+        td_html = diff_html(tb_lines, ta_lines)
+        tde_section = f"""
+  <details class="section" open>
+    <summary class="sec-before">🔒 TDE BEFORE — tablespace-uri necriptate (ENCRYPTION=N, keyring plugin inactiv)</summary>
+    <div class="log-block">{tb_html}</div>
+  </details>
+
+  <details class="section" open>
+    <summary class="sec-after">🔐 TDE AFTER — tablespace-uri criptate AES-256 (ENCRYPTION=Y, keyring_file ACTIVE)</summary>
+    <div class="log-block">{ta_html}</div>
+  </details>
+
+  <details class="section" open>
+    <summary class="sec-diff">🔀 DIFF TDE — înainte vs după criptare (roșu = stare necriptată, verde = stare criptată)</summary>
+    <div class="diff-block">{td_html}</div>
+  </details>"""
 
     full_section = ''
     if full_log_lines:
@@ -736,9 +837,11 @@ def generate_individual_html(args, before_lines, after_lines, full_log_lines) ->
   </details>
 
   <details class="section" open>
-    <summary class="sec-diff">🔀 DIFF — Comparație Before vs After</summary>
+    <summary class="sec-diff">🔀 DIFF — Comparație Before vs After (roșu = eliminat din starea inițială, verde = adăugat după hardening)</summary>
     <div class="diff-block">{d_html}</div>
   </details>
+
+  {tde_section}
 
   {full_section}
 
@@ -800,7 +903,7 @@ def generate_master_html(args, full_log_lines, nav_pairs) -> str:
     <div class="log-block scroll-h">{fl_html}</div>
   </details>"""
 
-    # Summary table — include only demos 1-5
+    # Summary table — demos that have explanation entries
     demo_rows = ''.join(
         f'<tr>'
         f'<td>{m["icon"]}</td>'
@@ -811,7 +914,7 @@ def generate_master_html(args, full_log_lines, nav_pairs) -> str:
         f'<td><span class="badge badge-ok" style="font-size:.72rem">✓ APLICAT</span></td>'
         f'</tr>'
         for k, m in DEMO_META.items()
-        if k not in ('ALL', 'CERT')
+        if k not in ('ALL', 'CERT') and k in DEMO_EXPLANATIONS
     )
 
     # Master conclusion
@@ -919,19 +1022,56 @@ def main():
     p.add_argument('--html',         required=True)
     p.add_argument('--nav',          default='',
                    help='Space-separated "num:relative-path.html" pairs for master report')
+    p.add_argument('--badge',        default='', dest='badge_text',
+                   help='Custom badge text override (e.g. "✓ 1 IP BANAT"). Skips auto-detection.')
+    p.add_argument('--meta-json',    default='', dest='meta_json',
+                   help='JSON string with demo metadata: icon, color, label, risk_title, risk_body, '
+                        'prot_title, prot_body, method, config, standard, conclusion. '
+                        'Injected at runtime into DEMO_META/DEMO_EXPLANATIONS — no file edits needed.')
+    p.add_argument('--tde-before',   default='', dest='tde_before',
+                   help='TDE before-state file (demo-5 only)')
+    p.add_argument('--tde-after',    default='', dest='tde_after',
+                   help='TDE after-state file (demo-5 only)')
     args = p.parse_args()
 
     os.makedirs(os.path.dirname(os.path.abspath(args.html)), exist_ok=True)
 
-    before_lines   = read_file(args.before)
-    after_lines    = read_file(args.after)
-    full_log_lines = read_file(args.full_log)
+    # Inject runtime metadata from --meta-json (for demos outside 1-5)
+    if args.meta_json and args.demo_num not in ('', '?', 'ALL'):
+        import json as _json
+        try:
+            m = _json.loads(args.meta_json)
+            num = args.demo_num
+            DEMO_META[num] = {
+                'icon':  m.get('icon',  '🔒'),
+                'color': m.get('color', '#58a6ff'),
+                'label': m.get('label', f'Demo {num}'),
+            }
+            DEMO_EXPLANATIONS[num] = {
+                'risk_title': m.get('risk_title', 'Risc identificat'),
+                'risk_body':  m.get('risk_body',  ''),
+                'prot_title': m.get('prot_title', 'Protecție implementată'),
+                'prot_body':  m.get('prot_body',  ''),
+                'method':     m.get('method',     ''),
+                'config':     m.get('config',     ''),
+                'standard':   m.get('standard',   ''),
+                'conclusion': m.get('conclusion', ''),
+            }
+        except _json.JSONDecodeError as e:
+            print(f'[WARN] --meta-json parse error: {e}', flush=True)
+
+    before_lines      = read_file(args.before)
+    after_lines       = read_file(args.after)
+    full_log_lines    = read_file(args.full_log)
+    tde_before_lines  = read_file(args.tde_before)
+    tde_after_lines   = read_file(args.tde_after)
 
     if args.demo_num == 'ALL':
         nav_pairs = args.nav.split() if args.nav else []
         content = generate_master_html(args, full_log_lines, nav_pairs)
     else:
-        content = generate_individual_html(args, before_lines, after_lines, full_log_lines)
+        content = generate_individual_html(args, before_lines, after_lines, full_log_lines,
+                                           tde_before_lines, tde_after_lines)
 
     with open(args.html, 'w', encoding='utf-8') as f:
         f.write(content)

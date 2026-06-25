@@ -110,7 +110,7 @@
   become: no
 
   vars:
-    target_hosts: "{{ groups['linux'] | difference(groups.get('jumphost', [])) }}"
+    target_hosts: "{{ groups.get('linux', []) | difference(groups.get('jumphost', [])) }}"
 
   tasks:
     - name: Check Azure CLI authentication
@@ -130,6 +130,21 @@
           Then re-run:
             ansible-playbook playbooks/1-setup-ssh-keys.yml
       when: az_account.rc != 0
+
+    - name: Fail if dynamic inventory returned no Linux hosts
+      fail:
+        msg: |
+          Dynamic inventory (azure_rm) did not return any Linux hosts.
+
+          Most likely cause: MSI role (Reader / Virtual Machine Contributor) not yet
+          propagated after being granted — Azure RBAC can take up to 10 minutes.
+
+          Wait a few minutes, then re-run:
+            ./run-playbook.sh playbooks/1-setup-ssh-keys.yml
+
+          To verify MSI permissions manually:
+            az vm list --resource-group rg-mediasrl-productie-swedencentral -o table
+      when: target_hosts | length == 0
 
     - name: Display Azure account
       debug:
@@ -163,6 +178,7 @@
         --scripts @/tmp/ansible-inject-ssh-key.sh
       loop: "{{ target_hosts }}"
       register: inject_results
+      when: target_hosts | length > 0
 
     - name: Show injection results
       debug:

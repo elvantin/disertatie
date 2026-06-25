@@ -197,6 +197,31 @@
   notify: reload nginx
   tags: [modsecurity]
 
+# ── Phase 11b: Set CRS paranoia level ────────────────────────────────────────
+# crs-setup.conf.example has paranoia_level commented out (defaults to PL1 via REQUEST-901).
+# Inject an early override conf in rules/ that runs before REQUEST-901-INITIALIZATION.conf
+# so tx.paranoia_level is set to the desired level before the initialization rules read it.
+
+- name: Deploy CRS paranoia level override (REQUEST-900-PARANOIA-OVERRIDE.conf)
+  ansible.builtin.copy:
+    dest: "{{ modsecurity_crs_dir }}/rules/REQUEST-900-PARANOIA-OVERRIDE.conf"
+    owner: root
+    group: www-data
+    mode: '0640'
+    content: |
+      # CRS paranoia level override — managed by Ansible (modsecurity role)
+      # PL{{ modsecurity_crs_paranoia_level }}: {{ modsecurity_crs_paranoia_level == 1 | ternary('default','moderate — adds RFI/SQLi/XSS extended rules') }}
+      # This file sorts before REQUEST-901-INITIALIZATION.conf alphabetically.
+      SecAction \
+        "id:900099,\
+        phase:1,\
+        nolog,\
+        pass,\
+        t:none,\
+        setvar:tx.paranoia_level={{ modsecurity_crs_paranoia_level }}"
+  notify: reload nginx
+  tags: [modsecurity]
+
 # ── Phase 12: nginx include for ModSecurity rules ─────────────────────────────
 
 - name: Deploy nginx ModSecurity include file (main.conf)

@@ -41,16 +41,71 @@
   when: not (mysql_service_check.exists | default(false))
   tags: [mysql, download]
 
-- name: Download MySQL Installer MSI (~350MB)
+# async: 1800 — job valid 30 min on remote (350MB on Azure network takes ~5-15 min).
+# poll: 0     — fire-and-forget; VC++ check/download/install run while MSI downloads.
+- name: Download MySQL Installer MSI (~350MB) — async
   ansible.windows.win_get_url:
     url: "{{ mysql_download_url }}"
     dest: 'C:\Temp\mysql-installer.msi'
     force: no
-    timeout: 900
+    timeout: 1800
   when:
     - not (mysql_service_check.exists | default(false))
     - not (mysql_msi_stat.stat.exists | default(false))
-  register: mysql_download
+  async: 1800
+  poll: 0
+  register: mysql_download_job
+  tags: [mysql, download]
+
+# ============================================================
+# Phase 2b: VC++ prerequisite — runs while MSI downloads
+# ============================================================
+# These tasks are independent of the MySQL MSI content.
+# They overlap with the background download above.
+
+- name: Check if Visual C++ Redistributable is installed
+  ansible.windows.win_shell: |
+    $vcInstalled = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue
+    if ($vcInstalled) {
+        Write-Output "VC++ Redistributable already installed (version $($vcInstalled.Version))"
+    } else {
+        Write-Output "NOT_INSTALLED"
+    }
+  register: vcredist_check
+  changed_when: false
+  when: not (mysql_service_check.exists | default(false))
+  tags: [mysql, prereq]
+
+- name: Download Visual C++ 2015-2022 Redistributable x64
+  ansible.windows.win_get_url:
+    url: 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+    dest: 'C:\Temp\vc_redist.x64.exe'
+    force: no
+  when:
+    - not (mysql_service_check.exists | default(false))
+    - "'NOT_INSTALLED' in vcredist_check.stdout"
+  tags: [mysql, prereq]
+
+- name: Install Visual C++ 2015-2022 Redistributable x64
+  ansible.windows.win_shell: |
+    Start-Process -FilePath 'C:\Temp\vc_redist.x64.exe' -ArgumentList '/install', '/quiet', '/norestart' -Wait -NoNewWindow
+    Write-Output 'Visual C++ Redistributable installed'
+  when:
+    - not (mysql_service_check.exists | default(false))
+    - "'NOT_INSTALLED' in vcredist_check.stdout"
+  tags: [mysql, prereq]
+
+# ── Wait for MySQL MSI download to complete ───────────────────────────────────
+# Skipped automatically when the download task was skipped (MySQL already
+# installed, or MSI already present) because ansible_job_id is not defined.
+- name: Wait for MySQL MSI download to complete
+  ansible.builtin.async_status:
+    jid: "{{ mysql_download_job.ansible_job_id }}"
+  register: mysql_download_result
+  until: mysql_download_result.finished
+  retries: 60
+  delay: 30
+  when: mysql_download_job.ansible_job_id is defined
   tags: [mysql, download]
 
 - name: Verify MSI file was downloaded
@@ -98,40 +153,8 @@
   tags: [mysql, install]
 
 # ============================================================
-# Phase 3: Prerequisites + Install MySQL Server
+# Phase 3: Install MySQL Server
 # ============================================================
-
-- name: Check if Visual C++ Redistributable is installed
-  ansible.windows.win_shell: |
-    $vcInstalled = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64' -ErrorAction SilentlyContinue
-    if ($vcInstalled) {
-        Write-Output "VC++ Redistributable already installed (version $($vcInstalled.Version))"
-    } else {
-        Write-Output "NOT_INSTALLED"
-    }
-  register: vcredist_check
-  changed_when: false
-  when: not (mysql_service_check.exists | default(false))
-  tags: [mysql, prereq]
-
-- name: Download Visual C++ 2015-2022 Redistributable x64
-  ansible.windows.win_get_url:
-    url: 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
-    dest: 'C:\Temp\vc_redist.x64.exe'
-    force: no
-  when:
-    - not (mysql_service_check.exists | default(false))
-    - "'NOT_INSTALLED' in vcredist_check.stdout"
-  tags: [mysql, prereq]
-
-- name: Install Visual C++ 2015-2022 Redistributable x64
-  ansible.windows.win_shell: |
-    Start-Process -FilePath 'C:\Temp\vc_redist.x64.exe' -ArgumentList '/install', '/quiet', '/norestart' -Wait -NoNewWindow
-    Write-Output 'Visual C++ Redistributable installed'
-  when:
-    - not (mysql_service_check.exists | default(false))
-    - "'NOT_INSTALLED' in vcredist_check.stdout"
-  tags: [mysql, prereq]
 
 - name: Install MySQL Server from cached MSI
   ansible.windows.win_package:
@@ -542,6 +565,59 @@
     path: C:\Temp\seed-business-data.sql
     state: absent
   tags: [mysql, business, cleanup]
+
+# ============================================================
+# Phase 8b: Demo baseline — insecure defaults for demo-5-mysql-hardening.sh
+# Intentionally weak state so hardening shows visible BEFORE/AFTER contrast.
+# Removed by: playbooks/harden-security.yml --tags mysql_hardening
+# ============================================================
+
+- name: "[demo] Create anonymous MySQL user (demo baseline)"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $sql = "CREATE USER IF NOT EXISTS ''@'localhost' IDENTIFIED BY ''; " +
+           "GRANT ALL ON *.* TO ''@'localhost'; " +
+           "FLUSH PRIVILEGES;"
+    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} -e $sql 2>$null
+    Write-Output "Anonymous user ensured (demo baseline)"
+  changed_when: false
+  no_log: true
+  tags: [mysql, database, demo_baseline]
+
+- name: "[demo] Create test database (demo baseline)"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $sql = "CREATE DATABASE IF NOT EXISTS test; " +
+           "GRANT ALL ON test.* TO ''@'localhost'; " +
+           "FLUSH PRIVILEGES;"
+    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} -e $sql 2>$null
+    Write-Output "Test database ensured (demo baseline)"
+  changed_when: false
+  no_log: true
+  tags: [mysql, database, demo_baseline]
+
+- name: "[demo] Install validate_password component with LOW policy (demo baseline)"
+  ansible.windows.win_shell: |
+    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $check = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} `
+      -e "SELECT COUNT(*) FROM mysql.component WHERE component_urn LIKE '%validate_password%';" 2>$null
+    if ($check -notmatch '^\s*1\s*$') {
+        & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} `
+          -e "INSTALL COMPONENT 'file://component_validate_password';" 2>$null
+        Write-Output "validate_password component installed"
+    } else {
+        Write-Output "validate_password component already installed"
+    }
+    $sql = "SET GLOBAL validate_password.policy = 'LOW'; " +
+           "SET GLOBAL validate_password.length = 4; " +
+           "SET GLOBAL validate_password.mixed_case_count = 0; " +
+           "SET GLOBAL validate_password.number_count = 0; " +
+           "SET GLOBAL validate_password.special_char_count = 0;"
+    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} -e $sql 2>$null
+    Write-Output "validate_password policy set to LOW (demo baseline)"
+  changed_when: false
+  no_log: true
+  tags: [mysql, database, demo_baseline]
 
 # ============================================================
 # Phase 9: Verification

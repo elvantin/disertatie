@@ -9,14 +9,17 @@
 
 # ── Cryptographic Algorithms ─────────────────────────────────────────────────
 
-# Key Exchange: only modern algorithms with Perfect Forward Secrecy
+# Key Exchange: modern algorithms only — NIST-P curves removed (weak elliptic curves)
 KexAlgorithms {{ ssh_kex_algorithms }}
 
 # Ciphers: AEAD ciphers preferred (authenticated encryption)
 Ciphers {{ ssh_ciphers }}
 
-# MAC: Encrypt-then-MAC required (ETM suffix)
+# MAC: Encrypt-then-MAC ONLY (ETM suffix required) — non-ETM variants disabled
 MACs {{ ssh_macs }}
+
+# Host Key Algorithms: ecdsa-sha2-nistp256 removed (weak elliptic curve + weak RNG risk)
+HostKeyAlgorithms {{ ssh_host_key_algorithms }}
 
 # ── Authentication ────────────────────────────────────────────────────────────
 
