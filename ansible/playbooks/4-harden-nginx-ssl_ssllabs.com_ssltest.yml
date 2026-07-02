@@ -293,31 +293,6 @@
       failed_when: false
       tags: [ssl, config, backup]
 
-    - name: Check if security headers are already included in site config
-      command: grep -c 'security-headers.conf' /etc/nginx/sites-available/mediasrl.conf
-      register: headers_included
-      changed_when: false
-      failed_when: false
-      tags: [ssl, config]
-
-    - name: Add security headers include to HTTPS server block
-      lineinfile:
-        path: /etc/nginx/sites-available/mediasrl.conf
-        insertafter: 'ssl_certificate_key'
-        line: '    include /etc/nginx/snippets/security-headers.conf;'
-        state: present
-      when: headers_included.stdout | int == 0
-      notify: reload nginx
-      tags: [ssl, config]
-
-    - name: Remove old HSTS header from site config (now in snippet)
-      lineinfile:
-        path: /etc/nginx/sites-available/mediasrl.conf
-        regexp: 'add_header Strict-Transport-Security'
-        state: absent
-      notify: reload nginx
-      tags: [ssl, config]
-
     - name: Remove old security headers from nginx.conf (now in snippet)
       lineinfile:
         path: /etc/nginx/nginx.conf

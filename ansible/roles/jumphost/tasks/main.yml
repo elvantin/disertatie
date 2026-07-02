@@ -81,6 +81,14 @@
   tags: [jumphost, firefox]
 
 # ============================================================
+# SMB client — cifs-utils/smbclient install, /mnt/smb/public mount point,
+# and the credential-storage script + autostart entry are now baked into
+# the ubuntu-jumphost Packer image (provision-jumphost.sh). Only the actual
+# secret (from Ansible Vault) is written here at deploy time — it cannot be
+# baked into a shared image.
+# ============================================================
+
+# ============================================================
 # MySQL Workbench — pre-configured connection to vm-db-01
 # ============================================================
 
@@ -95,6 +103,28 @@
     - .mysql
     - .mysql/workbench
   tags: [jumphost, mysql-workbench]
+
+# ============================================================
+# GNOME Keyring — credentiale SMB pentru vm-fs-01
+# secret-tool stocheaza azureadmin in keyring-ul de login.
+# Keyring-ul se deblocheaza automat la login xRDP cu parola azureadmin.
+# Scriptul ruleaza o singura data la primul login dupa deploy.
+# ============================================================
+
+- name: Store azureadmin SMB password in secured file
+  ansible.builtin.copy:
+    content: "{{ vault_admin_password }}"
+    dest: "/home/{{ ansible_user }}/.smb-pass"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0600'
+  tags: [jumphost, smb, keyring]
+
+- name: Remove stored flag so script re-runs at next login
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/.smb-creds-stored"
+    state: absent
+  tags: [jumphost, smb, keyring]
 
 - name: Deploy MySQL Workbench connections.xml (db connection to vm-db-01)
   template:

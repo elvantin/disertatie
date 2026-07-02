@@ -69,7 +69,7 @@ param vms = [
   {
     name: 'vm-jmp-01'
     osType: 'Linux'
-    size: 'Standard_B4ls_v2'
+    size: 'Standard_D2s_v3'
     subnet: 'mgmt'
     createPublicIp: false
     imageDefinition: 'jumphost'
@@ -78,7 +78,7 @@ param vms = [
   {
     name: 'vm-web-01'
     osType: 'Linux'
-    size: 'Standard_B2s'
+    size: 'Standard_D2s_v3'
     subnet: 'prod'
     createPublicIp: false
     imageDefinition: 'ubuntu'
@@ -87,7 +87,7 @@ param vms = [
   {
     name: 'vm-db-01'
     osType: 'Windows'
-    size: 'Standard_B2s'
+    size: 'Standard_D2s_v3'
     subnet: 'prod'
     createPublicIp: false
     imageDefinition: 'windows'
@@ -96,16 +96,22 @@ param vms = [
   {
     name: 'vm-fs-01'
     osType: 'Windows'
-    size: 'Standard_B2s'
+    size: 'Standard_D2s_v3'
     subnet: 'prod'
     createPublicIp: false
     imageDefinition: 'windows'
     osDiskSizeGb: 128
+    dataDisks: [
+      {
+        lun: 0
+        diskSizeGB: 80
+      }
+    ]
   }
   {
     name: 'vm-app-01'
     osType: 'Linux'
-    size: 'Standard_B2s'
+    size: 'Standard_D2s_v3'
     subnet: 'prod'
     createPublicIp: false
     imageDefinition: 'ubuntu'
@@ -114,7 +120,7 @@ param vms = [
   {
     name: 'vm-cms-01'
     osType: 'Linux'
-    size: 'Standard_B2s'
+    size: 'Standard_D2s_v3'
     subnet: 'prod'
     createPublicIp: false
     imageDefinition: 'ubuntu'

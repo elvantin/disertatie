@@ -46,7 +46,10 @@ param(
     [switch]$SkipConfig,
 
     [Parameter(Mandatory=$false)]
-    [switch]$SkipVault
+    [switch]$SkipVault,
+
+    [Parameter(Mandatory=$false)]
+    [string]$KeyFile = ""
 )
 
 . "$PSScriptRoot\lib\Write-Log.ps1"
@@ -84,14 +87,17 @@ Write-Log-Info "Environment   : $Environment"
 Write-Log-Info "Inventory src : $SourceInventory → $ActiveInventory"
 Write-Log-Info "Skip flags    : Copy=$($SkipCopy.IsPresent)  Config=$($SkipConfig.IsPresent)  Vault=$($SkipVault.IsPresent)"
 
-# SSH options — ignora known_hosts, autentificare parola
 $SSHOpts = @(
     "-o", "StrictHostKeyChecking=no",
     "-o", "UserKnownHostsFile=/dev/null",
     "-o", "PasswordAuthentication=yes",
-    "-o", "PreferredAuthentications=keyboard-interactive,password,publickey",
+    "-o", "PreferredAuthentications=publickey,keyboard-interactive,password",
     "-o", "LogLevel=ERROR"
 )
+if ($KeyFile) {
+    $SSHOpts += @("-i", $KeyFile)
+    Write-Log-Info "Cheie SSH     : $KeyFile"
+}
 
 if (-not (Test-Path $LocalPath)) {
     Write-Log-Fail "Directorul '$LocalPath' nu a fost găsit" -Detail "Rulează scriptul din rădăcina proiectului (IT/)"
@@ -102,13 +108,11 @@ if (-not (Test-Path $LocalPath)) {
 # STEP 1: Copiaza fisierele Ansible pe jumphost
 # =============================================================================
 
-Write-Log-Header "Copiere fișiere Ansible pe jumphost" -Step 1 -Total 3
+Write-Log-Header "Copiere fișiere Ansible pe jumphost" -Step 1 -Total 2
 if ($SkipCopy) {
     Write-Log-Warn "SKIP: Copiere fișiere (-SkipCopy)" -Detail "Se presupune că fișierele există deja pe jumphost"
 } else {
-    # Convert CRLF -> LF on Windows before SCP.
-    # This is the only reliable fix: strip CR at the source so Linux never sees \r,
-    # regardless of git autocrlf settings or editor defaults.
+    # Convert CRLF -> LF on Windows before archiving.
     $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
     $linuxExts = '*.sh','*.py','*.yml','*.yaml','*.j2','*.cfg','*.conf','*.ini','*.json'
     $converted = 0
@@ -123,18 +127,14 @@ if ($SkipCopy) {
             }
         }
     }
-    Write-Log-OK "CRLF → LF" -Detail "$converted fisiere convertite inainte de SCP"
+    Write-Log-OK "CRLF → LF" -Detail "$converted fisiere convertite"
 
-    Write-Log-Step "scp $LocalPath → ${SSHTarget}:${RemotePath} ..."
-    scp @SSHOpts -r "${LocalPath}\*" "${SSHTarget}:${RemotePath}/"
-
+    # tar-pipe: arhiva comprimata transferata si extrasa intr-o singura conexiune SSH (1 autentificare)
+    Write-Log-Step "tar-pipe $LocalPath → ${SSHTarget}:${RemotePath} ..."
+    tar -czf - -C $LocalPath . | ssh @SSHOpts $SSHTarget "mkdir -p ${RemotePath} && tar -xzf - -C ${RemotePath}"
     if ($LASTEXITCODE -ne 0) {
-        Write-Log-Warn "SCP a eșuat — încerc tar+ssh..."
-        tar -cf - -C $LocalPath . | ssh @SSHOpts $SSHTarget "mkdir -p ${RemotePath} && tar -xf - -C ${RemotePath}"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Log-Fail "Copierea fișierelor a eșuat" -Detail "SCP și tar au eșuat"
-            Stop-LogSession; exit 1
-        }
+        Write-Log-Fail "Copiere esuata (tar-pipe)" -Detail "Verifica ca tar.exe este disponibil (Windows 10+)"
+        Stop-LogSession; exit 1
     }
     Write-Log-OK "Fișiere Ansible copiate" -Detail "${SSHTarget}:${RemotePath}"
 }
@@ -146,16 +146,18 @@ if ($SkipCopy) {
 # Compute deploy domain as a PowerShell variable so it expands correctly inside the @"..."@ here-string
 $DeployDomain = if ($Environment -eq 'dev') { 'mediasrl-dev.swedencentral.cloudapp.azure.com' } else { 'mediasrl.swedencentral.cloudapp.azure.com' }
 
-Write-Log-Header "Configurare permisiuni și inventory" -Step 2 -Total 3
-if ($SkipConfig) {
-    Write-Log-Warn "SKIP: Configurare permisiuni/inventory (-SkipConfig)"
-} else {
-Write-Log-Step "Permisiuni, activare inventory ($SourceInventory → $ActiveInventory), domain: $DeployDomain"
+Write-Log-Header "Configurare permisiuni, inventory și vault" -Step 2 -Total 2
 
-$sshStep2Lines = [System.Collections.Generic.List[string]]::new()
-$step2Script = @"
+if ($SkipConfig -and $SkipVault) {
+    Write-Log-Warn "SKIP: Configurare + Vault (-SkipConfig și -SkipVault)"
+} else {
+    $combinedParts = [System.Collections.Generic.List[string]]::new()
+
+    if (-not $SkipConfig) {
+        Write-Log-Step "Permisiuni, activare inventory ($SourceInventory → $ActiveInventory), domain: $DeployDomain"
+        $step2Content = @"
 echo '========================================='
-echo 'STEP 3: Configurare finala'
+echo 'STEP 2: Configurare finala'
 echo '========================================='
 
 echo ''
@@ -222,72 +224,51 @@ ansible --version 2>&1 | head -3
 
 echo ''
 echo '--- Lista hosturi ---'
-# vault-pass nu exista inca la aceasta etapa (se creeaza in Step 3 din KV).
+# vault-pass nu exista inca la aceasta etapa (se creeaza din KV mai jos).
 # Eroarea de vault de mai jos este asteptata si nu opreste scriptul.
 cd ${RemotePath} && ansible all --list-hosts 2>&1 | head -20 || true
-
-echo ''
-echo '========================================='
-echo 'Deployment complet!'
-echo ''
-echo 'Jumphost-ul foloseste Managed Identity (auth_source: msi).'
-echo 'Nu este necesara autentificarea manuala (az login).'
-echo ''
-echo "  cd ${RemotePath}"
-echo '  ansible linux   -m ping                        # verifica conectivitate Linux'
-echo '  ansible windows -m win_ping                    # verifica conectivitate Windows'
-echo '  ./run-playbook.sh 1-base-setup.yml             # instalare pachete de baza'
-echo '  ./run-playbook.sh 2-deploy-wordpress.yml       # deploy WordPress + MySQL'
-echo '  ./run-playbook.sh 3-wordpress-config.yml       # configurare WordPress'
-echo '  ./run-playbook.sh 4-harden-nginx-ssl_ssllabs.com_ssltest.yml'
-echo '  bash scripts/certbot-letsencrypt.sh --env prod # certificat TLS Let'"'"'s Encrypt'
-echo "  ./run-playbook.sh 'harden-security(daca_nu_rulez_demouri).yml'"
-echo '  ./run-playbook.sh 6-monitoring.yml             # Azure Monitor Agent'
-echo '========================================='
 "@ -replace "`r`n", "`n"
-$step2Script | ssh @SSHOpts $SSHTarget "bash" 2>&1 | ForEach-Object { Write-Host $_; [void]$sshStep2Lines.Add([string]$_) }
-$sshStep2Exit = $LASTEXITCODE
-Write-Log-Block -Label "Output SSH: configurare permisiuni, inventory, Ansible — $SSHTarget" -Content ($sshStep2Lines -join "`n")
+        [void]$combinedParts.Add($step2Content)
+    }
 
-if ($sshStep2Exit -ne 0) {
-    Write-Log-Fail "Configurarea permisiunilor/inventory a eșuat" -Detail "SSH exit code $sshStep2Exit"
-    Stop-LogSession; exit 1
-}
-Write-Log-OK "Permisiuni setate, inventory activat" -Detail "$SourceInventory → $ActiveInventory  |  domain=$DeployDomain"
-} # end if -SkipConfig
+    if (-not $SkipVault) {
+        Write-Log-Step "Vault: MSI → KV → vault.yml AES-256..."
+        # ANSIBLE_CONFIG trebuie setat explicit — sesiunile SSH non-interactive nu surseaza .bashrc
+        $vaultContent = @"
 
-# =============================================================================
-# STEP 3: Ansible Vault — scrie ~/.vault-pass din Key Vault via MSI
-# vault.yml este deja prezent in fisierele copiate (committed encrypted in repo).
-# Este necesar doar sa scriem parola de decriptare in ~/.vault-pass.
-# =============================================================================
-
-Write-Log-Header "Ansible Vault — ~/.vault-pass din Key Vault (MSI)" -Step 3 -Total 3
-if ($SkipVault) {
-    Write-Log-Warn "SKIP: Ansible Vault (-SkipVault)" -Detail "Se presupune ca ~/.vault-pass exista deja pe jumphost"
-} else {
-    Write-Log-Step "Rulare create-ansible-vault.sh pe jumphost (MSI → KV → vault.yml AES-256)..."
-
-    $vaultLines = [System.Collections.Generic.List[string]]::new()
-
-    # ANSIBLE_CONFIG trebuie setat explicit — sesiunile SSH non-interactive nu surseaza .bashrc
-    $vaultScript = @"
-#!/bin/bash
-set -e
+echo ''
+echo '========================================='
+echo 'Ansible Vault Bootstrap'
+echo '========================================='
 export ANSIBLE_CONFIG=${RemotePath}/ansible.cfg
 cd ${RemotePath}
 bash scripts/create-ansible-vault.sh
 "@ -replace "`r`n", "`n"
+        [void]$combinedParts.Add($vaultContent)
+    }
 
-    $vaultScript | ssh @SSHOpts $SSHTarget 'cat > /tmp/_vs.sh && sed -i "s/\r//" /tmp/_vs.sh && bash /tmp/_vs.sh; rc=$?; rm -f /tmp/_vs.sh; exit $rc' 2>&1 | ForEach-Object { Write-Host $_; [void]$vaultLines.Add([string]$_) }
-    $vaultExit = $LASTEXITCODE
-    Write-Log-Block -Label "Output SSH: create-ansible-vault.sh" -Content ($vaultLines -join "`n")
+    $combinedScript = ($combinedParts -join "`n")
+    $combinedLines = [System.Collections.Generic.List[string]]::new()
+    # Scriem scriptul in fisier temp pe remote si facem strip de \r (CRLF Windows) inainte de executie
+    $combinedScript | ssh @SSHOpts $SSHTarget 'cat > /tmp/_deploy_cs.sh && sed -i "s/\r//" /tmp/_deploy_cs.sh && bash /tmp/_deploy_cs.sh; rc=$?; rm -f /tmp/_deploy_cs.sh; exit $rc' 2>&1 | ForEach-Object { Write-Host $_; [void]$combinedLines.Add([string]$_) }
+    $combinedExit = $LASTEXITCODE
 
-    if ($vaultExit -ne 0) {
-        Write-Log-Fail "Vault setup esuat" -Detail "Verifica: MSI are 'Key Vault Secrets User' pe kv-mediasrl-persistent | toate secretele exista (ruleaza 0-bootstrap-keyvault.ps1)"
+    $labelParts = [System.Collections.Generic.List[string]]::new()
+    if (-not $SkipConfig) { [void]$labelParts.Add("permisiuni+inventory") }
+    if (-not $SkipVault)  { [void]$labelParts.Add("vault") }
+    Write-Log-Block -Label "Output SSH: $($labelParts -join ' + ')" -Content ($combinedLines -join "`n")
+
+    if ($combinedExit -ne 0) {
+        $failDetail = if (-not $SkipVault) { "Verifica: MSI are 'Key Vault Secrets User' pe kv-mediasrl-persistent | toate secretele exista (ruleaza 0-bootstrap-keyvault.ps1)" } else { "SSH exit code $combinedExit" }
+        Write-Log-Fail "Configurare/Vault esuat" -Detail $failDetail
         Stop-LogSession; exit 1
     }
-    Write-Log-OK "Vault configurat" -Detail "~/.vault-pass + group_vars/all/vault.yml (AES-256, 6 variabile)"
+    if (-not $SkipConfig) {
+        Write-Log-OK "Permisiuni setate, inventory activat" -Detail "$SourceInventory → $ActiveInventory  |  domain=$DeployDomain"
+    }
+    if (-not $SkipVault) {
+        Write-Log-OK "Vault configurat" -Detail "~/.vault-pass + group_vars/all/vault.yml (AES-256)"
+    }
 }
 
 # =============================================================================

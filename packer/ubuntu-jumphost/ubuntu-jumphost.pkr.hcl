@@ -69,9 +69,13 @@ build {
   }
 
   // Step 2: Deprovision the Azure Linux Agent (generalize the VM)
+  // cloud-init clean MUST run before waagent deprovision — see ubuntu-base
+  // build for the full explanation (stale /var/lib/cloud/ cache can make
+  // cloud-init skip admin user creation on the next VM's first boot).
   provisioner "shell" {
     execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E bash '{{ .Path }}'"
     inline = [
+      "cloud-init clean --logs --seed || true",
       "/usr/sbin/waagent -force -deprovision+user && export HISTSIZE=0 && sync"
     ]
   }

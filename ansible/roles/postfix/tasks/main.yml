@@ -50,23 +50,11 @@
     immediate: yes
   tags: [postfix, firewall]
 
-- name: Restart Postfix to apply current configuration
+- name: Ensure Postfix is enabled and started
   ansible.builtin.systemd:
     name: postfix
     enabled: yes
-    state: restarted
-  tags: [postfix, service]
-
-- name: Capture Postfix journal logs for diagnostics
-  ansible.builtin.shell: journalctl -u postfix --no-pager -n 40 --output=short 2>&1
-  register: postfix_journal
-  changed_when: false
-  failed_when: false
-  tags: [postfix, service]
-
-- name: Show Postfix journal (useful if verify fails)
-  ansible.builtin.debug:
-    msg: "{{ postfix_journal.stdout_lines }}"
+    state: started
   tags: [postfix, service]
 
 - name: Verify Postfix is listening on port 25
@@ -74,4 +62,26 @@
     port: 25
     delay: 3
     timeout: 30
+  register: postfix_port_check
+  ignore_errors: true
+  tags: [postfix, verify]
+
+- name: Capture Postfix journal logs for diagnostics (only if port check failed)
+  ansible.builtin.shell: journalctl -u postfix --no-pager -n 40 --output=short 2>&1
+  register: postfix_journal
+  changed_when: false
+  failed_when: false
+  when: postfix_port_check is failed
+  tags: [postfix, service]
+
+- name: Show Postfix journal (only if port check failed)
+  ansible.builtin.debug:
+    msg: "{{ postfix_journal.stdout_lines }}"
+  when: postfix_port_check is failed
+  tags: [postfix, service]
+
+- name: Fail if Postfix is not listening on port 25
+  ansible.builtin.fail:
+    msg: "Postfix is not listening on port 25 — see journal output above."
+  when: postfix_port_check is failed
   tags: [postfix, verify]

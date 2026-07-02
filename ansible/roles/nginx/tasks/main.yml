@@ -80,6 +80,25 @@
     - "/etc/nginx/sites-enabled"
   tags: [nginx, directories]
 
+- name: Ensure nginx snippets directory exists
+  file:
+    path: /etc/nginx/snippets
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags: [nginx, config, ssl]
+
+- name: Deploy baseline security headers snippet
+  template:
+    src: security-headers.conf.j2
+    dest: /etc/nginx/snippets/security-headers.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+  tags: [nginx, config, ssl]
+
 - name: Copy website index.html
   copy:
     src: index.html

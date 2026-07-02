@@ -147,3 +147,29 @@
     - name: Print task status
       ansible.builtin.debug:
         msg: "{{ task_status.stdout | trim }}"
+
+# ============================================================
+# Play 3: MySQL Encrypted Backup — vm-db-01
+# Deploys backup-mysql.ps1 (AES-256-CBC, zero dependente externe)
+# si creeaza Scheduled Task zilnic la 02:00.
+# Backup destination: \\vm-fs-01\Backups\mysql\
+# ============================================================
+
+- name: Deploy MySQL encrypted backup on vm-db-01
+  hosts: vm-db-01
+  gather_facts: false
+
+  vars:
+    ansible_connection: winrm
+    ansible_winrm_transport: basic
+    ansible_port: 5985
+    ansible_winrm_server_cert_validation: ignore
+    ansible_user: azureadmin
+    ansible_become: false
+
+  tasks:
+    - name: Deploy backup script and schedule task
+      ansible.builtin.include_role:
+        name: mysql
+        tasks_from: backup.yml
+      tags: [mysql, backup]

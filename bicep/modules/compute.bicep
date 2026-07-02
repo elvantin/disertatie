@@ -67,14 +67,6 @@ param marketplaceVersion string = 'latest'
 @maxValue(2048)
 param osDiskSizeGb int = 128
 
-@description('OS disk storage type')
-@allowed([
-  'Standard_LRS'
-  'StandardSSD_LRS'
-  'Premium_LRS'
-])
-param osDiskStorageType string = 'StandardSSD_LRS'
-
 @description('Log Analytics Workspace ID for VM monitoring')
 param logAnalyticsWorkspaceId string = ''
 
@@ -197,9 +189,9 @@ resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
         createOption: 'FromImage'
         deleteOption: 'Delete'
         diskSizeGB: osDiskSizeGb
-        managedDisk: {
-          storageAccountType: osDiskStorageType
-        }
+        // storageAccountType omis intentionat: Azure nu permite schimbarea tipului
+        // unui disc existent prin resursa VM in deployment incremental. Tipul e setat
+        // la creare (mostenite din imaginea Gallery) si ramine neschimbat la re-deploy.
         caching: 'ReadWrite'
       }
       dataDisks: [for (disk, i) in dataDisks: {

@@ -29,64 +29,9 @@
   delay: 10
   until: apt_update is succeeded
 
-# ── All apt-install tasks grouped BEFORE the async upgrade ────────────────────
-# apt upgrade: dist runs async below; it holds the dpkg lock for its entire
-# duration. All other apt operations must complete before it starts.
-
-- name: Remove UFW and replace with firewalld
-  block:
-
-    - name: Check if UFW is installed
-      command: which ufw
-      register: ufw_check
-      changed_when: false
-      failed_when: false
-
-    - name: Disable UFW rules
-      command: ufw disable
-      when: ufw_check.rc == 0
-      changed_when: false
-
-    - name: Stop and disable UFW service
-      service:
-        name: ufw
-        state: stopped
-        enabled: no
-      when: ufw_check.rc == 0
-
-    - name: Uninstall UFW package
-      apt:
-        name: ufw
-        state: absent
-        purge: yes
-      when: ufw_check.rc == 0
-      register: ufw_remove
-      retries: 5
-      delay: 15
-      until: ufw_remove is succeeded
-
-- name: Install common packages
-  apt:
-    name: "{{ common_packages }}"
-    state: present
-  register: apt_install_common
-  retries: 3
-  delay: 10
-  until: apt_install_common is succeeded
-
-- name: Install security packages
-  apt:
-    name: "{{ security_packages }}"
-    state: present
-  register: apt_install_security
-  retries: 3
-  delay: 10
-  until: apt_install_security is succeeded
-
-- name: Ensure python3-apt is installed (required for Ansible apt module)
-  apt:
-    name: python3-apt
-    state: present
+# ── Common + security packages, universe repo, python3-apt ────────────────────
+# All baked into the ubuntu-base Packer image at build-time (base-setup.sh
+# STEP 0 + STEP 2) — no longer installed here on every deploy.
 
 # ── Start full upgrade async after all other apt tasks are done ───────────────
 # async: 3600 — job valid on remote for up to 1 hour.
@@ -94,6 +39,23 @@
 # The dpkg lock is held by this background job; NO further apt tasks should
 # run after this point (and none do — all installs are above).
 # Verification is at the end of this file, after all non-apt config tasks.
+#
+# Sentinel-file skip: /var/lib/ansible/apt-upgrade-done is created after the
+# first successful upgrade. On rerun the entire async job + wait are skipped.
+# Delete the file to force a fresh upgrade: rm /var/lib/ansible/apt-upgrade-done
+- name: Check if apt upgrade was already performed (sentinel)
+  ansible.builtin.stat:
+    path: /var/lib/ansible/apt-upgrade-done
+  register: apt_upgrade_sentinel
+  changed_when: false
+
+- name: Ensure sentinel directory exists
+  ansible.builtin.file:
+    path: /var/lib/ansible
+    state: directory
+    mode: '0755'
+  when: not apt_upgrade_sentinel.stat.exists
+
 - name: Upgrade all packages to the latest version (async)
   apt:
     upgrade: dist
@@ -102,6 +64,7 @@
   async: 3600
   poll: 0
   register: apt_upgrade_job
+  when: not apt_upgrade_sentinel.stat.exists
 
 # ── Non-apt configuration runs while the upgrade is in the background ─────────
 
@@ -172,40 +135,20 @@
       notify: restart sshd
   when: ssh_hardening_enabled
 
-- name: Configure kernel parameters for security (sysctl)
-  sysctl:
-    name: "{{ item.name }}"
-    value: "{{ item.value }}"
-    state: present
-    reload: yes
-    sysctl_file: /etc/sysctl.d/99-security-hardening.conf
-  loop:
-    - { name: 'net.ipv4.ip_forward', value: '0' }
-    - { name: 'net.ipv6.conf.all.forwarding', value: '0' }
-    - { name: 'net.ipv4.conf.all.accept_redirects', value: '0' }
-    - { name: 'net.ipv4.conf.default.accept_redirects', value: '0' }
-    - { name: 'net.ipv6.conf.all.accept_redirects', value: '0' }
-    - { name: 'net.ipv6.conf.default.accept_redirects', value: '0' }
-    - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
-    - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
-    - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
-    - { name: 'net.ipv4.conf.default.send_redirects', value: '0' }
-    - { name: 'net.ipv4.conf.all.accept_source_route', value: '0' }
-    - { name: 'net.ipv4.conf.default.accept_source_route', value: '0' }
-    - { name: 'net.ipv6.conf.all.accept_source_route', value: '0' }
-    - { name: 'net.ipv6.conf.default.accept_source_route', value: '0' }
-    - { name: 'net.ipv4.conf.all.log_martians', value: '1' }
-    - { name: 'net.ipv4.conf.default.log_martians', value: '1' }
-    - { name: 'net.ipv4.icmp_echo_ignore_all', value: '0' }
-    - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
-    - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
-    - { name: 'net.ipv4.tcp_syncookies', value: '1' }
-    - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
-    - { name: 'net.ipv4.conf.default.rp_filter', value: '1' }
-    - { name: 'fs.file-max', value: '65536' }
-    - { name: 'kernel.kptr_restrict', value: '2' }
-    - { name: 'kernel.dmesg_restrict', value: '1' }
+- name: Deploy kernel security parameters (sysctl)
+  ansible.builtin.template:
+    src: 99-security-hardening.conf.j2
+    dest: /etc/sysctl.d/99-security-hardening.conf
+    owner: root
+    group: root
+    mode: '0644'
+  register: sysctl_hardening_file
   when: kernel_hardening_enabled
+
+- name: Apply kernel security parameters
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/99-security-hardening.conf
+  when: kernel_hardening_enabled and sysctl_hardening_file.changed
+  changed_when: true
 
 - name: Set hostname
   hostname:
@@ -220,6 +163,7 @@
 
 # ── Wait for the background apt upgrade to finish ─────────────────────────────
 # Polls every 30s; retries * delay = 3600s matches async: above.
+# Skipped automatically when the upgrade task was skipped (sentinel exists).
 - name: Wait for package upgrade to complete
   ansible.builtin.async_status:
     jid: "{{ apt_upgrade_job.ansible_job_id }}"
@@ -227,6 +171,14 @@
   until: apt_upgrade_result.finished
   retries: 120
   delay: 30
+  when: apt_upgrade_job.ansible_job_id is defined
+
+- name: Create apt upgrade sentinel file (skip upgrade on future reruns)
+  ansible.builtin.file:
+    path: /var/lib/ansible/apt-upgrade-done
+    state: touch
+    mode: '0644'
+  when: apt_upgrade_job.ansible_job_id is defined
 
 - name: Display baseline configuration status
   debug:
@@ -237,7 +189,7 @@
       Hostname: {{ inventory_hostname }}
       OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
       Kernel: {{ ansible_kernel }}
-      Packages upgraded: {{ apt_upgrade_result.changed }}
+      Packages upgraded: {{ apt_upgrade_result.changed | default('skipped (sentinel)') }}
       Firewall enabled: {{ firewall_enabled }}
       SSH hardening: {{ ssh_hardening_enabled }}
       Kernel hardening: {{ kernel_hardening_enabled }}

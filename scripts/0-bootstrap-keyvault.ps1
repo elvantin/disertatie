@@ -161,6 +161,11 @@ if ($inputChoice -eq '1') {
 # Logica de skip/rotate este tratata in Step 4.
 $Secrets['ansible-vault-password'] = [System.Guid]::NewGuid().ToString('N') + [System.Guid]::NewGuid().ToString('N')
 
+# mysql-backup-encryption-key: generat aleator, NICIODATA rotat automat.
+# Rotirea ar face imposibila decriptarea backup-urilor AES existente.
+# Verificarea de existenta se face in Step 4 (dupa ce KV este garantat creat).
+$Secrets['mysql-backup-encryption-key'] = [System.Guid]::NewGuid().ToString('N') + [System.Guid]::NewGuid().ToString('N')
+
 # ============================================================
 # Step 1: Set subscription context
 # ============================================================
@@ -223,6 +228,19 @@ Write-Log-Header "Stocare secrete în Key Vault" -Step 4 -Total 5
 foreach ($entry in $Secrets.GetEnumerator()) {
     $secretName  = $entry.Key
     $secretValue = $entry.Value
+
+    # mysql-backup-encryption-key nu se roteste niciodata automat:
+    # backup-urile vechi criptate cu cheia veche ar deveni indecriptabile.
+    if ($secretName -eq 'mysql-backup-encryption-key') {
+        $existing = az keyvault secret show `
+            --vault-name $KvName `
+            --name $secretName `
+            --query value -o tsv 2>$null
+        if (-not [string]::IsNullOrEmpty($existing)) {
+            Write-Log-Warn "Secret pastrat (nu se roteste)" -Detail $secretName
+            continue
+        }
+    }
 
     az keyvault secret set `
         --vault-name $KvName `

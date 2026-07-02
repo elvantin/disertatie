@@ -4,10 +4,45 @@
 # ============================================================
 
 # ============================================================
-# Phase 0: Windows Storage Spaces — initialize data disk (LUN 0)
-# Creates a Storage Pool + VirtualDisk + D:\ volume from the
-# 32 GB data disk attached via Bicep. Idempotent: skipped if
-# D:\ already exists.
+# Phase 0a: Extend C:\ to 50 GB
+# OS disk este 128 GB, dar Packer image lasa ~30 GB pe C:.
+# Extindem C: la 50 GB pentru spatiu suficient sistemului de operare.
+# Restul (78 GB) ramine unallocated pe OS disk (storage-ul util
+# este pe data disk-ul dedicat D:\, creat in Phase 0b).
+# Idempotent: no-op daca C:\ este deja >= 50 GB.
+# ============================================================
+
+- name: Extend C drive to 50 GB (idempotent)
+  ansible.windows.win_shell: |
+    # Sterge partitiile mici (Recovery/Reserved) de dupa C: care blocheaza extinderea.
+    $cPart = Get-Partition -DriveLetter C
+    $disk  = $cPart.DiskNumber
+    Get-Partition -DiskNumber $disk |
+        Where-Object { $_.Offset -gt $cPart.Offset -and $_.Size -lt 2GB } |
+        Sort-Object Offset -Descending |
+        ForEach-Object {
+            $dp = "select disk $disk`r`nselect partition $($_.PartitionNumber)`r`ndelete partition override"
+            $dp | diskpart | Out-Null
+        }
+    $target  = 50GB
+    $max     = (Get-PartitionSupportedSize -DriveLetter C).SizeMax
+    $target  = [Math]::Min($target, $max)
+    $current = (Get-Partition -DriveLetter C).Size
+    if ($current -ge ($target - 1MB)) {
+        Write-Output "already_ok: $([math]::Round($current/1GB,1)) GB"
+        exit 0
+    }
+    Resize-Partition -DriveLetter C -Size $target
+    Write-Output "extended: $([math]::Round($target/1GB,1)) GB"
+  register: extend_c_result
+  changed_when: "'extended:' in extend_c_result.stdout"
+  tags: [fileserver, storage]
+
+# ============================================================
+# Phase 0b: Initialize data disk (LUN 0) as E:\
+# Initializes the 80 GB data disk attached via Bicep as E:\ for SMB shares.
+# D:\ este rezervat de Azure temporary disk (8 GB, non-persistent).
+# Idempotent: skipped if E:\ already exists.
 # ============================================================
 
 - name: Copy storage pool initialization script to target
@@ -16,16 +51,26 @@
     dest: 'C:\Windows\Temp\init-storage-pool.ps1'
   tags: [fileserver, storage]
 
-- name: Initialize data disk and create Storage Pool (D drive)
+- name: Initialize data disk as E:\ (idempotent)
   ansible.windows.win_shell: powershell.exe -ExecutionPolicy Bypass -File C:\Windows\Temp\init-storage-pool.ps1
   register: storage_pool_result
   changed_when: "'already exists' not in storage_pool_result.stdout"
   tags: [fileserver, storage]
 
-- name: Wait for D:\ to become available
-  ansible.windows.win_wait_for:
-    path: "D:\\"
-    timeout: 60
+- name: Reboot after disk initialization (monteaza volumul NTFS in sesiune noua)
+  ansible.windows.win_reboot:
+    reboot_timeout: 300
+    post_reboot_delay: 20
+  when: storage_pool_result.changed
+  tags: [fileserver, storage]
+
+- name: Wait for E:\ to become available
+  ansible.windows.win_shell: cmd /c "vol E:"
+  register: wait_e_drive
+  until: wait_e_drive.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
   tags: [fileserver, storage]
 
 - name: Install File Server role
@@ -40,17 +85,17 @@
     path: "{{ item }}"
     state: directory
   loop:
-    - D:\Shares
-    - D:\Shares\Public
-    - D:\Shares\Marketing
-    - D:\Shares\IT
-    - D:\Shares\Backups
+    - E:\Shares
+    - E:\Shares\Public
+    - E:\Shares\Marketing
+    - E:\Shares\IT
+    - E:\Shares\Backups
   tags: [fileserver, directories]
 
 - name: Create SMB share - Public
   ansible.windows.win_share:
     name: Public
-    path: D:\Shares\Public
+    path: E:\Shares\Public
     description: "Public shared folder"
     full: "Everyone"
     state: present
@@ -59,7 +104,7 @@
 - name: Create SMB share - Marketing
   ansible.windows.win_share:
     name: Marketing
-    path: D:\Shares\Marketing
+    path: E:\Shares\Marketing
     description: "Marketing department files"
     full: "Administrators"
     change: "Users"
@@ -69,7 +114,7 @@
 - name: Create SMB share - IT
   ansible.windows.win_share:
     name: IT
-    path: D:\Shares\IT
+    path: E:\Shares\IT
     description: "IT department files"
     full: "Administrators"
     state: present
@@ -78,7 +123,7 @@
 - name: Create SMB share - Backups
   ansible.windows.win_share:
     name: Backups
-    path: D:\Shares\Backups
+    path: E:\Shares\Backups
     description: "Centralized backup storage"
     full: "Administrators"
     state: present
@@ -102,12 +147,106 @@
   ansible.windows.win_shell: |
     Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force
     Set-SmbServerConfiguration -EnableSMB2Protocol $true -Force
+  changed_when: false
   tags: [fileserver, smb, security]
 
 - name: Configure SMB signing (security)
   ansible.windows.win_shell: |
-    Set-SmbServerConfiguration -RequireSecuritySignature $true -Force
+    # RequireSecuritySignature $false: necesar pentru accesul guest/anonim pe share-ul Public.
+    # Sesiunile guest nu pot negocia semnatura SMB (null session, fara cheie de autentificare).
+    # Securitatea retelei este asigurata de NSG (portul 445 accesibil doar din VNet intern).
+    Set-SmbServerConfiguration -EnableSMBSigning $true -Force
+    Set-SmbServerConfiguration -RequireSecuritySignature $false -Force
+  changed_when: false
   tags: [fileserver, smb, security]
+
+# ============================================================
+# Anonymous / Guest SMB access — necesar pentru accesul de pe Linux fara credentiale
+# (smbclient -N  sau  mount -t cifs -o guest)
+#
+# Cele 6 setari blocheaza sesiunea null INAINTE de permisiunile share-ului:
+#   1. Guest account dezactivat → null session nu are cont la care sa fie mapat
+#   2. EnableGuestAccess=false  → SMB refuza logon-ul de tip guest
+#      (Set-SmbServerConfiguration nu persista pe Server 2022 — se seteaza via registry)
+#   3. LimitBlankPasswordUse=1 → blocheaza conturi cu parola goala (Guest) din retea
+#      (aceasta este setarea care a blocat accesul dupa toate celelalte fix-uri)
+#   4. RestrictNullSessAccess=1 → toate sesiunile null sunt blocate complet
+#   5. EveryoneIncludesAnonymous=0 → permisiunea Everyone:Full nu se aplica anonim
+#   6. NullSessionShares gol → share-ul Public nu e declarat accesibil anonim
+#
+# Securitatea retelei: NSG permite portul 445 NUMAI din VNet intern (10.10.0.0/16).
+# ============================================================
+
+- name: Enable Guest account and anonymous SMB access (idempotent)
+  ansible.windows.win_shell: |
+    $changed = $false
+    $lmPath  = "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+    $lsaPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+
+    # 1. Enable Guest account (null sessions are mapped to Guest)
+    $guest = Get-LocalUser -Name "Guest" -ErrorAction SilentlyContinue
+    if ($guest -and $guest.Enabled -eq $false) {
+        net user Guest /active:yes | Out-Null
+        $changed = $true
+        Write-Output "Guest account enabled"
+    }
+
+    # 2. EnableGuestAccess via registry (Set-SmbServerConfiguration does not persist
+    #    reliably on Windows Server 2022 — confirmed by Get-SmbServerConfiguration
+    #    returning empty even after Set-SmbServerConfiguration -EnableGuestAccess $true)
+    $ega = (Get-ItemProperty -Path $lmPath -Name "EnableGuestAccess" -ErrorAction SilentlyContinue).EnableGuestAccess
+    if ($ega -ne 1) {
+        Set-ItemProperty -Path $lmPath -Name "EnableGuestAccess" -Value 1 -Type DWord
+        $changed = $true
+        Write-Output "EnableGuestAccess registry set to 1"
+    }
+
+    # 3. Allow Guest (blank password) to log on from the network.
+    #    Default=1 blocks all blank-password accounts from remote logon — this was
+    #    the final blocker even after all other settings were correct.
+    $lbpu = (Get-ItemProperty -Path $lsaPath -Name "LimitBlankPasswordUse" -ErrorAction SilentlyContinue).LimitBlankPasswordUse
+    if ($lbpu -ne 0) {
+        Set-ItemProperty -Path $lsaPath -Name "LimitBlankPasswordUse" -Value 0 -Type DWord
+        $changed = $true
+        Write-Output "LimitBlankPasswordUse set to 0"
+    }
+
+    # 4. Allow null sessions to access shares
+    $rNSA = (Get-ItemProperty -Path $lmPath -Name "RestrictNullSessAccess" -ErrorAction SilentlyContinue).RestrictNullSessAccess
+    if ($rNSA -ne 0) {
+        Set-ItemProperty -Path $lmPath -Name "RestrictNullSessAccess" -Value 0 -Type DWord
+        $changed = $true
+        Write-Output "RestrictNullSessAccess set to 0"
+    }
+
+    # 5. Let Everyone group include Anonymous users
+    $eIA = (Get-ItemProperty -Path $lsaPath -Name "EveryoneIncludesAnonymous" -ErrorAction SilentlyContinue).EveryoneIncludesAnonymous
+    if ($eIA -ne 1) {
+        Set-ItemProperty -Path $lsaPath -Name "EveryoneIncludesAnonymous" -Value 1 -Type DWord
+        $changed = $true
+        Write-Output "EveryoneIncludesAnonymous set to 1"
+    }
+
+    # 6. Declare Public as a null-session share
+    $nSS = (Get-ItemProperty -Path $lmPath -Name "NullSessionShares" -ErrorAction SilentlyContinue).NullSessionShares
+    if ($nSS -notcontains "Public") {
+        $newShares = @("Public") + ($nSS | Where-Object { $_ -and $_ -ne "Public" })
+        Set-ItemProperty -Path $lmPath -Name "NullSessionShares" -Value $newShares -Type MultiString
+        $changed = $true
+        Write-Output "Public added to NullSessionShares"
+    }
+
+    if ($changed) { Write-Output "CHANGED" } else { Write-Output "already_configured" }
+  register: guest_smb_result
+  changed_when: "'CHANGED' in guest_smb_result.stdout"
+  tags: [fileserver, smb, guest]
+
+- name: Restart LanmanServer to apply null-session settings
+  ansible.windows.win_service:
+    name: LanmanServer
+    state: restarted
+  when: guest_smb_result.changed
+  tags: [fileserver, smb, guest]
 
 - name: Create welcome document in Public share
   ansible.windows.win_copy:
@@ -136,7 +275,7 @@
 
       ==========================================
       Ultima actualizare: Februarie 2026
-    dest: D:\Shares\Public\Bine_ati_venit.txt
+    dest: E:\Shares\Public\Bine_ati_venit.txt
   tags: [fileserver, documents]
 
 - name: Create internal regulation document
@@ -173,7 +312,7 @@
 
       ==========================================
       Aprobat de: Elena Popescu, Director General
-    dest: D:\Shares\Public\Regulament_Intern.txt
+    dest: E:\Shares\Public\Regulament_Intern.txt
   tags: [fileserver, documents]
 
 - name: Create marketing campaigns calendar
@@ -207,7 +346,7 @@
 
       ==========================================
       Nota: Calendar orientativ, se actualizeaza lunar
-    dest: D:\Shares\Marketing\Calendar_Campanii_2026.txt
+    dest: E:\Shares\Marketing\Calendar_Campanii_2026.txt
   tags: [fileserver, documents]
 
 - name: Create client proposal template
@@ -250,7 +389,7 @@
       SC MEDIA SRL | CUI: RO 41234567
       Str. Victoriei 45, Sector 1, Bucuresti
       Tel: +40 21 300 1234 | office@media-srl.ro
-    dest: D:\Shares\Marketing\Template_Propunere_Client.txt
+    dest: E:\Shares\Marketing\Template_Propunere_Client.txt
   tags: [fileserver, documents]
 
 - name: Create IT backup procedures document
@@ -270,7 +409,7 @@
          - MySQL (vm-db-01): wordpress_db + mediasrl_business
          - WordPress (vm-cms-01): /var/www/wordpress
          - Ansible (vm-jmp-01): ~/ansible
-         - File server (vm-fs-01): D:\Shares
+         - File server (vm-fs-01): E:\Shares
 
       3. PROCEDURA DE RESTORE
          a) Identificare punct de restore
@@ -287,7 +426,7 @@
 
       ==========================================
       CONFIDENTIAL - Doar uz intern IT
-    dest: D:\Shares\IT\Proceduri_Backup.txt
+    dest: E:\Shares\IT\Proceduri_Backup.txt
   tags: [fileserver, documents]
 
 - name: Create backups readme
@@ -310,7 +449,7 @@
       de retentie (7 zile zilnic, 4 saptamani saptamanal).
 
       ==========================================
-    dest: D:\Shares\Backups\README.txt
+    dest: E:\Shares\Backups\README.txt
   tags: [fileserver, documents]
 
 - name: Display file server information

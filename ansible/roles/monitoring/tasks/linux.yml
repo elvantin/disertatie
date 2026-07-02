@@ -17,7 +17,10 @@
     name: mediasrl-health-check
     minute: "*/{{ monitoring_cron_interval }}"
     hour: "*"
-    job: "{{ monitoring_script_path }} >> /var/log/mediasrl-health.log 2>&1"
+    # flock -n prevents overlapping runs: the retry logic in check-health.sh
+    # can sleep up to ~60s (2x sleep 30 while confirming a service outage),
+    # which can exceed the 1-minute cron interval.
+    job: "/usr/bin/flock -n /var/lock/mediasrl-health.lock {{ monitoring_script_path }} >> /var/log/mediasrl-health.log 2>&1"
     user: root
     state: present
 

@@ -34,20 +34,24 @@
 # ============================================================
 
 - name: Configure WordPress settings
-  command: "wp option update {{ item.key }} '{{ item.value }}' --path={{ wordpress_install_dir }}"
+  # Single PHP process (wp eval) instead of 10 separate `wp option update`
+  # invocations — each wp-cli command pays its own PHP bootstrap cost.
+  # permalink_structure is set separately by "Set permalink structure" below
+  # (wp rewrite structure also flushes/regenerates rewrite rules).
+  command: >
+    wp eval '
+    update_option("blogname", "SC MEDIA SRL");
+    update_option("blogdescription", "Agentie de PR, Marketing Digital si Comunicare Strategica");
+    update_option("timezone_string", "Europe/Bucharest");
+    update_option("date_format", "j F Y");
+    update_option("time_format", "H:i");
+    update_option("WPLANG", "ro_RO");
+    update_option("posts_per_page", 6);
+    update_option("default_ping_status", "closed");
+    update_option("default_comment_status", "closed");
+    ' --path={{ wordpress_install_dir }}
   become: true
   become_user: "{{ wordpress_user }}"
-  loop:
-    - { key: 'blogname', value: 'SC MEDIA SRL' }
-    - { key: 'blogdescription', value: 'Agentie de PR, Marketing Digital si Comunicare Strategica' }
-    - { key: 'timezone_string', value: 'Europe/Bucharest' }
-    - { key: 'date_format', value: 'j F Y' }
-    - { key: 'time_format', value: 'H:i' }
-    - { key: 'WPLANG', value: 'ro_RO' }
-    - { key: 'permalink_structure', value: '/%postname%/' }
-    - { key: 'posts_per_page', value: '6' }
-    - { key: 'default_ping_status', value: 'closed' }
-    - { key: 'default_comment_status', value: 'closed' }
   changed_when: false
   tags: [wordpress, seed, settings]
 
@@ -149,12 +153,13 @@
   tags: [wordpress, seed, settings]
 
 - name: Set static front page
-  command: "wp option update {{ item.key }} '{{ item.value }}' --path={{ wordpress_install_dir }}"
+  command: >
+    wp eval '
+    update_option("show_on_front", "page");
+    update_option("page_on_front", {{ home_page_id.stdout | trim }});
+    ' --path={{ wordpress_install_dir }}
   become: true
   become_user: "{{ wordpress_user }}"
-  loop:
-    - { key: 'show_on_front', value: 'page' }
-    - { key: 'page_on_front', value: '{{ home_page_id.stdout | trim }}' }
   when: home_page_id.stdout | trim | length > 0
   changed_when: false
   tags: [wordpress, seed, settings]
@@ -253,16 +258,8 @@
 # Delete default content
 # ============================================================
 
-- name: Delete default Hello World post
-  command: wp post delete 1 --force --path={{ wordpress_install_dir }}
-  become: true
-  become_user: "{{ wordpress_user }}"
-  failed_when: false
-  changed_when: false
-  tags: [wordpress, seed, cleanup]
-
-- name: Delete default Sample Page
-  command: wp post delete 2 --force --path={{ wordpress_install_dir }}
+- name: Delete default Hello World post and Sample Page
+  command: wp post delete 1 2 --force --path={{ wordpress_install_dir }}
   become: true
   become_user: "{{ wordpress_user }}"
   failed_when: false

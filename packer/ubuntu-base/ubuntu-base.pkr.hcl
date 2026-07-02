@@ -69,9 +69,16 @@ build {
   }
 
   // Step 2: Deprovision the Azure Linux Agent (generalize the VM)
+  // cloud-init clean MUST run before waagent deprovision: without it, cached
+  // instance-id/datasource state in /var/lib/cloud/ survives into the golden
+  // image. On the next VM's first boot, cloud-init sees that cached state and
+  // can conclude "already provisioned", silently skipping per-instance modules
+  // (including admin user creation) — the deployed VM then has no login user
+  // at all, even though the build itself reports success.
   provisioner "shell" {
     execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E bash '{{ .Path }}'"
     inline = [
+      "cloud-init clean --logs --seed || true",
       "/usr/sbin/waagent -force -deprovision+user && export HISTSIZE=0 && sync"
     ]
   }

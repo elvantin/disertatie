@@ -46,20 +46,46 @@ apt update -qq
 apt upgrade -y -qq
 
 # =============================================================================
-# STEP 2: Install Common Packages
+# STEP 2: Install Common + Security Packages
 # =============================================================================
-# NOTE: Firewall configuration (ufw) is handled by Ansible roles per VM.
-# The base image keeps ufw installed but unconfigured.
+# Baked into the image at build-time (was previously installed at runtime by
+# Ansible's common role on every deploy). universe/multiverse already enabled
+# in STEP 0's sources.list rebuild, so no separate "enable universe" step
+# is needed here (unlike the old Ansible task it replaces).
 
-echo "[2/6] Installing common packages..."
+echo "[2/6] Installing common + security packages..."
 apt install -y \
-    curl wget vim nano \
-    net-tools dnsutils \
-    jq tree unzip \
-    dos2unix \
+    curl wget vim nano htop git \
+    unzip zip tar \
+    net-tools dnsutils tcpdump telnet rsync \
+    jq tree dos2unix \
     ca-certificates gnupg lsb-release \
-    python3 python3-apt \
-    apt-transport-https software-properties-common
+    python3 python3-apt python3-pip \
+    apt-transport-https software-properties-common \
+    systemd-timesyncd build-essential \
+    fail2ban unattended-upgrades update-notifier-common
+
+# fail2ban must NOT be active during the fragile initial-provisioning window
+# (playbooks/1-setup-ssh-keys.yml, first common-role run) — a handful of
+# retried/failed SSH attempts during that window could get the jumphost IP
+# banned before jails are even configured. Package stays installed (no
+# re-download at deploy time); the dedicated fail2ban role (harden-security.yml)
+# enables+starts it later, once real jail rules are in place.
+systemctl disable --now fail2ban || true
+
+# =============================================================================
+# STEP 2b: Remove UFW, install firewalld
+# =============================================================================
+# Baked into the image (same as ubuntu-jumphost) so Ansible only needs to
+# configure zones/ports at runtime, not install/remove packages.
+
+echo "[2b/6] Removing UFW and installing firewalld..."
+systemctl stop ufw || true
+systemctl disable ufw || true
+apt remove -y ufw
+apt install -y firewalld
+systemctl enable firewalld
+systemctl start firewalld
 
 # =============================================================================
 # STEP 3: Configure SSH Hardening

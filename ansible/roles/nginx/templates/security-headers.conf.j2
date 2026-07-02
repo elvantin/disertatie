@@ -1,0 +1,13 @@
+# ============================================================
+# Security Headers - Baseline
+# Managed by Ansible (roles/nginx)
+# Playbook 4-harden-nginx-ssl.yml overwrites this file to add:
+#   HSTS, CSP, Permissions-Policy (Grade A+)
+# ============================================================
+
+{% for header in nginx_security_headers %}
+add_header {{ header }};
+{% endfor %}
+{% if nginx_hsts_max_age | int > 0 %}
+add_header Strict-Transport-Security "max-age={{ nginx_hsts_max_age }}; includeSubDomains" always;
+{% endif %}

@@ -79,9 +79,10 @@ MYSQL_WP_PASS=$(_get "mysql-wordpress-password")
 MYSQL_MON_PASS=$(_get "mysql-monitoring-password")
 MYSQL_API_PASS=$(_get "mysql-api-password")
 WP_ADMIN_PASS=$(_get "wordpress-admin-password")
+BACKUP_ENC_KEY=$(_get "mysql-backup-encryption-key")
 
 _errors=0
-for _var in VM_ADMIN_PASS MYSQL_ROOT_PASS MYSQL_WP_PASS MYSQL_MON_PASS MYSQL_API_PASS WP_ADMIN_PASS; do
+for _var in VM_ADMIN_PASS MYSQL_ROOT_PASS MYSQL_WP_PASS MYSQL_MON_PASS MYSQL_API_PASS WP_ADMIN_PASS BACKUP_ENC_KEY; do
     if [ -z "${!_var}" ]; then
         _fail "Secret gol sau lipsa: $_var"
         _errors=$((_errors + 1))
@@ -91,17 +92,17 @@ if [ $_errors -gt 0 ]; then
     _fail "$_errors secret(e) nu au putut fi preluate. Rulati mai intai 0-bootstrap-keyvault.ps1."
     exit 1
 fi
-_ok "6/6 secrete preluate din Key Vault"
+_ok "7/7 secrete preluate din Key Vault"
 
 # ── STEP 4: Create encrypted vault.yml ────────────────────
 
 _step "[4/4] Creare group_vars/all/vault.yml (AES-256)..."
 mkdir -p "$(dirname "$VAULT_FILE")"
 
-# ansible.cfg already declares vault_password_file = ~/.vault-pass (written above).
-# Passing --vault-password-file here too would create two "default" vault-ids
-# and cause: ERROR! The vault-ids default,default are available to encrypt.
-# Solution: rely on ansible.cfg alone — no extra flag needed.
+# Pasam parola direct prin --vault-id cu ID "mediasrl" (diferit de "default").
+# Evita conflictul "vault-ids default,default" cu vault_password_file din ansible.cfg.
+# ansible-playbook decripteaza corect: incearca TOATE parolele disponibile,
+# indiferent de vault-id label — acelasi $VAULT_PASS_FILE este configurat in ansible.cfg.
 
 # Write plaintext to stdin, encrypt directly to file — no plaintext on disk
 printf '%s\n' \
@@ -112,13 +113,16 @@ printf '%s\n' \
     "vault_mysql_monitoring_password: \"$MYSQL_MON_PASS\"" \
     "vault_mysql_api_password: \"$MYSQL_API_PASS\"" \
     "vault_wordpress_admin_password: \"$WP_ADMIN_PASS\"" \
+    "vault_backup_encryption_key: \"$BACKUP_ENC_KEY\"" \
     | ansible-vault encrypt \
+        --vault-id "mediasrl@$VAULT_PASS_FILE" \
+        --encrypt-vault-id mediasrl \
         --output "$VAULT_FILE" -
 
 chmod 600 "$VAULT_FILE"
 
 # Quick sanity check — decrypt and discard output
-if ! ansible-vault view "$VAULT_FILE" > /dev/null 2>&1; then
+if ! ansible-vault view --vault-id "mediasrl@$VAULT_PASS_FILE" "$VAULT_FILE" > /dev/null 2>&1; then
     _fail "Verificare vault esuat — fisierul poate fi corupt"
     exit 1
 fi

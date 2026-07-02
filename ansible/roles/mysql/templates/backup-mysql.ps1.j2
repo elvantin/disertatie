@@ -1,58 +1,167 @@
-# MySQL Backup Script - Managed by Ansible
-# Performs daily backup of all MySQL databases
+# ============================================================
+# SC MEDIA SRL — MySQL Encrypted Backup Script
+# Host   : vm-db-01  |  Managed by Ansible (mysql role)
+# Target : \\vm-fs-01\Backups\mysql\
+# Crypto : AES-256-CBC, cheie derivata SHA-256, IV aleator prepus
+# Run    : Scheduled Task MediaSRL-MySQLBackup (zilnic 02:00, SYSTEM)
+# ============================================================
 
-$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$backupDir = "C:\MySQL\Backups"
-$mysqldumpPath = "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe"
-$mysqlUser = "root"
-$mysqlPassword = "{{ mysql_root_password }}"
+$ErrorActionPreference = 'Stop'
 
-# Retention policy (days)
-$retentionDays = 7
+# ---- Configuratie (injectata de Ansible) ----
+$MySQLBin      = 'C:\Program Files\MySQL\MySQL Server 8.0\bin'
+$MySQLUser     = 'root'
+$MySQLPassword = '{{ mysql_root_password }}'
+$SmbShare      = '{{ mysql_backup_smb_share }}'
+$SmbUser       = '{{ mysql_backup_smb_user }}'
+$SmbPassword   = '{{ mysql_backup_smb_password }}'
+$EncKey        = '{{ mysql_backup_encryption_key }}'
+$RetentionDays = {{ mysql_backup_retention_days }}
 
-# Log file
-$logFile = "$backupDir\backup_$timestamp.log"
+$Timestamp  = Get-Date -Format 'yyyyMMdd_HHmmss'
+$LocalTemp  = 'C:\MySQL\Backups\tmp'
+$LocalLogs  = 'C:\MySQL\Backups\logs'
+$RemotePath = "$SmbShare\mysql"
+$LogFile    = "$LocalLogs\backup_$Timestamp.log"
 
-# Start logging
-"[$(Get-Date)] Starting MySQL backup..." | Out-File -FilePath $logFile -Append
-
-try {
-    # Get list of databases
-    $databases = & "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u $mysqlUser -p$mysqlPassword -e "SHOW DATABASES;" | Select-Object -Skip 1
-
-    foreach ($db in $databases) {
-        # Skip system databases
-        if ($db -match "information_schema|performance_schema|mysql|sys") {
-            continue
-        }
-
-        $backupFile = "$backupDir\$db`_$timestamp.sql"
-
-        "[$(Get-Date)] Backing up database: $db" | Out-File -FilePath $logFile -Append
-
-        # Perform backup
-        & $mysqldumpPath -u $mysqlUser -p$mysqlPassword --single-transaction --routines --triggers $db | Out-File -FilePath $backupFile -Encoding UTF8
-
-        if ($LASTEXITCODE -eq 0) {
-            "[$(Get-Date)] Successfully backed up $db" | Out-File -FilePath $logFile -Append
-
-            # Compress backup
-            Compress-Archive -Path $backupFile -DestinationPath "$backupFile.zip" -Force
-            Remove-Item $backupFile
-
-            "[$(Get-Date)] Compressed $db backup" | Out-File -FilePath $logFile -Append
-        } else {
-            "[$(Get-Date)] ERROR: Failed to backup $db" | Out-File -FilePath $logFile -Append
-        }
-    }
-
-    # Cleanup old backups
-    "[$(Get-Date)] Cleaning up backups older than $retentionDays days..." | Out-File -FilePath $logFile -Append
-    Get-ChildItem -Path $backupDir -Filter "*.zip" | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$retentionDays) } | Remove-Item -Force
-
-    "[$(Get-Date)] MySQL backup completed successfully" | Out-File -FilePath $logFile -Append
+# ---- Logger ----
+function Write-Log {
+    param([string]$Msg, [string]$Level = 'INFO')
+    $line = "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] [$Level] $Msg"
+    Add-Content -Path $LogFile -Value $line -Encoding UTF8
+    Write-Host $line
 }
-catch {
-    "[$(Get-Date)] ERROR: $($_.Exception.Message)" | Out-File -FilePath $logFile -Append
+
+# ---- AES-256-CBC (zero dependente externe) ----
+# Formatul fisierului .enc: primii 16 bytes = IV, restul = ciphertext
+function Invoke-AesEncrypt {
+    param([string]$In, [string]$Out, [string]$Key)
+
+    # Deriveaza cheia AES-256 din passphrase via SHA-256 (32 bytes)
+    $keyBytes = [System.Security.Cryptography.SHA256Managed]::new().ComputeHash(
+        [System.Text.Encoding]::UTF8.GetBytes($Key)
+    )
+
+    # IV aleator per fisier — face fiecare backup unic chiar cu aceeasi cheie
+    $iv = New-Object byte[] 16
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($iv)
+
+    $aes         = [System.Security.Cryptography.Aes]::Create()
+    $aes.Key     = $keyBytes
+    $aes.IV      = $iv
+    $aes.Mode    = [System.Security.Cryptography.CipherMode]::CBC
+    $aes.Padding = [System.Security.Cryptography.PaddingMode]::PKCS7
+
+    $inStream     = [System.IO.File]::OpenRead($In)
+    $outStream    = [System.IO.File]::Create($Out)
+    $outStream.Write($iv, 0, 16)   # prepune IV
+    $cryptoStream = New-Object System.Security.Cryptography.CryptoStream(
+        $outStream, $aes.CreateEncryptor(),
+        [System.Security.Cryptography.CryptoStreamMode]::Write
+    )
+    $inStream.CopyTo($cryptoStream)
+    $cryptoStream.FlushFinalBlock()
+    $cryptoStream.Dispose(); $outStream.Dispose(); $inStream.Dispose(); $aes.Dispose()
+}
+
+# ---- Init directoare locale ----
+foreach ($dir in @($LocalTemp, $LocalLogs)) {
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+}
+
+Write-Log "=== Backup MySQL pornit ==="
+
+# Fisier temporar de optiuni MySQL — parola nu apare in linia de comanda, elimina warning
+$MySQLOptFile = Join-Path $LocalTemp "mysql_opts_$Timestamp.cnf"
+"[client]`npassword=$MySQLPassword" | Set-Content -Path $MySQLOptFile -Encoding ASCII
+
+# ---- Conectare SMB ----
+Write-Log "Conectare la share: $SmbShare"
+$netOut = net use $SmbShare /user:$SmbUser $SmbPassword /persistent:no 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Log "EROARE conectare SMB: $netOut" 'ERROR'
     exit 1
 }
+Write-Log "SMB conectat OK"
+
+if (-not (Test-Path $RemotePath)) {
+    New-Item -ItemType Directory -Path $RemotePath -Force | Out-Null
+    Write-Log "Director remote creat: $RemotePath"
+}
+
+# ---- Lista baze de date ----
+$dbRaw = & "$MySQLBin\mysql.exe" --defaults-extra-file="$MySQLOptFile" -u $MySQLUser `
+    --batch --skip-column-names -e 'SHOW DATABASES;'
+if ($LASTEXITCODE -ne 0) {
+    Write-Log "EROARE listare DB: $dbRaw" 'ERROR'
+    net use $SmbShare /delete /yes 2>&1 | Out-Null
+    exit 1
+}
+
+$skipDbs  = @('information_schema', 'performance_schema', 'mysql', 'sys')
+$databases = $dbRaw -split "`n" |
+    ForEach-Object { $_.Trim() } |
+    Where-Object   { $_ -and $_ -notin $skipDbs }
+
+$successCount = 0
+$errorCount   = 0
+
+foreach ($db in $databases) {
+
+    Write-Log "Dump: $db"
+    $dumpFile = Join-Path $LocalTemp "${db}_${Timestamp}.sql"
+    $encFile  = Join-Path $RemotePath "${db}_${Timestamp}.sql.enc"
+
+    try {
+        # --single-transaction: snapshot consistent InnoDB fara lock
+        & "$MySQLBin\mysqldump.exe" --defaults-extra-file="$MySQLOptFile" -u $MySQLUser `
+            --single-transaction --routines --triggers --events `
+            $db | Out-File -FilePath $dumpFile -Encoding UTF8
+
+        if ($LASTEXITCODE -ne 0) { throw "mysqldump exit code $LASTEXITCODE" }
+
+        $sizeMB = [math]::Round((Get-Item $dumpFile).Length / 1MB, 2)
+        Write-Log "  Dump OK: $sizeMB MB → criptare AES-256"
+
+        Invoke-AesEncrypt -In $dumpFile -Out $encFile -Key $EncKey
+
+        $encMB = [math]::Round((Get-Item $encFile).Length / 1MB, 2)
+        Write-Log "  Criptat OK: $encMB MB → $encFile"
+        $successCount++
+
+    } catch {
+        Write-Log "  EROARE la $db`: $_" 'ERROR'
+        $errorCount++
+    } finally {
+        if (Test-Path $dumpFile) { Remove-Item $dumpFile -Force }
+    }
+}
+
+# ---- Retentie backup-uri ----
+Write-Log "Curatare backup-uri mai vechi de $RetentionDays zile..."
+$cutoff = (Get-Date).AddDays(-$RetentionDays)
+Get-ChildItem -Path $RemotePath -Filter '*.sql.enc' -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -lt $cutoff } |
+    ForEach-Object {
+        Write-Log "  Sters: $($_.Name)"
+        Remove-Item $_.FullName -Force
+    }
+
+# ---- Curatare log-uri locale vechi ----
+Get-ChildItem -Path $LocalLogs -Filter 'backup_*.log' -ErrorAction SilentlyContinue |
+    Where-Object { $_.LastWriteTime -lt $cutoff } |
+    Remove-Item -Force
+
+# ---- Curatare fisier optiuni MySQL ----
+Remove-Item $MySQLOptFile -Force -ErrorAction SilentlyContinue
+
+# ---- Deconectare SMB ----
+net use $SmbShare /delete /yes 2>&1 | Out-Null
+Write-Log "SMB deconectat"
+
+# ---- Sumar ----
+$status = if ($errorCount -gt 0) { 'PARTIAL' } else { 'OK' }
+Write-Log "=== Backup ${status}: $successCount reusit, $errorCount esuat ==="
+
+if ($errorCount -gt 0) { exit 1 }
+exit 0

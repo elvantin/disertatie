@@ -240,7 +240,7 @@ resource alertSshBruteForce 'Microsoft.Insights/scheduledQueryRules@2023-03-15-p
     description: 'Atac brute force SSH: >= 5 autentificari esuate de la acelasi IP in 15 min. VM afectat: vezi Dimensions → Computer din email.'
     severity: 1
     enabled: true
-    evaluationFrequency: 'PT5M'
+    evaluationFrequency: 'PT1M'
     windowSize: 'PT15M'
     scopes: [workspaceResourceId]
     criteria: {
@@ -290,7 +290,7 @@ resource alertServiceDown 'Microsoft.Insights/scheduledQueryRules@2023-03-15-pre
     description: 'Serviciu sau port critic inactiv >= 5 min (nginx, php-fpm, postfix, sshd). VM afectat: vezi Dimensions → Computer din email.'
     severity: 1
     enabled: true
-    evaluationFrequency: 'PT5M'
+    evaluationFrequency: 'PT1M'
     windowSize: 'PT10M'
     scopes: [workspaceResourceId]
     criteria: {
@@ -322,7 +322,7 @@ Syslog
       actionGroups: [actionGroup.id]
       customProperties: {}
     }
-    muteActionsDuration: 'PT5M'
+    muteActionsDuration: 'PT30M'
     autoMitigate: false
   }
 }
@@ -340,7 +340,7 @@ resource alertHighCpu 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview
     description: 'CPU >= 85% sustinut >= 10 min (2 din 3 evaluari consecutive). VM afectat: vezi Dimensions → Computer din email.'
     severity: 2
     enabled: true
-    evaluationFrequency: 'PT5M'
+    evaluationFrequency: 'PT1M'
     windowSize: 'PT15M'
     scopes: [workspaceResourceId]
     criteria: {
@@ -371,7 +371,7 @@ Syslog
       actionGroups: [actionGroup.id]
       customProperties: {}
     }
-    muteActionsDuration: 'PT5M'
+    muteActionsDuration: 'PT30M'
     autoMitigate: false
   }
 }
@@ -388,7 +388,7 @@ resource alertDiskFull 'Microsoft.Insights/scheduledQueryRules@2023-03-15-previe
     description: 'Spatiu disk >= 90% confirmat (2 citiri consecutive). VM afectat: vezi Dimensions → Computer din email.'
     severity: 1
     enabled: true
-    evaluationFrequency: 'PT5M'
+    evaluationFrequency: 'PT1M'
     windowSize: 'PT10M'
     scopes: [workspaceResourceId]
     criteria: {
@@ -420,7 +420,7 @@ Syslog
       actionGroups: [actionGroup.id]
       customProperties: {}
     }
-    muteActionsDuration: 'PT5M'
+    muteActionsDuration: 'PT30M'
     autoMitigate: false
   }
 }
@@ -437,7 +437,7 @@ resource alertWindowsBruteForce 'Microsoft.Insights/scheduledQueryRules@2023-03-
     description: 'Atac brute force RDP/Windows: >= 10 autentificari esuate (EventID 4625) in 10 min. VM afectat: vezi Dimensions → Computer din email.'
     severity: 1
     enabled: true
-    evaluationFrequency: 'PT5M'
+    evaluationFrequency: 'PT1M'
     windowSize: 'PT10M'
     scopes: [workspaceResourceId]
     criteria: {
@@ -490,7 +490,7 @@ resource alertWindowsHealth 'Microsoft.Insights/scheduledQueryRules@2023-03-15-p
     description: 'Serviciu, port, MySQL sau SMB in stare critica. VM afectat: vezi Dimensions → Computer din email.'
     severity: 1
     enabled: true
-    evaluationFrequency: 'PT5M'
+    evaluationFrequency: 'PT1M'
     windowSize: 'PT15M'
     scopes: [workspaceResourceId]
     criteria: {
@@ -523,7 +523,7 @@ Event
       actionGroups: [actionGroup.id]
       customProperties: {}
     }
-    muteActionsDuration: 'PT5M'
+    muteActionsDuration: 'PT30M'
     autoMitigate: false
   }
 }

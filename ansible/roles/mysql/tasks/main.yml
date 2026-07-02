@@ -6,6 +6,38 @@
 # Uses MySQL Installer MSI for reliable silent installation
 # ============================================================
 
+# ============================================================
+# Phase 0: Extend C:\ to fill the full OS disk (128 GB)
+# Azure provisions the disk at 128 GB but the Packer image
+# leaves ~30 GB used — the remaining space is unallocated.
+# Idempotent: no-op if C:\ is already at maximum size.
+# ============================================================
+
+- name: Extend C drive to full OS disk size (idempotent)
+  ansible.windows.win_shell: |
+    # Sterge partitiile mici (Recovery/Reserved) de dupa C: care blocheaza extinderea.
+    # Folosim diskpart cu "delete partition override" pentru a putea sterge si partitii speciale.
+    $cPart = Get-Partition -DriveLetter C
+    $disk  = $cPart.DiskNumber
+    Get-Partition -DiskNumber $disk |
+        Where-Object { $_.Offset -gt $cPart.Offset -and $_.Size -lt 2GB } |
+        Sort-Object Offset -Descending |
+        ForEach-Object {
+            $dp = "select disk $disk`r`nselect partition $($_.PartitionNumber)`r`ndelete partition override"
+            $dp | diskpart | Out-Null
+        }
+    $max     = (Get-PartitionSupportedSize -DriveLetter C).SizeMax
+    $current = (Get-Partition -DriveLetter C).Size
+    if ($current -ge ($max - 1MB)) {
+        Write-Output "already_ok: $([math]::Round($current/1GB,1)) GB"
+        exit 0
+    }
+    Resize-Partition -DriveLetter C -Size $max
+    Write-Output "extended: $([math]::Round($max/1GB,1)) GB"
+  register: extend_c_result
+  changed_when: "'extended:' in extend_c_result.stdout"
+  tags: [mysql, prereq]
+
 - name: Create temporary directory
   ansible.windows.win_file:
     path: C:\Temp
@@ -444,6 +476,7 @@
       port={{ mysql_port }}
       default-character-set=utf8mb4
     dest: "{{ mysql_install_dir }}\\my.ini"
+  when: not (mysql_service_check.exists | default(false))
   notify: restart mysql
   tags: [mysql, config]
 
@@ -572,38 +605,29 @@
 # Removed by: playbooks/harden-security.yml --tags mysql_hardening
 # ============================================================
 
-- name: "[demo] Create anonymous MySQL user (demo baseline)"
+- name: "[demo] Apply insecure baseline (anonymous user, test DB, weak password policy)"
+  # Combined into a single win_shell (1 WinRM round-trip instead of 3) —
+  # same demo baseline content as before, just fewer separate invocations.
   ansible.windows.win_shell: |
     $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    $conn = @('-u', 'root', "-p{{ mysql_root_password }}", '-h', '127.0.0.1', '-P', '{{ mysql_port }}')
+
+    # Anonymous user
     $sql = "CREATE USER IF NOT EXISTS ''@'localhost' IDENTIFIED BY ''; " +
-           "GRANT ALL ON *.* TO ''@'localhost'; " +
-           "FLUSH PRIVILEGES;"
-    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} -e $sql 2>$null
+           "GRANT ALL ON *.* TO ''@'localhost'; FLUSH PRIVILEGES;"
+    & $mysql @conn -e $sql 2>$null
     Write-Output "Anonymous user ensured (demo baseline)"
-  changed_when: false
-  no_log: true
-  tags: [mysql, database, demo_baseline]
 
-- name: "[demo] Create test database (demo baseline)"
-  ansible.windows.win_shell: |
-    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
+    # Test database
     $sql = "CREATE DATABASE IF NOT EXISTS test; " +
-           "GRANT ALL ON test.* TO ''@'localhost'; " +
-           "FLUSH PRIVILEGES;"
-    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} -e $sql 2>$null
+           "GRANT ALL ON test.* TO ''@'localhost'; FLUSH PRIVILEGES;"
+    & $mysql @conn -e $sql 2>$null
     Write-Output "Test database ensured (demo baseline)"
-  changed_when: false
-  no_log: true
-  tags: [mysql, database, demo_baseline]
 
-- name: "[demo] Install validate_password component with LOW policy (demo baseline)"
-  ansible.windows.win_shell: |
-    $mysql = '{{ mysql_install_dir }}\bin\mysql.exe'
-    $check = & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} `
-      -e "SELECT COUNT(*) FROM mysql.component WHERE component_urn LIKE '%validate_password%';" 2>$null
+    # validate_password with LOW policy
+    $check = & $mysql @conn -e "SELECT COUNT(*) FROM mysql.component WHERE component_urn LIKE '%validate_password%';" 2>$null
     if ($check -notmatch '^\s*1\s*$') {
-        & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} `
-          -e "INSTALL COMPONENT 'file://component_validate_password';" 2>$null
+        & $mysql @conn -e "INSTALL COMPONENT 'file://component_validate_password';" 2>$null
         Write-Output "validate_password component installed"
     } else {
         Write-Output "validate_password component already installed"
@@ -613,7 +637,7 @@
            "SET GLOBAL validate_password.mixed_case_count = 0; " +
            "SET GLOBAL validate_password.number_count = 0; " +
            "SET GLOBAL validate_password.special_char_count = 0;"
-    & $mysql -u root -p"{{ mysql_root_password }}" -h 127.0.0.1 -P {{ mysql_port }} -e $sql 2>$null
+    & $mysql @conn -e $sql 2>$null
     Write-Output "validate_password policy set to LOW (demo baseline)"
   changed_when: false
   no_log: true

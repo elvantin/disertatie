@@ -259,6 +259,7 @@
     url: https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
     dest: /usr/local/bin/wp
     mode: '0755'
+    force: no
   tags: [wordpress, wp-cli]
 
 # ── Verify database connectivity before running WP-CLI ───────────────────────
@@ -317,20 +318,12 @@
 # ── Fix siteurl/home in DB (in case WordPress was installed with wrong URL) ───
 # WP_HOME/WP_SITEURL constants in wp-config.php override DB values at runtime,
 # also updates DB for consistency (admin dashboard, CLI commands, etc.)
-- name: Update WordPress siteurl option in database
+- name: Update WordPress siteurl and home options in database
   ansible.builtin.command: >
-    wp option update siteurl "{{ wordpress_site_url }}"
-    --path={{ wordpress_install_dir }}
-    --allow-root
-  changed_when: true
-  failed_when: false
-  tags: [wordpress, wp-cli]
-
-- name: Update WordPress home option in database
-  ansible.builtin.command: >
-    wp option update home "{{ wordpress_site_url }}"
-    --path={{ wordpress_install_dir }}
-    --allow-root
+    wp eval '
+    update_option("siteurl", "{{ wordpress_site_url }}");
+    update_option("home", "{{ wordpress_site_url }}");
+    ' --path={{ wordpress_install_dir }} --allow-root
   changed_when: true
   failed_when: false
   tags: [wordpress, wp-cli]

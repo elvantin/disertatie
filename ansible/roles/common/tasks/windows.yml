@@ -2,107 +2,11 @@
 # Common tasks for Windows systems (Windows Server 2022)
 # ============================================================
 
-# Packer images can capture Windows with Task Scheduler COM in a broken state
-# (CLSID {00000000...}, error 0x800703FA). win_updates async relies on Task
-# Scheduler to schedule the update job — it fails instantly if TS COM is broken.
-# Fix: re-register WU + Task Scheduler DLLs, restart services, verify COM, then
-# reboot if COM is still not available. Only after a clean COM state do we trigger
-# win_updates async so the background job can actually start.
-- name: Repair Windows Update and Task Scheduler COM components
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = 'SilentlyContinue'
-
-    # Stop services before re-registering DLLs
-    $services = @('wuauserv','bits','cryptsvc','msiserver','TrustedInstaller','Schedule')
-    foreach ($svc in $services) { Stop-Service $svc -Force }
-    Start-Sleep 3
-
-    # Re-register Windows Update DLLs
-    $wuDlls = @(
-      'atl.dll','urlmon.dll','mshtml.dll','shdocvw.dll','browseui.dll',
-      'jscript.dll','vbscript.dll','scrrun.dll','msxml.dll','msxml3.dll',
-      'msxml6.dll','actxprxy.dll','softpub.dll','wintrust.dll','dssenh.dll',
-      'rsaenh.dll','gpkcsp.dll','sccbase.dll','slbcsp.dll','cryptdlg.dll',
-      'oleaut32.dll','ole32.dll','shell32.dll','initpki.dll','wuapi.dll',
-      'wuaueng.dll','wucltux.dll','wudriver.dll','wups.dll','wups2.dll','wuwebv.dll'
-    )
-    foreach ($dll in $wuDlls) {
-      & regsvr32 /s $dll 2>$null
-    }
-
-    # Reset WinHTTP proxy (can block WU)
-    & netsh winhttp reset proxy 2>$null
-
-    # Restart Task Scheduler first (COM dependency)
-    Start-Service Schedule
-    Start-Sleep 3
-
-    # Restart WU services
-    foreach ($svc in @('bits','cryptsvc','wuauserv')) { Start-Service $svc }
-    Start-Sleep 5
-
-    # Test Task Scheduler COM (the one that fails with 0x800703FA)
-    try {
-      $sched = New-Object -ComObject 'Schedule.Service'
-      $sched.Connect()
-      "SCHED_COM_OK"
-    } catch {
-      "SCHED_COM_FAIL: $_"
-    }
-
-    # Test Windows Update COM
-    try {
-      $null = New-Object -ComObject Microsoft.Update.Session
-      "WU_COM_OK"
-    } catch {
-      "WU_COM_FAIL: $_"
-    }
-  register: wu_repair
-  changed_when: true
-  tags: [windows, updates]
-
-- name: Debug COM repair result
-  ansible.builtin.debug:
-    msg: |
-      COM repair on {{ inventory_hostname }}:
-        Task Scheduler: {{ 'OK' if 'SCHED_COM_OK' in wu_repair.stdout else 'STILL BROKEN' }}
-        Windows Update: {{ 'OK' if 'WU_COM_OK' in wu_repair.stdout else 'STILL BROKEN' }}
-  tags: [windows, updates]
-
-- name: Reboot to complete COM component repair
-  ansible.windows.win_reboot:
-    reboot_timeout: 300
-    post_reboot_delay: 45
-    msg: "Ansible reboot — repairing Windows Update COM components"
-  when: >
-    'SCHED_COM_OK' not in wu_repair.stdout or
-    'WU_COM_OK' not in wu_repair.stdout
-  tags: [windows, updates]
-
-# Triggered immediately — poll:0 = fire-and-forget.
-# Runs only after COM components are verified working above.
-# async: 7200 = job valid max 2 hours on remote.
-# Wait is at the end of this file, after all other tasks.
-- name: Trigger Windows Updates installation (async)
-  ansible.windows.win_updates:
-    category_names:
-      - SecurityUpdates
-      - CriticalUpdates
-      - UpdateRollups
-    state: installed
-    reboot: no
-  async: 7200
-  poll: 0
-  register: win_updates_job
-  ignore_errors: yes
-  tags: [windows, updates]
-
 - name: Install common Windows features
   ansible.windows.win_feature:
     name:
       - NET-Framework-45-Core
       - PowerShell-V2
-      - Telnet-Client
     state: present
   tags: [windows, features]
 
@@ -118,44 +22,20 @@
 - name: Set Windows Defender real-time protection
   ansible.windows.win_shell: |
     Set-MpPreference -DisableRealtimeMonitoring $false
+  changed_when: false
   tags: [windows, security, defender]
 
 - name: Enable Windows Event Log auditing
   ansible.windows.win_shell: |
     auditpol /set /category:"Account Logon" /success:enable /failure:enable
     auditpol /set /category:"Logon/Logoff" /success:enable /failure:enable
+  changed_when: false
   tags: [windows, security, audit]
 
 - name: Configure Windows Remote Management (WinRM)
   ansible.windows.win_shell: |
     winrm quickconfig -quiet
     Set-Item WSMan:\localhost\MaxEnvelopeSizekb -Value 8192
+  changed_when: false
   tags: [windows, winrm]
 
-# ── Wait for Windows Updates (started async at top) ───────────────────────────
-# Polls every 60s, max 2 hours (matches async: 7200 above).
-# ignore_errors: yes — if updates fail, the rest of the playbook continues.
-# Windows VMs will still work; updates can be applied manually post-deploy.
-- name: Wait for Windows Updates to complete
-  ansible.builtin.async_status:
-    jid: "{{ win_updates_job.ansible_job_id }}"
-  register: win_updates_result
-  until: win_updates_result.finished
-  retries: 120
-  delay: 60
-  when:
-    - win_updates_job is not failed
-    - win_updates_job.ansible_job_id is defined
-  ignore_errors: yes
-  tags: [windows, updates]
-
-- name: Windows Updates summary
-  ansible.builtin.debug:
-    msg: |
-      Windows Updates on {{ inventory_hostname }}:
-        Status:            {{ 'completed' if (win_updates_result.finished | default(false)) else 'skipped/failed — apply manually' }}
-        Updates found:     {{ win_updates_result.found_update_count | default('N/A') }}
-        Updates installed: {{ win_updates_result.installed_update_count | default('N/A') }}
-        Reboot required:   {{ win_updates_result.reboot_required | default('N/A') }}
-  when: win_updates_job is not failed
-  tags: [windows, updates]

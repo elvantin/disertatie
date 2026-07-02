@@ -1,0 +1,70 @@
+---
+# ============================================================
+# mysql role — backup.yml
+# Deploys backup-mysql.ps1 si creeaza Scheduled Task zilnic 02:00
+# Inclus din playbooks/6-monitoring.yml (Play 3)
+# ============================================================
+
+- name: Ensure C:\Scripts directory exists
+  ansible.windows.win_file:
+    path: C:\Scripts
+    state: directory
+  tags: [mysql, backup]
+
+- name: Ensure C:\MySQL\Backups directory exists
+  ansible.windows.win_file:
+    path: C:\MySQL\Backups
+    state: directory
+  tags: [mysql, backup]
+
+- name: Deploy MySQL encrypted backup script
+  ansible.windows.win_template:
+    src: backup-mysql.ps1.j2
+    dest: C:\Scripts\backup-mysql.ps1
+  tags: [mysql, backup]
+
+- name: Create Scheduled Task — MySQL backup (zilnic 02:00, SYSTEM)
+  community.windows.win_scheduled_task:
+    name: MediaSRL-MySQLBackup
+    description: >-
+      SC MEDIA SRL — mysqldump AES-256-CBC → \\vm-fs-01\Backups\mysql
+      (zilnic 02:00, retentie {{ mysql_backup_retention_days }} zile)
+    actions:
+      - path: powershell.exe
+        arguments: >-
+          -NonInteractive -ExecutionPolicy Bypass
+          -File C:\Scripts\backup-mysql.ps1
+    triggers:
+      - type: daily
+        start_boundary: "2026-01-01T02:00:00"
+    username: SYSTEM
+    run_level: highest
+    state: present
+    enabled: true
+  tags: [mysql, backup]
+
+- name: Run backup immediately (validare first-time)
+  ansible.windows.win_shell: |
+    powershell -NonInteractive -ExecutionPolicy Bypass `
+        -File C:\Scripts\backup-mysql.ps1
+  register: backup_first_run
+  changed_when: false
+  failed_when: false
+  tags: [mysql, backup]
+
+- name: Show backup result
+  ansible.builtin.debug:
+    msg:
+      - "rc     : {{ backup_first_run.rc }}"
+      - "stdout : {{ backup_first_run.stdout | default('(gol)') }}"
+      - "stderr : {{ backup_first_run.stderr | default('(gol)') }}"
+  tags: [mysql, backup]
+
+- name: Fail if first backup run reported errors
+  ansible.builtin.fail:
+    msg: |
+      Primul backup a esuat (exit {{ backup_first_run.rc }}).
+      STDOUT: {{ backup_first_run.stdout | default('(gol)') }}
+      STDERR: {{ backup_first_run.stderr | default('(gol)') }}
+  when: backup_first_run.rc != 0
+  tags: [mysql, backup]

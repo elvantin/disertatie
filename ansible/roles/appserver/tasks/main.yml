@@ -84,12 +84,11 @@
   tags: [appserver, service]
 
 - name: Allow port {{ app_listen_port }} through firewall
-  ansible.builtin.ufw:
-    rule: allow
-    port: "{{ app_listen_port }}"
-    proto: tcp
-  when: ansible_facts.services['ufw.service'] is defined
-  ignore_errors: yes
+  ansible.posix.firewalld:
+    port: "{{ app_listen_port }}/tcp"
+    permanent: true
+    state: enabled
+    immediate: true
   tags: [appserver, firewall]
 
 - name: Verify nginx is listening on port {{ app_listen_port }}

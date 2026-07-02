@@ -40,7 +40,7 @@ HTML_FILE="${LOGS_DIR}/${TIMESTAMP}_${PLAYBOOK_NAME}.html"
 export ANSIBLE_FORCE_COLOR=1
 
 # ── Suppress paramiko TripleDES deprecation warnings (system library issue) ──
-export PYTHONWARNINGS="ignore::DeprecationWarning"
+export PYTHONWARNINGS="ignore"
 
 # ── Suppress Ansible reserved-variable warnings (azure_rm plugin sets         ──
 # ──   'name' and 'tags' as host vars which collide with Ansible magic vars)   ──

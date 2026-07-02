@@ -378,7 +378,6 @@ module virtualMachines 'modules/compute.bicep' = [for vm in vms: {
     marketplaceSku: useMarketplaceImages ? (vm.imageDefinition == 'windows' ? '2022-datacenter-azure-edition-smalldisk' : 'server') : ''
     marketplaceVersion: 'latest'
     osDiskSizeGb: vm.osDiskSizeGb
-    osDiskStorageType: 'StandardSSD_LRS'
     dataDisks: vm.?dataDisks ?? []
     logAnalyticsWorkspaceId: monitoring.outputs.workspaceId
     deployMonitoringAgent: false // Disable to avoid package manager lock issues during deployment

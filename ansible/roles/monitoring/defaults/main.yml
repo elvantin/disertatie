@@ -10,7 +10,7 @@ monitoring_disk_threshold: 90         # Alert when disk usage >= X%
 monitoring_mem_threshold: 90          # Alert when memory usage >= X%
 
 # ---- Linux script deployment ----
-monitoring_cron_interval: 5           # Cron interval (minutes)
+monitoring_cron_interval: 1           # Cron interval (minutes)
 monitoring_script_path: /usr/local/bin/check-health.sh
 monitoring_syslog_tag: mediasrl-health   # Must match KQL ProcessName in ama.bicep
 

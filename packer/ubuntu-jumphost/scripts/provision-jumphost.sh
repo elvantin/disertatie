@@ -213,7 +213,8 @@ apt install -y \
     net-tools dnsutils tcpdump nmap telnet netcat \
     jq tree bash-completion unzip zip tar build-essential \
     dos2unix ssh-audit \
-    mysql-client-core-8.0 smbclient
+    mysql-client-core-8.0 smbclient cifs-utils \
+    gvfs-backends xfce4-terminal
 
 # =============================================================================
 # STEP 13: Install gnome-keyring and MySQL Workbench Community
@@ -356,6 +357,80 @@ ssh_loopback=0
 REMMFS
 chmod 600 /etc/skel/.local/share/remmina/fs.remmina
 
+# ── SMB: mount point + GNOME-keyring credential-storage autostart script ──
+# cifs-utils/smbclient already installed in STEP 11 (DevOps Tools).
+# store-smb-creds.sh runs once at first XFCE login (autostart) and stores the
+# azureadmin SMB password into the GNOME keyring so gvfs-smb/file manager can
+# mount \\vm-fs-01 shares without a password prompt. Server IP is static
+# (vm-fs-01 = 10.10.10.8, same value already hardcoded in the Remmina profiles
+# above). The password itself is NOT baked here — Ansible (jumphost role)
+# writes it to ~/.smb-pass at deploy time from Ansible Vault; this script only
+# reads that file.
+mkdir -p /mnt/smb/public
+chmod 755 /mnt/smb/public
+
+mkdir -p /etc/skel/.local/bin /etc/skel/.config/autostart
+chmod 755 /etc/skel/.local /etc/skel/.local/bin /etc/skel/.config/autostart
+
+cat > /etc/skel/.local/bin/store-smb-creds.sh << 'SMBCREDS'
+#!/bin/bash
+# ============================================================
+# store-smb-creds.sh — SC MEDIA SRL
+# Stocheaza credentialele azureadmin in GNOME keyring la login.
+# Ruleaza o singura data (autostart), se dezactiveaza dupa succes.
+# ============================================================
+
+FLAG="$HOME/.smb-creds-stored"
+PASS_FILE="$HOME/.smb-pass"
+AUTOSTART="$HOME/.config/autostart/store-smb-creds.desktop"
+
+# Deja rulat cu succes anterior
+[ -f "$FLAG" ] && exit 0
+
+# Fisierul cu parola trebuie sa existe (scris de Ansible la deploy, din Vault)
+[ ! -f "$PASS_FILE" ] && exit 1
+
+SMB_PASS=$(cat "$PASS_FILE")
+
+# Asteapta ca keyring-ul sa fie disponibil (max 20s dupa login)
+for i in $(seq 1 10); do
+    if secret-tool lookup server 10.10.10.8 protocol smb user azureadmin > /dev/null 2>&1; then
+        touch "$FLAG"
+        sed -i 's/^X-GNOME-Autostart-enabled=.*/X-GNOME-Autostart-enabled=false/' "$AUTOSTART" 2>/dev/null
+        exit 0
+    fi
+
+    if printf '%s' "$SMB_PASS" | secret-tool store \
+        --label="azureadmin@10.10.10.8" \
+        "xdg:schema" org.gnome.keyring.NetworkPassword \
+        server       10.10.10.8 \
+        protocol     smb \
+        domain       WORKGROUP \
+        user         azureadmin 2>/dev/null; then
+        touch "$FLAG"
+        sed -i 's/^X-GNOME-Autostart-enabled=.*/X-GNOME-Autostart-enabled=false/' "$AUTOSTART" 2>/dev/null
+        exit 0
+    fi
+
+    sleep 2
+done
+
+exit 1
+SMBCREDS
+chmod 700 /etc/skel/.local/bin/store-smb-creds.sh
+
+cat > /etc/skel/.config/autostart/store-smb-creds.desktop << 'SMBAUTOSTART'
+[Desktop Entry]
+Type=Application
+Name=Store SMB Credentials
+Comment=Stocheaza credentialele azureadmin in GNOME keyring la primul login
+Exec=/home/azureadmin/.local/bin/store-smb-creds.sh
+Hidden=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+SMBAUTOSTART
+chmod 644 /etc/skel/.config/autostart/store-smb-creds.desktop
+
 # ── XFCE4 Screensaver: idle timeout = 59 minutes, screen lock disabled ──
 # xfce4-screensaver reads xfconf XML at session start.
 # delay is in minutes. Lock disabled — useful for RDP sessions on a secured VNet.
@@ -380,10 +455,38 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml <
 SCREENSAVER
 chmod 644 /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml
 
+# ── xfce4-terminal: font marit la 14pt (echivalent 2x CTRL++) ──
+# Fisierele din /etc/skel sunt copiate in home-ul noilor utilizatori la creare.
+mkdir -p /etc/skel/.config/xfce4/terminal
+chmod 755 /etc/skel/.config/xfce4/terminal
+cat > /etc/skel/.config/xfce4/terminal/terminalrc << 'TERMINALRC'
+[Configuration]
+FontName=Monospace 14
+ScrollingLines=10000
+TERMINALRC
+chmod 644 /etc/skel/.config/xfce4/terminal/terminalrc
+
+# ── XFCE helpers: xfce4-terminal ca terminal preferat ──
+# Folosit de Thunar si de shortcut-urile XFCE "Open Terminal Here"
+mkdir -p /etc/skel/.config/xfce4
+cat > /etc/skel/.config/xfce4/helpers.rc << 'HELPERSRC'
+TerminalEmulator=xfce4-terminal
+FileManager=Thunar
+WebBrowser=firefox-esr
+HELPERSRC
+chmod 644 /etc/skel/.config/xfce4/helpers.rc
+
+# ── xfce4-terminal ca terminal implicit la nivel de sistem ──
+update-alternatives --install /usr/bin/x-terminal-emulator \
+    x-terminal-emulator /usr/bin/xfce4-terminal 60
+update-alternatives --set x-terminal-emulator /usr/bin/xfce4-terminal
+
 echo "  MySQL Workbench connection 'db' → vm-db-01:3306 (user: root)"
 echo "  Remmina RDP 'db' → vm-db-01 (azureadmin, 1280x960)"
 echo "  Remmina RDP 'fs' → vm-fs-01 (azureadmin, 1280x960)"
 echo "  XFCE screensaver idle timeout: 59 minutes"
+echo "  xfce4-terminal default, font Monospace 14pt"
+echo "  gvfs-backends instalat (suport smb:// in Nautilus)"
 
 # =============================================================================
 # STEP 14: Configurare SSH hardening
@@ -450,6 +553,8 @@ Installed Tools:
 - MySQL Workbench 8.0.46 (connect to vm-db-01:3306)
 - ssh-audit (SSH server/client audit tool)
 - DevOps utilities (htop, tmux, jq, dos2unix, etc.)
+- SMB: smbclient, cifs-utils, gvfs-backends (smb:// in Nautilus)
+- Terminal: xfce4-terminal (default, font 14pt)
 
 Ansible Galaxy Collections (pre-installed):
 - ansible.windows, ansible.posix

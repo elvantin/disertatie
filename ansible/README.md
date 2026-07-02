@@ -229,7 +229,7 @@ db_name: "wordpress_db"
 
 ```yaml
 ansible_connection: winrm
-ansible_winrm_transport: ntlm
+ansible_winrm_transport: basic
 ansible_winrm_server_cert_validation: ignore
 ansible_port: 5985
 ansible_user: azureadmin

@@ -14,38 +14,9 @@ ntp_servers:
   - "2.ro.pool.ntp.org"
   - "3.ro.pool.ntp.org"
 
-# Common packages to install on all Ubuntu VMs
-common_packages:
-  - vim
-  - nano
-  - htop
-  - curl
-  - wget
-  - git
-  - unzip
-  - zip
-  - tar
-  - net-tools
-  - dnsutils
-  - tcpdump
-  - telnet
-  - rsync
-  - ca-certificates
-  - gnupg
-  - lsb-release
-  - software-properties-common
-  - apt-transport-https
-  - python3
-  - python3-pip
-  - systemd-timesyncd
-  - build-essential
-
-# Security packages
-security_packages:
-  - firewalld
-  - fail2ban
-  - unattended-upgrades
-  - update-notifier-common
+# NOTE: common/security packages (vim, curl, fail2ban, firewalld, etc.) and the
+# universe repo are baked into the ubuntu-base Packer image at build-time
+# (packer/ubuntu-base/scripts/base-setup.sh) — Ansible no longer installs them.
 
 # Firewall configuration (firewalld)
 firewall_enabled: true

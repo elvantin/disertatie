@@ -808,10 +808,10 @@ Set-Location C:\agent
 .\config.cmd
 ```
 
-Răspunde la prompturi:
+Cnfigurare:
 
 ```
-Enter server URL                    > https://dev.azure.com/<ORGANIZATIA_TA>
+Enter server URL                    > https://dev.azure.com/valentintita12
 Enter authentication type (PAT)    > PAT
 Enter personal access token        > <PAT-ul generat la Pas 5.3>
 Enter agent pool                   > Default

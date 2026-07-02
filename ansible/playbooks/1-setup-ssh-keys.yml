@@ -151,10 +151,25 @@
         msg: "Azure account: {{ az_account.stdout | trim }}"
 
     - name: Write key injection script to jumphost
+      no_log: true
       copy:
         dest: /tmp/ansible-inject-ssh-key.sh
         content: |
           #!/bin/bash
+          # Self-healing: create the azureadmin account ourselves if cloud-init
+          # hasn't (or never will — this has been observed to silently skip user
+          # creation on some VMs when the golden image's cloud-init cache wasn't
+          # fully cleared at capture time). No waiting/racing with cloud-init —
+          # if the account already exists we just reuse it; if not, we build it
+          # to match what Azure's own provisioning would have set up.
+          if ! id azureadmin >/dev/null 2>&1; then
+            useradd -m -s /bin/bash -G adm,dialout,cdrom,floppy,sudo,audio,dip,video,plugdev,netdev azureadmin
+            echo 'azureadmin:{{ vault_admin_password }}' | chpasswd
+            echo 'azureadmin ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-azureadmin
+            chmod 440 /etc/sudoers.d/90-azureadmin
+            echo "USER_CREATED"
+          fi
+
           # Decode public key from base64 (avoids quoting issues with SSH key content)
           PUB_KEY=$(printf '%s' '{{ hostvars["localhost"]["jumphost_ssh_public_key"] | b64encode }}' | base64 -d)
           mkdir -p /home/azureadmin/.ssh
@@ -166,7 +181,14 @@
             echo "KEY_ADDED"
           fi
           chmod 600 /home/azureadmin/.ssh/authorized_keys
-          chown -R azureadmin:azureadmin /home/azureadmin/.ssh
+          # chown the WHOLE home directory, not just .ssh: if /home/azureadmin
+          # was created by an earlier (pre-user-exists) run of this script — as
+          # root, before useradd -m ran — useradd -m does NOT re-chown a home
+          # directory that already exists, leaving it root-owned. That silently
+          # breaks Ansible itself later (mkdir ~/.ansible/tmp fails with EACCES)
+          # even though SSH login and privilege escalation both work fine.
+          chown -R azureadmin:azureadmin /home/azureadmin
+          chmod 750 /home/azureadmin
         mode: '0700'
 
     - name: Inject SSH key to {{ item }} via Azure Run Command

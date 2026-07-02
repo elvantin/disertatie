@@ -28,6 +28,7 @@ Usage:
 """
 
 import argparse
+import base64
 import re
 import os
 import html as html_mod
@@ -790,6 +791,24 @@ def generate_individual_html(args, before_lines, after_lines, full_log_lines,
     before_label = args.before_label or 'BEFORE — Stare inițială (fără hardening)'
     after_label  = args.after_label  or 'AFTER — Stare finală (hardening aplicat)'
 
+    qr_section = ''
+    if args.qr_image and os.path.isfile(args.qr_image):
+        with open(args.qr_image, 'rb') as f:
+            qr_b64 = base64.b64encode(f.read()).decode('ascii')
+        ext = os.path.splitext(args.qr_image)[1].lstrip('.').lower() or 'png'
+        mime = 'svg+xml' if ext == 'svg' else ext
+        qr_caption_html = (f'<p style="color:var(--dim); margin-top:14px; font-size:.83rem;">'
+                            f'{esc(args.qr_caption)}</p>') if args.qr_caption else ''
+        qr_section = f"""
+  <details class="section" open>
+    <summary class="sec-after">📱 QR Code — scanează cu Google Authenticator</summary>
+    <div class="log-block" style="text-align:center; padding: 28px 16px;">
+      <img src="data:image/{mime};base64,{qr_b64}" alt="TOTP QR Code"
+           style="background:#fff; padding:16px; border-radius:8px; max-width:260px; width:100%; height:auto;">
+      {qr_caption_html}
+    </div>
+  </details>"""
+
     return f"""<!DOCTYPE html>
 <html lang="ro">
 <head>
@@ -835,6 +854,8 @@ def generate_individual_html(args, before_lines, after_lines, full_log_lines,
     <summary class="sec-after">🟢 {esc(after_label)}</summary>
     <div class="log-block">{a_html}</div>
   </details>
+
+  {qr_section}
 
   <details class="section" open>
     <summary class="sec-diff">🔀 DIFF — Comparație Before vs After (roșu = eliminat din starea inițială, verde = adăugat după hardening)</summary>
@@ -1032,6 +1053,10 @@ def main():
                    help='TDE before-state file (demo-5 only)')
     p.add_argument('--tde-after',    default='', dest='tde_after',
                    help='TDE after-state file (demo-5 only)')
+    p.add_argument('--qr-image',     default='', dest='qr_image',
+                   help='Path to a QR code image (PNG/SVG) to embed inline as a data URI (demo-8 TOTP setup)')
+    p.add_argument('--qr-caption',   default='', dest='qr_caption',
+                   help='Caption text shown under the embedded QR code')
     args = p.parse_args()
 
     os.makedirs(os.path.dirname(os.path.abspath(args.html)), exist_ok=True)
