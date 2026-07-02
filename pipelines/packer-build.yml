@@ -1,10 +1,18 @@
 # ============================================================
 # Pipeline: Packer Image Build & Publish
 # Builds golden images and publishes them to Azure Compute Gallery
-# Trigger: Manual only (images are built infrequently)
+# Trigger: automatic on push to packer/ (only the images whose files
+# actually changed are built — see "Detect Changed Packer Images" step),
+# plus manual runs from the Azure DevOps UI with explicit checkboxes.
 # ============================================================
 
-trigger: none  # Manual trigger only — run from Azure DevOps UI
+trigger:
+  branches:
+    include:
+      - master
+  paths:
+    include:
+      - packer
 
 parameters:
   # Choose which images to build when running the pipeline
@@ -46,6 +54,31 @@ stages:
         displayName: 'Create Gallery if needed'
         steps:
           - checkout: self
+            fetchDepth: 2  # need HEAD~1 for the change-detection diff below
+
+          - powershell: |
+              $ErrorActionPreference = "Continue"
+              $changedFiles = git diff --name-only HEAD~1 HEAD 2>$null
+
+              if ($LASTEXITCODE -ne 0 -or -not $changedFiles) {
+                Write-Host "Could not determine changed files (or none) - building ALL images as a safe fallback."
+                $buildBase = $true
+                $buildJump = $true
+                $buildWin  = $true
+              } else {
+                Write-Host "Changed files since previous commit:"
+                $changedFiles | ForEach-Object { Write-Host "  $_" }
+                $buildBase = [bool]($changedFiles | Where-Object { $_ -like 'packer/ubuntu-base/*' })
+                $buildJump = [bool]($changedFiles | Where-Object { $_ -like 'packer/ubuntu-jumphost/*' })
+                $buildWin  = [bool]($changedFiles | Where-Object { $_ -like 'packer/windows-server/*' })
+              }
+
+              Write-Host "Detected -> buildUbuntuBase=$buildBase  buildJumphost=$buildJump  buildWindows=$buildWin"
+              Write-Host "##vso[task.setvariable variable=buildUbuntuBase;isOutput=true]$buildBase"
+              Write-Host "##vso[task.setvariable variable=buildJumphost;isOutput=true]$buildJump"
+              Write-Host "##vso[task.setvariable variable=buildWindows;isOutput=true]$buildWin"
+            name: DetectChanges
+            displayName: 'Detect Changed Packer Images'
 
           - task: AzureCLI@2
             displayName: 'Ensure Resource Group exists'
@@ -103,7 +136,11 @@ stages:
   - stage: BuildUbuntuBase
     displayName: 'Build Ubuntu 22.04 Base'
     dependsOn: Setup
-    condition: eq('${{ parameters.buildUbuntuBase }}', true)
+    condition: |
+      or(
+        eq('${{ parameters.buildUbuntuBase }}', true),
+        eq(dependencies.Setup.outputs['SetupGallery.DetectChanges.buildUbuntuBase'], 'True')
+      )
     jobs:
       - job: BuildUbuntuBaseJob
         displayName: 'Packer Build: Ubuntu Base'
@@ -149,7 +186,11 @@ stages:
   - stage: BuildJumphost
     displayName: 'Build Ubuntu 22.04 Jumphost'
     dependsOn: Setup
-    condition: eq('${{ parameters.buildJumphost }}', true)
+    condition: |
+      or(
+        eq('${{ parameters.buildJumphost }}', true),
+        eq(dependencies.Setup.outputs['SetupGallery.DetectChanges.buildJumphost'], 'True')
+      )
     jobs:
       - job: BuildJumphostJob
         displayName: 'Packer Build: Jumphost'
@@ -194,7 +235,11 @@ stages:
   - stage: BuildWindows
     displayName: 'Build Windows Server 2022'
     dependsOn: Setup
-    condition: eq('${{ parameters.buildWindows }}', true)
+    condition: |
+      or(
+        eq('${{ parameters.buildWindows }}', true),
+        eq(dependencies.Setup.outputs['SetupGallery.DetectChanges.buildWindows'], 'True')
+      )
     jobs:
       - job: BuildWindowsJob
         displayName: 'Packer Build: Windows Server'

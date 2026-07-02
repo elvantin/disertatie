@@ -301,7 +301,7 @@ cd ~/ansible
 bash scripts/create-ansible-vault.sh
 ```
 
-### python3-winrm nu e instalat
+### python3-winrm nu e instalat 
 
 Instalat in imaginea Packer. Daca lipseste:
 ```bash
