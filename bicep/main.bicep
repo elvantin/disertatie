@@ -495,3 +495,5 @@ output vmOutputs array = [for (vm, i) in vms: {
   privateIp: virtualMachines[i].outputs.privateIpAddress
   publicIp: virtualMachines[i].outputs.publicIpAddress
 }]
+
+//1
