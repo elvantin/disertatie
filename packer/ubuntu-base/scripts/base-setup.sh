@@ -5,7 +5,7 @@
 # Role-specific software (nginx, WordPress, etc.) is installed
 # by Ansible after deployment.
 # ============================================================
-
+#
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
