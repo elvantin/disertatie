@@ -62,7 +62,7 @@ stages:
                 Write-Host "=== Compiling Bicep to ARM template ==="
                 az bicep build --file "$(templateFile)"
                 if ($LASTEXITCODE -ne 0) { throw "Bicep build failed" }
-                Write-Host "Bicep compilation successful — no syntax errors."
+                Write-Host "Bicep compilation successful - no syntax errors."
 
           # Step 2: Validate against Azure API (checks parameter values, resource availability)
           - task: AzureCLI@2
@@ -75,7 +75,7 @@ stages:
                 Write-Host "=== Validating deployment against Azure ==="
                 az deployment sub validate --location "$(location)" --template-file "$(templateFile)" --parameters "$(parametersFile)" --name "validate-$(Build.BuildNumber)"
                 if ($LASTEXITCODE -ne 0) { throw "Deployment validation failed" }
-                Write-Host "Validation successful — template and parameters are valid."
+                Write-Host "Validation successful - template and parameters are valid."
 
           # Step 3: What-If (preview changes without applying)
           - task: AzureCLI@2
