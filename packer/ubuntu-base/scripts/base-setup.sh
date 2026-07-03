@@ -16,10 +16,7 @@ echo "========================================="
 # =============================================================================
 # STEP 0: Fix sources.list
 # =============================================================================
-# Imaginile recente canonical/ubuntu-22_04-lts/server/latest pe Azure migrează
-# spre formatul DEB822 (.sources), lăsând uneori linii malformate în
-# /etc/apt/sources.list (ex: lipsă prefix 'deb', URL fără tip).
-# Reconstruim sources.list cu conținut curat înainte de apt update.
+
 
 echo "[0/6] Rebuilding /etc/apt/sources.list (fix Azure image DEB822 migration)..."
 cat > /etc/apt/sources.list << 'SOURCES'
@@ -48,10 +45,7 @@ apt upgrade -y -qq
 # =============================================================================
 # STEP 2: Install Common + Security Packages
 # =============================================================================
-# Baked into the image at build-time (was previously installed at runtime by
-# Ansible's common role on every deploy). universe/multiverse already enabled
-# in STEP 0's sources.list rebuild, so no separate "enable universe" step
-# is needed here (unlike the old Ansible task it replaces).
+
 
 echo "[2/6] Installing common + security packages..."
 apt install -y \
@@ -66,18 +60,13 @@ apt install -y \
     fail2ban unattended-upgrades update-notifier-common
 
 # fail2ban must NOT be active during the fragile initial-provisioning window
-# (playbooks/1-setup-ssh-keys.yml, first common-role run) — a handful of
-# retried/failed SSH attempts during that window could get the jumphost IP
-# banned before jails are even configured. Package stays installed (no
-# re-download at deploy time); the dedicated fail2ban role (harden-security.yml)
-# enables+starts it later, once real jail rules are in place.
+
 systemctl disable --now fail2ban || true
 
 # =============================================================================
 # STEP 2b: Remove UFW, install firewalld
 # =============================================================================
-# Baked into the image (same as ubuntu-jumphost) so Ansible only needs to
-# configure zones/ports at runtime, not install/remove packages.
+
 
 echo "[2b/6] Removing UFW and installing firewalld..."
 systemctl stop ufw || true
@@ -92,20 +81,7 @@ systemctl start firewalld
 # =============================================================================
 
 echo "[3/6] Configuring SSH..."
-# Trei straturi de protectie identice cu jumphost-ul:
-#
-# Strat 1: cloud-init override (ssh_pwauth: true) — cloud-init va scrie
-#          PasswordAuthentication yes in 60-cloudimg-settings.conf.
-#          Fara acest strat, cloud-init poate reseta la 'no' la primul boot
-#          pe Azure gallery images chiar daca Packer a setat 'yes' in imagine.
-#
-# Strat 2: sshd_config.d/10-mediasrl.conf — prefix "10" < "60", deci se citeste
-#          INAINTE de 60-cloudimg-settings.conf. Prima aparitie castiga in sshd.
-#
-# Strat 3: sshd_config principal (insert before Include) — procesata prima,
-#          bate orice fisier din sshd_config.d/.
 
-# --- Strat 1: cloud-init override ---
 mkdir -p /etc/cloud/cloud.cfg.d
 cat > /etc/cloud/cloud.cfg.d/99-mediasrl-ssh.cfg << 'CLOUDINIT'
 # SC MEDIA SRL — Override cloud-init SSH behavior
@@ -115,7 +91,6 @@ ssh_pwauth: true
 CLOUDINIT
 chmod 644 /etc/cloud/cloud.cfg.d/99-mediasrl-ssh.cfg
 
-# --- Strat 2: sshd_config.d/10-mediasrl.conf ---
 cat > /etc/ssh/sshd_config.d/10-mediasrl.conf << 'SSHDCONF'
 # SC MEDIA SRL — SSH hardening (prefix 10, se citeste inaintea oricarui fisier 60-*)
 PasswordAuthentication yes
@@ -123,7 +98,6 @@ PermitRootLogin no
 SSHDCONF
 chmod 644 /etc/ssh/sshd_config.d/10-mediasrl.conf
 
-# --- Strat 3: sshd_config principal (insert before Include) ---
 sed -i '/^PasswordAuthentication /d' /etc/ssh/sshd_config
 if grep -q '^Include /etc/ssh/sshd_config.d' /etc/ssh/sshd_config; then
     sed -i '/^Include \/etc\/ssh\/sshd_config\.d/i PasswordAuthentication yes' /etc/ssh/sshd_config

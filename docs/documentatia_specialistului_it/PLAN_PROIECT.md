@@ -6,19 +6,6 @@
 
 **„Proiectarea, implementarea și securizarea unei infrastructuri cloud automatizate în Microsoft Azure utilizând Bicep, Packer și Ansible"**
 
-**Subtitlu:** Studiu de caz privind adoptarea Infrastructure as Code și DevOps într-un mediu enterprise
-
-### Argumentare academică
-
-Titlul reflectă fidel:
-
-- caracterul ingineresc și metodologic al lucrării („proiectarea, implementarea");
-- accentul pe automatizare și securitate, două cerințe centrale în infrastructurile moderne;
-- utilizarea explicită a tehnologiilor-cheie (Bicep, Packer, Ansible);
-- contextul cloud și platforma aleasă (Microsoft Azure);
-- existența unui studiu de caz, cerință frecventă pentru lucrările de nivel master.
-
----
 
 ## 2. Scenariul de studiu de caz
 
